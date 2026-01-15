@@ -1,0 +1,14 @@
+**/*.pyc
+**/__pycache__/
+*.o
+*.a
+*.so
+
+
+**/.vscode/
+.idea
+.DS_Store
+
+**/build/
+**/install/
+**/log/
