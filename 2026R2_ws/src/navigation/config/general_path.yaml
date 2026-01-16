@@ -1,0 +1,13 @@
+frame_id: "map"
+units:
+  distance: "m"
+  angle: "deg"
+segments:
+  - start: {x: 0.0, y: 0.0, yaw_deg: 0}
+    end:   {x: 2.0, y: 0.0, yaw_deg: 0}
+  - start: {x: 2.0, y: 0.0, yaw_deg: 0}
+    end:   {x: 2.0, y: 2.0, yaw_deg: 90}
+  - start: {x: 2.0, y: 2.0, yaw_deg: 90}
+    end:   {x: 0.0, y: 2.0, yaw_deg: 180}
+  - start: {x: 0.0, y: 2.0, yaw_deg: 180}
+    end:   {x: 0.0, y: 0.0, yaw_deg: 270}
