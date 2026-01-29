@@ -28,6 +28,7 @@ setup(
         'console_scripts': [
             'damiao_node = base_omniwheel_r2_700.damiao_node:main',
             'damiao_test_node = base_omniwheel_r2_700.damiao_test_node:main',
+            'local_navigation_node = base_omniwheel_r2_700.local_navigation_node:main',
             'vesc_node = base_omniwheel_r2_700.vesc_node:main',
             'vesc_canbus_speed_control_node = base_omniwheel_r2_700.vesc_canbus_speed_control_node:main',
 

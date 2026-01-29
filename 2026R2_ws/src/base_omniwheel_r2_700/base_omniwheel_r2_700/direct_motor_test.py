@@ -51,7 +51,7 @@ class DirectMotorTestNode(Node):
             return False
 
         # 3. 初始化4号电机
-        motor4 = Motor(DM_Motor_Type.DMH3510, 4, 0x00)
+        motor4 = Motor(DM_Motor_Type.DMH3510, 1, 0x00)
         motor_control.addMotor(motor4)
         self.get_logger().info("4号达妙电机对象创建成功")
 
