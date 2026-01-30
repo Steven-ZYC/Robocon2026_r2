@@ -131,13 +131,45 @@ Topic: `local_driving` (Float32MultiArray)
 
 **Message format**: `[direction_rad, plane_speed_cm/s, rotation_rad/s]`
 
-| Parameter | Unit | Description |
-|-----------|------|-------------|
-| direction_rad | rad | Movement direction (0=forward, π/2=right, π=backward, -π/2=left) |
-| plane_speed_cm/s | cm/s | Translational speed magnitude |
-| rotation_rad/s | rad/s | Rotational speed (positive=CCW, negative=CW) |
+### Parameter Definition
 
-**Examples:**
+| Parameter | Unit | Range | Description |
+|-----------|------|-------|-------------|
+| `direction_rad` | radians | [-π, π] | Movement direction in robot coordinate system<br>• 0: Forward (robot's X+ axis)<br>• π/2: Right (robot's Y+ axis)<br>• π or -π: Backward<br>• -π/2: Left |
+| `plane_speed_cm/s` | cm/s | [0, ∞) | Translational speed magnitude<br>• 0: No translation<br>• >0: Move at specified speed |
+| `rotation_rad/s` | rad/s | (-∞, ∞) | Rotational speed<br>• 0: No rotation<br>• >0: Counter-clockwise rotation<br>• <0: Clockwise rotation |
+
+### Coordinate System
+
+```
+Robot Top View (Front is Left Side):
+
+    Y+ (Right)
+      ↑
+      |
+      |
+X- ← Robot → X+  (Back)    (Front)
+      |
+      |
+      ↓
+    Y- (Left)
+```
+
+**Note**: Due to robot's physical orientation, the "forward" direction in user commands is mapped to the robot's left side.
+
+### Common Commands Examples
+
+| Command | Direction | Speed | Rotation | Motion |
+|---------|-----------|-------|----------|--------|
+| `[0.0, 50.0, 0.0]` | 0° | 50 cm/s | 0 | Move forward |
+| `[1.57, 30.0, 0.0]` | 90° | 30 cm/s | 0 | Move right |
+| `[3.14, 40.0, 0.0]` | 180° | 40 cm/s | 0 | Move backward |
+| `[-1.57, 25.0, 0.0]` | -90° | 25 cm/s | 0 | Move left |
+| `[0.0, 0.0, 1.0]` | - | 0 | 1 rad/s | Rotate counter-clockwise |
+| `[0.785, 35.0, 0.5]` | 45° | 35 cm/s | 0.5 rad/s | Move forward-right + rotate |
+| `[0.0, 0.0, 0.0]` | - | 0 | 0 | Stop all motors |
+
+### ROS2 Command Examples
 ```bash
 # Move forward at 50 cm/s
 ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [0.0, 50.0, 0.0]}" --once

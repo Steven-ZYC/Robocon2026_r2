@@ -22,21 +22,38 @@ WHEEL_RADIUS_M = 0.327038  # 轮心到底盘中心距离 (m)
 WHEEL_BASE_RADIUS = WHEEL_RADIUS_M  # 别名，更清晰
 
 # 轮子角度 (X 型布局，单位：弧度)
-# 1: 右前 (45°), 2: 左前 (135°), 3: 左后 (225°), 4: 右后 (315°)
-# 注意：电机 3 和 4 需要反转方向
+# 实际布局（从上方看机器人）：
+#   Motor 1 (左前)    Motor 2 (右前)
+#         \_______/
+#         /       \
+#   Motor 4 (左后)    Motor 3 (右后)
+#
+# 电机位置：
+# - Motor 1: 左前 (135°)
+# - Motor 2: 右前 (45°)
+# - Motor 3: 右后 (315°)
+# - Motor 4: 左后 (225°)
+#
+# 正速度方向（电机正转时的推力方向）：
+# - Motor 1: 向左后方推 (135° + 180° = 315°)
+# - Motor 2: 向左前方推 (45° + 180° = 225°)
+# - Motor 3: 向右前方推 (315° + 180° = 135°)
+# - Motor 4: 向右后方推 (225° + 180° = 45°)
+
 WHEEL_ANGLES = {
-    1: np.deg2rad(45),    # 右前
-    2: np.deg2rad(135),   # 左前
-    3: np.deg2rad(225 + 180),  # 左后 (反转方向)
-    4: np.deg2rad(315 + 180),  # 右后 (反转方向)
+    1: np.deg2rad(315),   # 左前位置，但推力向左后 (135° + 180°)
+    2: np.deg2rad(225),   # 右前位置，但推力向左前 (45° + 180°)
+    3: np.deg2rad(135),   # 右后位置，但推力向右前 (315° + 180°)
+    4: np.deg2rad(45),    # 左后位置，但推力向右后 (225° + 180°)
 }
 
 # 电机方向反转标志 (1=正常, -1=反转)
+# 所有电机都需要反转方向
 MOTOR_DIRECTION = {
-    1: 1,   # 正常
-    2: 1,   # 正常
-    3: -1,  # 反转
-    4: -1,  # 反转
+    1: -1,  # 左前 - 反转
+    2: -1,  # 右前 - 反转
+    3: -1,  # 右后 - 反转
+    4: -1,  # 左后 - 反转
 }
 
 # ROS2 控制参数
@@ -138,9 +155,22 @@ class LocalNavigationNode(Node):
             θ_i = 轮子 i 的安装角度
             R = 轮心到中心的距离
         """
-        # 分解平移速度到机体坐标系
-        v_x = plane_speed_m * np.cos(direction_rad)
-        v_y = plane_speed_m * np.sin(direction_rad)
+        # 检查是否为停止指令
+        if plane_speed_m == 0.0 and rotation_rad == 0.0:
+            # 发送停止命令到所有电机
+            for motor_id in [1, 2, 3, 4]:
+                stop_msg = Float32MultiArray()
+                stop_msg.data = [float(motor_id), 0.0, 0.0, 0.0]  # mode 0 = disable
+                self.motor_publisher.publish(stop_msg)
+            self.get_logger().info("All motors stopped")
+            return
+        
+        # 分解平移速度到机体坐标系 (需要旋转坐标系使前方=左方)
+        # 当前: direction=0° 应该是向左移动
+        # 所以我们将方向偏移 90° (π/2)，使 0°=左，90°=前
+        adjusted_direction = direction_rad + np.pi/2  # 旋转 90° CCW
+        v_x = plane_speed_m * np.cos(adjusted_direction)
+        v_y = plane_speed_m * np.sin(adjusted_direction)
         
         wheel_speeds = {}
         
