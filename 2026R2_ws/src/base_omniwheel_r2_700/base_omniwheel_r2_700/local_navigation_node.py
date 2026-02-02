@@ -7,9 +7,9 @@ Local Navigation Node for R2 Omniwheel Base
 - 发布各电机速度控制指令到 damiao_control
 
 机械参数:
-- 4 轮 X 型布局 (45°, 135°, 225°, 315°)
+- 4 轮 X 型布局
 - 轮心距中心距离: 327.038 mm = 0.327038 m
-- 轮子编号: 1(右前), 2(左前), 3(左后), 4(右后)
+- 轮子编号: 1(左前/135°), 2(右前/45°), 3(右后/315°), 4(左后/225°)
 """
 
 import rclpy
@@ -22,38 +22,22 @@ WHEEL_RADIUS_M = 0.327038  # 轮心到底盘中心距离 (m)
 WHEEL_BASE_RADIUS = WHEEL_RADIUS_M  # 别名，更清晰
 
 # 轮子角度 (X 型布局，单位：弧度)
-# 实际布局（从上方看机器人）：
-#   Motor 1 (左前)    Motor 2 (右前)
-#         \_______/
-#         /       \
-#   Motor 4 (左后)    Motor 3 (右后)
-#
-# 电机位置：
-# - Motor 1: 左前 (135°)
-# - Motor 2: 右前 (45°)
-# - Motor 3: 右后 (315°)
-# - Motor 4: 左后 (225°)
-#
-# 正速度方向（电机正转时的推力方向）：
-# - Motor 1: 向左后方推 (135° + 180° = 315°)
-# - Motor 2: 向左前方推 (45° + 180° = 225°)
-# - Motor 3: 向右前方推 (315° + 180° = 135°)
-# - Motor 4: 向右后方推 (225° + 180° = 45°)
-
+# 修正：实际测试确定的角度配置
+# Motor 1: 左前 (135°), Motor 2: 右前 (45°), Motor 3: 右后 (315°), Motor 4: 左后 (225°)
 WHEEL_ANGLES = {
-    1: np.deg2rad(315),   # 左前位置，但推力向左后 (135° + 180°)
-    2: np.deg2rad(225),   # 右前位置，但推力向左前 (45° + 180°)
-    3: np.deg2rad(135),   # 右后位置，但推力向右前 (315° + 180°)
-    4: np.deg2rad(45),    # 左后位置，但推力向右后 (225° + 180°)
+    1: np.deg2rad(135),   # 左前
+    2: np.deg2rad(45),    # 右前
+    3: np.deg2rad(315),   # 右后
+    4: np.deg2rad(225),   # 左后
 }
 
 # 电机方向反转标志 (1=正常, -1=反转)
-# 所有电机都需要反转方向
+# 根据实际测试确定：Motor 1, 2 需要反转
 MOTOR_DIRECTION = {
-    1: -1,  # 左前 - 反转
-    2: -1,  # 右前 - 反转
-    3: -1,  # 右后 - 反转
-    4: -1,  # 左后 - 反转
+    1: -1,  # 反转（左前）
+    2: -1,  # 反转（右前）
+    3: 1,   # 正常（右后）
+    4: 1,   # 正常（左后）
 }
 
 # ROS2 控制参数
@@ -147,7 +131,7 @@ class LocalNavigationNode(Node):
             dict: {motor_id: speed_rad/s}
         
         运动学公式 (X 型布局):
-            v_wheel_i = v_x * sin(θ_i) + v_y * cos(θ_i) + ω * R
+            v_wheel_i = v_x * cos(θ_i) + v_y * sin(θ_i) + ω * R
         
         其中:
             v_x = plane_speed * cos(direction)
@@ -155,44 +139,33 @@ class LocalNavigationNode(Node):
             θ_i = 轮子 i 的安装角度
             R = 轮心到中心的距离
         """
-        # 检查是否为停止指令
-        if plane_speed_m == 0.0 and rotation_rad == 0.0:
-            # 发送停止命令到所有电机
-            for motor_id in [1, 2, 3, 4]:
-                stop_msg = Float32MultiArray()
-                stop_msg.data = [float(motor_id), 0.0, 0.0, 0.0]  # mode 0 = disable
-                self.motor_publisher.publish(stop_msg)
-            self.get_logger().info("All motors stopped")
-            return
+        # 分解平移速度到机体坐标系
+        v_x = plane_speed_m * np.cos(direction_rad)
+        v_y = plane_speed_m * np.sin(direction_rad)
         
-        # 分解平移速度到机体坐标系 (需要旋转坐标系使前方=左方)
-        # 当前: direction=0° 应该是向左移动
-        # 所以我们将方向偏移 90° (π/2)，使 0°=左，90°=前
-        adjusted_direction = direction_rad + np.pi/2  # 旋转 90° CCW
-        v_x = plane_speed_m * np.cos(adjusted_direction)
-        v_y = plane_speed_m * np.sin(adjusted_direction)
+        # 根据实际测试：Y轴和旋转方向需要取反
+        v_y = -v_y
+        rotation_rad = -rotation_rad
         
         wheel_speeds = {}
         
         for motor_id, wheel_angle in WHEEL_ANGLES.items():
             # X 型布局的运动学公式
             # 每个轮子的线速度 = 平移分量 + 旋转分量
-            v_translation = v_x * np.sin(wheel_angle) + v_y * np.cos(wheel_angle)
+            v_translation = v_x * np.cos(wheel_angle) + v_y * np.sin(wheel_angle)
             v_rotation = rotation_rad * WHEEL_BASE_RADIUS
             
             # 轮子线速度 (m/s)
             v_wheel = v_translation + v_rotation
             
-            # 应用电机方向反转
-            v_wheel *= MOTOR_DIRECTION[motor_id]
+            # 轮子半径: 直径12cm = 0.12m, 半径 = 0.06m
+            WHEEL_RADIUS = 0.06  # m
             
-            # 假设轮子直径或半径为 R_wheel，则角速度 = v / R_wheel
-            # 由于我们不知道轮子半径，这里假设电机直驱或需要您提供轮径
-            # 暂时直接使用线速度作为"速度指令" (需根据实际轮径调整)
-            # TODO: 需要用户提供轮子半径以计算真实角速度
+            # 转换线速度为角速度 (rad/s)
+            # ω = v / r
+            wheel_angular_speed = v_wheel / WHEEL_RADIUS
             
-            # 临时方案: 假设电机速度单位已经匹配或需要标定
-            wheel_speeds[motor_id] = v_wheel
+            wheel_speeds[motor_id] = wheel_angular_speed
         
         return wheel_speeds
     

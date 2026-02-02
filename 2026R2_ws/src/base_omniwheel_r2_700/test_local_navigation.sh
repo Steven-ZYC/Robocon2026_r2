@@ -1,180 +1,153 @@
 #!/bin/bash
-# Test script for local_navigation_node
-# Automatically launches all required nodes and runs test sequence
+# Local Navigation Automatic Tester
+# Launches nodes in separate terminals and runs test sequence
+# Place: robotics/Robocon2026_r2/2026R2_ws/src/base_omniwheel_r2_700/
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Auto-detect ROS2 distribution
-if [ -f "/opt/ros/jazzy/setup.bash" ]; then
-    source /opt/ros/jazzy/setup.bash
-    ROS_DISTRO="jazzy"
-elif [ -f "/opt/ros/humble/setup.bash" ]; then
-    source /opt/ros/humble/setup.bash
-    ROS_DISTRO="humble"
-else
-    echo -e "${RED}ERROR: No ROS2 installation found!${NC}"
-    exit 1
-fi
+echo "============================================"
+echo "Local Navigation Automatic Tester"
+echo "============================================"
 
-# Source workspace (hardcoded for this specific project)
-WS_DIR="/home/sunrise/robotics/Robocon2026_r2/2026R2_ws"
-SETUP_SCRIPT="$WS_DIR/install/setup.bash"
+# Step 1: Thorough cleanup
+echo "[Step 1/4] Cleaning up existing nodes..."
+for proc_name in "local_navigation_node" "damiao_node"; do
+    PIDS=$(pgrep -f "$proc_name")
+    if [ ! -z "$PIDS" ]; then
+        echo "  Killing $proc_name: $PIDS"
+        kill -9 $PIDS 2>/dev/null || true
+    fi
+done
+sleep 1
+echo "  ✓ Cleanup completed"
 
-# Verify setup script exists
-if [ ! -f "$SETUP_SCRIPT" ]; then
-    echo -e "${RED}ERROR: Setup script not found at $SETUP_SCRIPT${NC}"
-    echo -e "${YELLOW}Current directory: $(pwd)${NC}"
-    exit 1
-fi
-
-source "$SETUP_SCRIPT"
-
-echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}Local Navigation Test Script${NC}"
-echo -e "${BLUE}============================================${NC}"
-echo -e "ROS2 Distribution: ${GREEN}${ROS_DISTRO}${NC}"
-echo -e "Workspace: ${GREEN}${WS_DIR}${NC}"
-echo -e "Setup script: ${GREEN}${SETUP_SCRIPT}${NC}"
+# Step 2: Build workspace
 echo ""
-echo -e "${YELLOW}This script will:${NC}"
-echo -e "  1. Launch damiao_node in background"
-echo -e "  2. Launch local_navigation_node in background" 
-echo -e "  3. Run test sequence:"
-echo -e "     - Forward movement (0°, 50 cm/s)"
-echo -e "     - Right movement (90°, 50 cm/s)"
-echo -e "     - Backward movement (180°, 50 cm/s)"
-echo -e "     - Left movement (270°, 50 cm/s)"
-echo -e "     - Rotation only (CCW, 1 rad/s)"
-echo -e "     - Stop all motors"
-echo ""
-read -p "Press Enter to start testing (Ctrl+C to cancel)..."
-
-# Function to kill background processes on exit
-cleanup() {
-    echo -e "\n${YELLOW}Cleaning up background processes...${NC}"
-    # Kill children first
-    jobs -p | xargs -r kill 2>/dev/null
-    # Wait for them to finish
-    wait 2>/dev/null || true
-    echo -e "${GREEN}Cleanup completed.${NC}"
-}
-trap cleanup EXIT INT TERM
-
-# Launch damiao_node in background with proper sourcing
-echo -e "\n${BLUE}[1/2] Launching damiao_node...${NC}"
-(
-    source "$SETUP_SCRIPT"
-    ros2 run base_omniwheel_r2_700 damiao_node
-) &
-DAMIAO_PID=$!
-sleep 2
-
-# Check if damiao_node started successfully
-if kill -0 $DAMIAO_PID 2>/dev/null; then
-    echo -e "${GREEN}✓ damiao_node started (PID: $DAMIAO_PID)${NC}"
+echo "[Step 2/4] Building workspace..."
+cd "$WS_DIR"
+colcon build --packages-select base_omniwheel_r2_700 2>&1 | grep -E "(Starting|Finished|Failed|Summary)" || echo "  Build in progress..."
+if [ ${PIPESTATUS[0]} -eq 0 ]; then
+    echo "  ✓ Build successful"
 else
-    echo -e "${RED}✗ Failed to start damiao_node${NC}"
+    echo "  ✗ Build failed!"
     exit 1
 fi
 
-# Launch local_navigation_node in background
-echo -e "\n${BLUE}[2/2] Launching local_navigation_node...${NC}"
-(
-    source "$SETUP_SCRIPT"
+# Step 3: Launch nodes in separate terminals
+echo ""
+echo "[Step 3/4] Launching nodes in separate terminals..."
+
+# Detect terminal emulator
+if command -v gnome-terminal &> /dev/null; then
+    TERM_CMD="gnome-terminal"
+    TERM_ARGS="--"
+elif command -v xterm &> /dev/null; then
+    TERM_CMD="xterm"
+    TERM_ARGS="-e"
+elif command -v konsole &> /dev/null; then
+    TERM_CMD="konsole"
+    TERM_ARGS="-e"
+else
+    echo "  ✗ No terminal emulator found (gnome-terminal/xterm/konsole)"
+    exit 1
+fi
+
+# Launch local_navigation_node
+$TERM_CMD $TERM_ARGS bash -c "
+    source /opt/ros/jazzy/setup.bash 2>/dev/null || source /opt/ros/humble/setup.bash
+    source $WS_DIR/install/setup.bash
+    echo '=== Local Navigation Node ==='
+    echo 'Node will start in 2 seconds...'
+    sleep 2
     ros2 run base_omniwheel_r2_700 local_navigation_node
-) &
-NAV_PID=$!
-sleep 2
+    echo ''
+    echo 'Node terminated. Press Enter to close...'
+    read
+" &
+NAV_TERM_PID=$!
 
-# Check if local_navigation_node started successfully
-if kill -0 $NAV_PID 2>/dev/null; then
-    echo -e "${GREEN}✓ local_navigation_node started (PID: $NAV_PID)${NC}"
+sleep 1
+
+# Launch damiao_node
+$TERM_CMD $TERM_ARGS bash -c "
+    source /opt/ros/jazzy/setup.bash 2>/dev/null || source /opt/ros/humble/setup.bash
+    source $WS_DIR/install/setup.bash
+    echo '=== Damiao Motor Controller ==='
+    echo 'Node will start in 2 seconds...'
+    sleep 2
+    ros2 run base_omniwheel_r2_700 damiao_node
+    echo ''
+    echo 'Node terminated. Press Enter to close...'
+    read
+" &
+DAMIAO_TERM_PID=$!
+
+echo "  ✓ Terminals launched"
+echo "  - Local Navigation Node (terminal PID: $NAV_TERM_PID)"
+echo "  - Damiao Motor Node (terminal PID: $DAMIAO_TERM_PID)"
+
+# Wait for nodes to initialize
+echo ""
+echo "Waiting for nodes to initialize (5 seconds)..."
+sleep 5
+
+# Verify nodes are running
+source "$WS_DIR/install/setup.bash"
+NODES=$(ros2 node list 2>/dev/null)
+if echo "$NODES" | grep -q "local_navigation_node"; then
+    echo "  ✓ local_navigation_node is running"
 else
-    echo -e "${RED}✗ Failed to start local_navigation_node${NC}"
-    exit 1
+    echo "  ✗ local_navigation_node not detected!"
+fi
+if echo "$NODES" | grep -q "motor_controller_node"; then
+    echo "  ✓ damiao_node is running"
+else
+    echo "  ✗ damiao_node not detected!"
 fi
 
-echo -e "\n${GREEN}All nodes launched successfully!${NC}"
-echo -e "${YELLOW}Waiting 3 seconds for node initialization...${NC}"
-sleep 3
+# Step 4: Run test sequence
+echo ""
+echo "[Step 4/4] Running test sequence..."
+echo ""
+echo "Test sequence:"
+echo "  1. Forward (0°, 50 cm/s) - 6s"
+echo "  2. Left (-90°, 50 cm/s) - 6s"
+echo "  3. Rotation Clockwise (1 rad/s) - 6s"
+echo "  4. Stop all motors"
+echo ""
 
-# Run test sequence
-echo -e "\n${BLUE}============================================${NC}"
-echo -e "${BLUE}Running Test Sequence${NC}"
-echo -e "${BLUE}============================================${NC}"
+read -p "Press Enter to start test sequence (or Ctrl+C to cancel)..."
 
-# Test 1: Forward movement
-echo -e "\n${YELLOW}Test 1: Moving FORWARD at 50 cm/s${NC}"
-(
-    source "$SETUP_SCRIPT"
-    ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [0.0, 100.0, 0.0]}" --once
-)
-sleep 0.2
-sleep 3
+# Test 1: Forward
+echo ""
+echo "→ Test 1: FORWARD (50 cm/s)"
+ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [0.0, 50.0, 0.0]}" --once 2>/dev/null
+sleep 6
 
-# Test 2: Right movement
-echo -e "\n${YELLOW}Test 2: Moving RIGHT at 50 cm/s${NC}"
-(
-    source "$SETUP_SCRIPT"
-    ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [1.5708, 100.0, 0.0]}" --once
-)
-sleep 0.2
-sleep 3
+# Test 2: Left
+echo "→ Test 2: LEFT (50 cm/s)"
+ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [-1.5708, 50.0, 0.0]}" --once 2>/dev/null
+sleep 6
 
-# Test 3: Backward movement
-echo -e "\n${YELLOW}Test 3: Moving BACKWARD at 50 cm/s${NC}"
-(
-    source "$SETUP_SCRIPT"
-    ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [3.14159, 100.0, 0.0]}" --once
-)
-sleep 0.2
-sleep 3
+# Test 3: Clockwise Rotation
+echo "→ Test 3: ROTATE CLOCKWISE (1 rad/s)"
+ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [0.0, 0.0, 1.0]}" --once 2>/dev/null
+sleep 6
 
-# Test 4: Left movement
-echo -e "\n${YELLOW}Test 4: Moving LEFT at 50 cm/s${NC}"
-(
-    source "$SETUP_SCRIPT"
-    ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [-1.5708, 100.0, 0.0]}" --once
-)
-sleep 0.2
-sleep 3
-
-# Test 5: Pure rotation
-echo -e "\n${YELLOW}Test 5: Rotating CCW at 1 rad/s${NC}"
-(
-    source "$SETUP_SCRIPT"
-    ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [0.0, 0.0, 1.0]}" --once
-)
-sleep 0.2
-sleep 3
-
-# Test 6: Stop all
-echo -e "\n${YELLOW}Test 6: STOPPING all motors${NC}"
-(
-    source "$SETUP_SCRIPT"
-    ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [0.0, 0.0, 0.0]}" --once
-)
-sleep 0.2
-
-# Send explicit stop to each motor
+# Test 4: Stop
+echo "→ Test 4: STOP"
+ros2 topic pub /local_driving std_msgs/msg/Float32MultiArray "{data: [0.0, 0.0, 0.0]}" --once 2>/dev/null
 for motor_id in 1 2 3 4; do
-    (
-        source "$SETUP_SCRIPT"
-        ros2 topic pub /damiao_control std_msgs/msg/Float32MultiArray "{data: [${motor_id}.0, 0.0, 0.0, 0.0]}" --once
-    )
+    ros2 topic pub /damiao_control std_msgs/msg/Float32MultiArray "{data: [${motor_id}.0, 0.0, 0.0, 0.0]}" --once 2>/dev/null
     sleep 0.1
 done
 
-echo -e "\n${BLUE}============================================${NC}"
-echo -e "${GREEN}Test sequence completed!${NC}"
-echo -e "${BLUE}============================================${NC}"
-echo -e "${YELLOW}Nodes will remain running in background.${NC}"
-echo -e "${YELLOW}Press Ctrl+C to stop all nodes.${NC}"
-
-# Wait indefinitely (until user presses Ctrl+C)
-wait
+echo ""
+echo "============================================"
+echo "✓ Test sequence completed!"
+echo "============================================"
+echo ""
+echo "Nodes are still running in separate terminals."
+echo "Close the terminal windows to stop the nodes."
+echo ""
