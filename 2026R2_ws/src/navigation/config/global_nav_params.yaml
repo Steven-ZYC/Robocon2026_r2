@@ -1,0 +1,9 @@
+global_navigation_node:
+  ros__parameters:
+    route_file: "/home/sunrise/robotics/Robocon2026_r2/2026R2_ws/src/navigation/routes/route_A.yaml"
+    control_rate_hz: 50.0
+    omega_min_scale_default: 0.3
+    arrived_stable_count: 5
+    stop_during_actions: true
+    max_cmd_speed_mps: 1.0
+    max_cmd_omega_rps: 2.0

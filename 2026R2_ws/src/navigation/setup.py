@@ -1,48 +1,30 @@
-#!/usr/bin/env python3
-
+from setuptools import find_packages, setup
 import os
 from glob import glob
-from setuptools import setup, find_packages
 
 package_name = 'navigation'
 
 setup(
     name=package_name,
-    version='0.0.0',
-    packages=find_packages(include=[package_name, package_name + '.*']),
-    install_requires=[
-        'setuptools',
-        'pyserial>=3.0,<4.0',
-        'pyvesc>=1.0.5',
-        'pyyaml',
-    ],
-    extras_require={
-        # install with: pip install .[test]
-        'test': [
-            'pytest>=6.0',
-        ],
-    },
+    version='0.1.0',
+    packages=find_packages(exclude=['test']),
     data_files=[
-        # ROS-specific installation layout
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
-        (os.path.join('share', package_name), ['package.xml']),
-        (os.path.join('share', package_name), glob('launch/*.py')),
+        ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'routes'), glob('routes/*.yaml')),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
+    install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='Your Name',
-    maintainer_email='your.email@example.com',
-    description='ROS2 package for robot navigation using PS4 controller',
-    license='TODO: License declaration',
+    maintainer='Steven Zhang Yancheng',
+    maintainer_email='s11766@s.eduhk.hk',
+    description='Global navigation node for R2 omniwheel base.',
+    license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'local_navigation_node = navigation.navigation_node:main',
-            'general_navigation_node = navigation.general_navigation_node:main',
-            'active_caster_node = navigation.active_caster_node:main',
-            'omni_wheel_speed_node = navigation.omni_wheel_speed_node:main',
-            'wheel = navigation.wheel:main',
-            'auto_move_node = navigation.auto_move_node:main',
+            'global_navigation_node = navigation.global_navigation_node:main'
         ],
     },
 )
