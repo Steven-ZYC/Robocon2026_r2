@@ -174,6 +174,17 @@ ros2 run arduino_sensor_driver arduino_sensor_parser \
   --ros-args -p serial_port:=/dev/ttyACM0
 ```
 
+### 方法 3：使用 package 内置 bash 脚本
+```bash
+cd ~/robotics/Robocon2026_r2/2026R2_ws/src/arduino_sensor_driver/scripts
+
+# 绕过 ROS，直接读取 Arduino 原始串口数据（包含 CRC 结果）
+./test_imu_encoder.sh
+
+# 通过 ROS 启动 arduino_sensor_driver 并读取 /state_pose2d
+./test_arduino_sensors.sh
+```
+
 ---
 
 ## 接口约定
@@ -255,11 +266,19 @@ ros2 topic echo /arduino/raw_sensor_data | grep "crc_valid: false"
 ls -l /dev/ttyACM* /dev/ttyUSB*
 ```
 
-### 7. 测试串口读取（无 ROS2）
+### 7. 使用脚本直接读取原始串口数据（无 ROS2）
 ```bash
-cat /dev/ttyACM0
+cd ~/robotics/Robocon2026_r2/2026R2_ws/src/arduino_sensor_driver/scripts
+./test_imu_encoder.sh
 ```
-（应能看到 Arduino 输出的文本行）
+说明：脚本会自动查找 Arduino 串口，并在终端中打印原始数据包解析结果与 CRC 校验结果。
+
+### 8. 使用脚本读取 /state_pose2d（通过 ROS2）
+```bash
+cd ~/robotics/Robocon2026_r2/2026R2_ws/src/arduino_sensor_driver/scripts
+./test_arduino_sensors.sh
+```
+说明：脚本会先启动 `arduino_sensor_driver`，再持续输出 `/state_pose2d` 的 `x`、`y`、`theta`。
 
 ---
 

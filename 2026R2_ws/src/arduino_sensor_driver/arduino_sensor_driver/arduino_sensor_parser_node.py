@@ -27,7 +27,7 @@ ID=<pkg_id> T=<ms> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt> crc=<hex>
 Arduino端坐标系转换（源头处理，ROS端无需再转换）：
 - e1 为用户X轴（横向，向右正），e2 为用户Y轴（纵向，向前正）
 - ENC第一位 输出 e2_cnt   => REP X（向前）
-- ENC第二位 输出 -e1_cnt  => REP Y（向左）
+- ENC第二位 输出 e1_cnt  => REP Y（向左）
 
 超时保护：
 - 若 1.0 秒内未收到新数据包，发布零速度 Odometry
@@ -53,7 +53,7 @@ class ArduinoSensorParser(Node):
     """
 
     def __init__(self):
-        super().__init__('arduino_sensor_parser')
+        super().__init__("arduino_sensor_parser")
 
         # ===== 自动设备发现函数 =====
         def find_device_port(device_id_pattern):
@@ -71,30 +71,54 @@ class ArduinoSensorParser(Node):
             return None
 
         # 参数声明
-        self.declare_parameter('serial_port', '')  # 默认空字符串表示启用自动发现
-        self.declare_parameter('device_id_pattern', 'Arduino')  # 设备 ID 匹配关键词
-        self.declare_parameter('baud_rate', 115200)
-        self.declare_parameter('timeout_sec', 1.0)
-        self.declare_parameter('encoder_cpr', 8192)  # AMT103: PPR=2048, CPR=2048*4
-        self.declare_parameter('wheel_radius_m', 0.029)  # 编码器轮半径（米），直径58mm
-        self.declare_parameter('publish_tf', True)
+        self.declare_parameter("serial_port", "")  # 默认空字符串表示启用自动发现
+        self.declare_parameter("device_id_pattern", "Arduino")  # 设备 ID 匹配关键词
+        self.declare_parameter("baud_rate", 115200)
+        self.declare_parameter("timeout_sec", 1.0)
+        self.declare_parameter("encoder_cpr", 8192)  # AMT103: PPR=2048, CPR=2048*4
+        self.declare_parameter("wheel_radius_m", 0.029)  # 编码器轮半径（米），直径58mm
+        self.declare_parameter("publish_tf", True)
+
+        # encoder 位置信息（相对于机器人中心的坐标，单位米）
+        self.declare_parameter("enc_x_pos_x_m", -0.1725)
+        self.declare_parameter("enc_x_pos_y_m", -0.018854)
+        self.declare_parameter("enc_y_pos_x_m", -0.218854)
+        self.declare_parameter("enc_y_pos_y_m", -0.0875)
+
+        # 若 encoder 方向实测发现相反，可直接改成 -1.0
+        self.declare_parameter("enc_x_sign", 1.0)
+        self.declare_parameter("enc_y_sign", 1.0)
 
         # 读取参数
-        port_param = self.get_parameter('serial_port').value
-        device_pattern = self.get_parameter('device_id_pattern').value
-        baud = self.get_parameter('baud_rate').value
-        self.timeout_sec = self.get_parameter('timeout_sec').value
-        self.encoder_cpr = self.get_parameter('encoder_cpr').value
-        self.wheel_radius = self.get_parameter('wheel_radius_m').value
-        self.publish_tf = self.get_parameter('publish_tf').value
+        port_param = self.get_parameter("serial_port").value
+        device_pattern = self.get_parameter("device_id_pattern").value
+        baud = self.get_parameter("baud_rate").value
+        self.timeout_sec = self.get_parameter("timeout_sec").value
+        self.encoder_cpr = self.get_parameter("encoder_cpr").value
+        self.wheel_radius = self.get_parameter("wheel_radius_m").value
+        self.publish_tf = self.get_parameter("publish_tf").value
+
+        self.enc_x_pos_x_m = float(self.get_parameter("enc_x_pos_x_m").value)
+        self.enc_x_pos_y_m = float(self.get_parameter("enc_x_pos_y_m").value)
+        self.enc_y_pos_x_m = float(self.get_parameter("enc_y_pos_x_m").value)
+        self.enc_y_pos_y_m = float(self.get_parameter("enc_y_pos_y_m").value)
+
+        self.enc_x_sign = float(self.get_parameter("enc_x_sign").value)
+        self.enc_y_sign = float(self.get_parameter("enc_y_sign").value)
 
         # ===== 自动设备发现逻辑 =====
         if not port_param:  # 如果 serial_port 为空，则启用自动发现
-            self.get_logger().info(f"Auto-discovery enabled. Searching for device containing '{device_pattern}'...")
+            self.get_logger().info(
+                f"Auto-discovery enabled. Searching for device containing '{device_pattern}'..."
+            )
             port = find_device_port(device_pattern)
             if port is None:
-                self.get_logger().fatal(f"No device found matching pattern '{device_pattern}' in /dev/serial/by-id/")
-                raise RuntimeError(f"Device discovery failed for pattern: {device_pattern}")
+                self.get_logger().fatal(
+                    f"No device found matching pattern '{device_pattern}' in /dev/serial/by-id/"
+                )
+                raise RuntimeError(
+                    f"Device discovery failed for pattern: {device_pattern}"
+                )
             self.get_logger().info(f"Auto-discovered device: {port}")
         else:
             port = port_param
@@ -110,9 +134,11 @@ class ArduinoSensorParser(Node):
             raise
 
         # Publisher
-        self.raw_pub = self.create_publisher(ArduinoSensorData, '/arduino/raw_sensor_data', 10)
-        self.odom_pub = self.create_publisher(Odometry, '/state_odom', 10)
-        self.pose2d_pub = self.create_publisher(Pose2D, '/state_pose2d', 10)
+        self.raw_pub = self.create_publisher(
+            ArduinoSensorData, "/arduino/raw_sensor_data", 10
+        )
+        self.odom_pub = self.create_publisher(Odometry, "/state_odom", 10)
+        self.pose2d_pub = self.create_publisher(Pose2D, "/state_pose2d", 10)
 
         # TF broadcaster (可选)
         if self.publish_tf:
@@ -126,10 +152,13 @@ class ArduinoSensorParser(Node):
         self.odom_yaw = 0.0  # 从 IMU heading 获取
         self.last_heading = None
         self.last_recv_time = time.time()
+        self.last_ts_ms = None
+        self.linear_vx = 0.0
+        self.linear_vy = 0.0
 
         # 定时器：读取串口 + 超时保护
         self.create_timer(0.01, self.serial_callback)  # 100Hz 读取
-        self.create_timer(0.05, self.timeout_check)    # 20Hz 超时检查
+        self.create_timer(0.05, self.timeout_check)  # 20Hz 超时检查
 
         self.get_logger().info("Arduino Sensor Parser Node started")
 
@@ -148,13 +177,24 @@ class ArduinoSensorParser(Node):
                 crc &= 0xFF
         return crc
 
+    @staticmethod
+    def wrap_angle_rad(angle: float) -> float:
+        """
+        将角度包到 [-pi, pi]
+        """
+        return math.atan2(math.sin(angle), math.cos(angle))
+
+    @staticmethod
+    def clamp(value: float, lo: float, hi: float) -> float:
+        return max(lo, min(hi, value))
+
     def parse_line(self, line: str):
         """
         解析一行 Arduino 数据，格式（v2，无 DEG= 字段）：
         ID=4836 T=48400 IMU=-0.11,0.02,-0.985,-0.073,-0.077 ENC=68,31039 crc=D8
         """
         # 提取 crc 部分
-        match_crc = re.search(r' crc=([0-9A-Fa-f]{2})$', line)
+        match_crc = re.search(r" crc=([0-9A-Fa-f]{2})$", line)
         if not match_crc:
             self.get_logger().warn(f"No CRC found: {line}")
             return None
@@ -163,18 +203,20 @@ class ArduinoSensorParser(Node):
         crc_expected = int(crc_hex, 16)
 
         # 去除 crc 部分，计算实际 CRC
-        line_without_crc = line[:match_crc.start()]
-        crc_actual = self.crc8_atm(line_without_crc.encode('ascii'))
+        line_without_crc = line[: match_crc.start()]
+        crc_actual = self.crc8_atm(line_without_crc.encode("ascii"))
 
-        crc_valid = (crc_actual == crc_expected)
+        crc_valid = crc_actual == crc_expected
         if not crc_valid:
-            self.get_logger().warn(f"CRC mismatch: expected {crc_expected:02X}, got {crc_actual:02X}")
+            self.get_logger().warn(
+                f"CRC mismatch: expected {crc_expected:02X}, got {crc_actual:02X}"
+            )
 
         # 解析字段（v2 协议：无 DEG= 字段）
         match = re.match(
-            r'ID=(\d+) T=(\d+) IMU=([\d\.\-]+),([\d\.\-]+),([\d\.\-]+),([\d\.\-]+),([\d\.\-]+) '
-            r'ENC=([\-\d]+),([\-\d]+)',
-            line_without_crc
+            r"ID=(\d+) T=(\d+) IMU=([\d\.\-]+),([\d\.\-]+),([\d\.\-]+),([\d\.\-]+),([\d\.\-]+) "
+            r"ENC=([\-\d]+),([\-\d]+)",
+            line_without_crc,
         )
         if not match:
             self.get_logger().warn(f"Parse failed: {line}")
@@ -191,11 +233,11 @@ class ArduinoSensorParser(Node):
         enc_y = int(match.group(9))
 
         return {
-            'pkg_id': pkg_id,
-            'ts_ms': ts_ms,
-            'imu': {'hdg': hdg, 'rate': rate, 'ax': ax, 'ay': ay, 'az': az},
-            'enc': {'x': enc_x, 'y': enc_y},
-            'crc_valid': crc_valid
+            "pkg_id": pkg_id,
+            "ts_ms": ts_ms,
+            "imu": {"hdg": hdg, "rate": rate, "ax": ax, "ay": ay, "az": az},
+            "enc": {"x": enc_x, "y": enc_y},
+            "crc_valid": crc_valid,
         }
 
     def serial_callback(self):
@@ -206,9 +248,9 @@ class ArduinoSensorParser(Node):
             if self.serial.in_waiting > 0:
                 raw = self.serial.readline()
                 # 只处理以换行符结尾的完整行，丢弃不完整的首行
-                if not raw.endswith(b'\n'):
+                if not raw.endswith(b"\n"):
                     return
-                line = raw.decode('ascii', errors='ignore').strip()
+                line = raw.decode("ascii", errors="ignore").strip()
                 if not line:
                     return
 
@@ -220,6 +262,13 @@ class ArduinoSensorParser(Node):
 
                 # 发布原始数据
                 self.publish_raw_sensor(data)
+
+                # CRC 错包不进入 odometry
+                if not data["crc_valid"]:
+                    self.get_logger().warn(
+                        f"Drop packet {data['pkg_id']} from odometry because CRC is invalid"
+                    )
+                    return
 
                 # 更新 Odometry
                 self.update_odometry(data)
@@ -233,24 +282,24 @@ class ArduinoSensorParser(Node):
         """
         msg = ArduinoSensorData()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'arduino_sensor'
+        msg.header.frame_id = "arduino_sensor"
 
-        msg.packet_id = data['pkg_id']
-        msg.timestamp_ms = data['ts_ms']
+        msg.packet_id = data["pkg_id"]
+        msg.timestamp_ms = data["ts_ms"]
 
-        msg.imu_heading_deg = data['imu']['hdg']
-        msg.imu_rate_rad_s = data['imu']['rate']
-        msg.imu_ax = data['imu']['ax']
-        msg.imu_ay = data['imu']['ay']
-        msg.imu_az = data['imu']['az']
+        msg.imu_heading_deg = data["imu"]["hdg"]
+        msg.imu_rate_rad_s = data["imu"]["rate"]
+        msg.imu_ax = data["imu"]["ax"]
+        msg.imu_ay = data["imu"]["ay"]
+        msg.imu_az = data["imu"]["az"]
 
-        msg.enc_x_counts = data['enc']['x']
-        msg.enc_y_counts = data['enc']['y']
+        msg.enc_x_counts = data["enc"]["x"]
+        msg.enc_y_counts = data["enc"]["y"]
         # v2 Arduino 已移除 DEG= 字段，置 0 保留消息兼容性
         msg.enc_x_deg = 0.0
         msg.enc_y_deg = 0.0
 
-        msg.crc_valid = data['crc_valid']
+        msg.crc_valid = data["crc_valid"]
 
         self.raw_pub.publish(msg)
 
@@ -262,43 +311,78 @@ class ArduinoSensorParser(Node):
         - enc_x = forward counts（向前为正，即 REP X 方向）
         - enc_y = left counts（向左为正，即 REP Y 方向）
         ROS端直接使用，无需再做坐标转换。
-        """
-        enc_x = data['enc']['x']  # REP X（向前）
-        enc_y = data['enc']['y']  # REP Y（向左）
-        heading_deg = data['imu']['hdg']
-        rate_rad_s = data['imu']['rate']
 
-        # 初始化上次编码器值
+        更精确的 2D odometry：
+        1. 使用 IMU heading 作为 yaw
+        2. 用 dtheta 补偿 encoder 安装点偏移导致的旋转假位移
+        3. 用区间中值 yaw 做 body->world 旋转
+        4. 发布平面位姿与速度
+        """
+        enc_x = data["enc"]["x"]  # forward counts
+        enc_y = data["enc"]["y"]  # left counts
+        heading_deg = data["imu"]["hdg"]
+        rate_rad_s = data["imu"]["rate"]
+        ts_ms = data["ts_ms"]
+
+        yaw_rad = math.radians(heading_deg)
+
+        # 初始化
         if self.last_enc_x is None:
             self.last_enc_x = enc_x
             self.last_enc_y = enc_y
-            self.last_heading = heading_deg
+            self.last_heading = yaw_rad
+            self.last_ts_ms = ts_ms
+            self.odom_yaw = yaw_rad
             return
 
-        # 计算编码器增量（已是 REP 103 坐标系）
+        # 编码器增量
         delta_x_counts = enc_x - self.last_enc_x
         delta_y_counts = enc_y - self.last_enc_y
 
-        # 转换为线性位移（米）
         meters_per_count = (2.0 * math.pi * self.wheel_radius) / self.encoder_cpr
-        base_link_x_m = delta_x_counts * meters_per_count  # 向前
-        base_link_y_m = delta_y_counts * meters_per_count  # 向左
 
-        # 使用 IMU heading 作为机器人朝向（转为弧度）
-        yaw_rad = math.radians(heading_deg)
+        # encoder 原始测得位移（body frame）
+        dx_meas = self.enc_x_sign * delta_x_counts * meters_per_count  # forward
+        dy_meas = self.enc_y_sign * delta_y_counts * meters_per_count  # left
 
-        # 从机器人坐标系转换到世界坐标系（odom frame）
-        # 旋转矩阵：[cos -sin; sin cos]
-        self.odom_x += base_link_x_m * math.cos(yaw_rad) - base_link_y_m * math.sin(yaw_rad)
-        self.odom_y += base_link_x_m * math.sin(yaw_rad) + base_link_y_m * math.cos(yaw_rad)
+        # 用 IMU heading 算本次真实转角，注意 wrap
+        dtheta = self.wrap_angle_rad(yaw_rad - self.last_heading)
+
+        # 旋转补偿：
+        # enc_x 测 x方向，所以只受其 y 坐标影响：dx_rot = -dtheta * y_x
+        # enc_y 测 y方向，所以只受其 x 坐标影响：dy_rot =  dtheta * x_y
+        dx_center = dx_meas + self.enc_x_pos_y_m * dtheta
+        dy_center = dy_meas - self.enc_y_pos_x_m * dtheta
+
+        # 使用区间中值姿态进行积分，精度比直接用当前 yaw 更好
+        yaw_mid = self.wrap_angle_rad(self.last_heading + 0.5 * dtheta)
+
+        dx_world = dx_center * math.cos(yaw_mid) - dy_center * math.sin(yaw_mid)
+        dy_world = dx_center * math.sin(yaw_mid) + dy_center * math.cos(yaw_mid)
+
+        self.odom_x += dx_world
+        self.odom_y += dy_world
         self.odom_yaw = yaw_rad
 
-        # 更新上次值
+        # 时间差（优先用 Arduino 时间戳）
+        dt = None
+        if self.last_ts_ms is not None:
+            dt = (ts_ms - self.last_ts_ms) / 1000.0
+
+        # 防止时间戳回绕 / 异常
+        if dt is not None and 1e-4 <= dt <= 0.5:
+            self.linear_vx = dx_center / dt
+            self.linear_vy = dy_center / dt
+        else:
+            self.linear_vx = 0.0
+            self.linear_vy = 0.0
+
+        # 更新历史状态
         self.last_enc_x = enc_x
         self.last_enc_y = enc_y
-        self.last_heading = heading_deg
+        self.last_heading = yaw_rad
+        self.last_ts_ms = ts_ms
 
-        # Publish standard odometry and the simplified planar state.
         self.publish_odometry(rate_rad_s)
 
     def publish_pose2d(self):
@@ -317,18 +401,18 @@ class ArduinoSensorParser(Node):
         """
         odom = Odometry()
         odom.header.stamp = self.get_clock().now().to_msg()
-        odom.header.frame_id = 'odom'
-        odom.child_frame_id = 'base_link'
+        odom.header.frame_id = "odom"
+        odom.child_frame_id = "base_link"
 
-        # 位置
         odom.pose.pose.position.x = self.odom_x
         odom.pose.pose.position.y = self.odom_y
         odom.pose.pose.position.z = 0.0
-
-        # 朝向（四元数）
         odom.pose.pose.orientation = self.yaw_to_quaternion(self.odom_yaw)
 
-        # 速度（简化：未计算线速度，仅角速度）
+        # body frame twist
+        odom.twist.twist.linear.x = self.linear_vx
+        odom.twist.twist.linear.y = self.linear_vy
+        odom.twist.twist.linear.z = 0.0
         odom.twist.twist.angular.z = angular_velocity
 
         self.odom_pub.publish(odom)
@@ -344,8 +428,8 @@ class ArduinoSensorParser(Node):
         """
         t = TransformStamped()
         t.header.stamp = odom.header.stamp
-        t.header.frame_id = 'odom'
-        t.child_frame_id = 'base_link'
+        t.header.frame_id = "odom"
+        t.child_frame_id = "base_link"
 
         t.transform.translation.x = odom.pose.pose.position.x
         t.transform.translation.y = odom.pose.pose.position.y
@@ -370,7 +454,9 @@ class ArduinoSensorParser(Node):
         超时保护：若超过 timeout_sec 未收到数据，发布零速度 Odometry
         """
         if time.time() - self.last_recv_time > self.timeout_sec:
-            self.get_logger().warn("Arduino data timeout! Publishing zero-velocity odometry.")
+            self.get_logger().warn(
+                "Arduino data timeout! Publishing zero-velocity odometry."
+            )
             self.publish_odometry(0.0)
 
 
@@ -386,5 +472,5 @@ def main(args=None):
         rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
