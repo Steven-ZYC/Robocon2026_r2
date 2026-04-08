@@ -13,3 +13,5 @@
 **/install/
 **/log/
 **/.ros_log/
+
+AGENTS.md
