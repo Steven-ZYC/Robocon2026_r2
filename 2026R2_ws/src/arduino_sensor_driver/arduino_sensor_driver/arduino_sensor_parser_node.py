@@ -80,10 +80,10 @@ class ArduinoSensorParser(Node):
         self.declare_parameter("publish_tf", True)
 
         # encoder 位置信息（相对于机器人中心的坐标，单位米）
-        self.declare_parameter("enc_x_pos_x_m", -0.1725)
-        self.declare_parameter("enc_x_pos_y_m", -0.018854)
-        self.declare_parameter("enc_y_pos_x_m", -0.218854)
-        self.declare_parameter("enc_y_pos_y_m", -0.0875)
+        self.declare_parameter("enc_x_pos_x_m", 0.0)
+        self.declare_parameter("enc_x_pos_y_m", 0.153102)
+        self.declare_parameter("enc_y_pos_x_m", -0.153102)
+        self.declare_parameter("enc_y_pos_y_m", 0.0)
 
         # 若 encoder 方向实测发现相反，可直接改成 -1.0
         self.declare_parameter("enc_x_sign", 1.0)

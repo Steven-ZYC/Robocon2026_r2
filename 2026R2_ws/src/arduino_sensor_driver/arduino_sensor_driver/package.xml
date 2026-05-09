@@ -4,7 +4,7 @@
   <name>arduino_sensor_driver</name>
   <version>0.1.0</version>
   <description>Arduino IMU + Encoder sensor driver with CRC8 validation and odometry output</description>
-  <maintainer email="robocon@eduhk.hk">EdUHK Robocon Team</maintainer>
+  <maintainer email="yanczhang8@gmail.com">Steven Zhang Yancheng</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>

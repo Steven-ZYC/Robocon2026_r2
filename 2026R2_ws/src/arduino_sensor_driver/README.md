@@ -117,7 +117,18 @@ ENC第二位 (rep_y) = -e1_cnt    // REP Y（向左）= -用户X
 | `timeout_sec` | double | `1.0` | 超时时间（秒），超过此时间未收到数据则发布零速度 |
 | `encoder_cpr` | int | `8192` | 编码器每转计数（AMT103 固定值） |
 | `wheel_radius_m` | double | `0.05` | 编码器轮半径（米），用于计算线性位移 |
+| `enc_x_pos_x_m` | double | `0.0` | X encoder 安装点相对机器人中心的 X 坐标 |
+| `enc_x_pos_y_m` | double | `0.153102` | X encoder 安装点相对机器人中心的 Y 坐标 |
+| `enc_y_pos_x_m` | double | `-0.153102` | Y encoder 安装点相对机器人中心的 X 坐标 |
+| `enc_y_pos_y_m` | double | `0.0` | Y encoder 安装点相对机器人中心的 Y 坐标 |
 | `publish_tf` | bool | `true` | 是否发布 odom→base_link TF |
+
+Encoder position coordinates use the robot body frame:
+
+- Origin: robot rotation center
+- +X: robot forward
+- +Y: robot left
+- Unit: meter
 
 ---
 

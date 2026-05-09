@@ -15,3 +15,10 @@ arduino_sensor_parser:
     
     # TF publishing
     publish_tf: true                # Whether to broadcast odom->base_link transform
+
+    # Encoder positions relative to robot rotation center, in meters.
+    # Robot frame: +X forward, +Y left.
+    enc_x_pos_x_m: 0.0
+    enc_x_pos_y_m: 0.153102
+    enc_y_pos_x_m: -0.153102
+    enc_y_pos_y_m: 0.0
