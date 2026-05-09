@@ -14,4 +14,6 @@
 **/log/
 **/.ros_log/
 
+2026R2_ws/src/test_damiao/resource/*.pdf
+
 AGENTS.md
