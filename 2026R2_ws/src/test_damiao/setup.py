@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+from glob import glob
+import os
 
 package_name = 'test_damiao'
 
@@ -15,9 +17,11 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'scripts'), glob('scripts/*.sh')),
+        (os.path.join('share', package_name, 'scripts'), glob('scripts/*.py')),
     ],
     zip_safe=True,
-    maintainer='steven',
+    maintainer='Steven Zhang Yancheng',
     maintainer_email='yanczhang8@gmail.com',
     description='Damiao CAN motor test package for feedback and sensor-mode experiments.',
     license='Apache-2.0',

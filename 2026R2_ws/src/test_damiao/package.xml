@@ -4,7 +4,7 @@
   <name>test_damiao</name>
   <version>0.0.0</version>
   <description>Damiao CAN motor test package copied from base_omniwheel_r2_700 for sensor-feedback experiments.</description>
-  <maintainer email="yanczhang8@gmail.com">Steven Zhang</maintainer>
+  <maintainer email="yanczhang8@gmail.com">Steven Zhang Yancheng</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>

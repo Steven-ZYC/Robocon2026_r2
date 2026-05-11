@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
-from test_damiao.DM_CAN import *
+from base_omniwheel_r2_700.DM_CAN import *
 import serial
 import os
 import time
@@ -71,7 +71,7 @@ class MotorControllerNode(Node):
 
             # 4. 初始化电机 (支持多个电机 ID)
             self.motors = {}
-            for motor_id in [1, 2, 3, 4]:
+            for motor_id in [5,6]:
                 motor = Motor(DM_Motor_Type.DMH3510, motor_id, 0x00)
                 self.motors[motor_id] = motor
                 self.motor_control.addMotor(motor)

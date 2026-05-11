@@ -4,9 +4,30 @@
 - [x] 复制 `DM_CAN.py`
 - [x] 复制 `damiao_node.py`
 - [x] 将 `damiao_node.py` import 修正为本 package 内部 `DM_CAN.py`
+- [x] 修复反馈帧 `uint -> float` 换算错误
+- [x] 增加 CAN `0x33` 参数读取命令
+- [x] 增加 CAN `0x33` 参数回复解析与缓存
+- [x] 明确禁止在调试 node 中发送 `0xAA` 存储参数命令
+- [x] 保持 `damiao_control` topic 协议不变
+- [x] 保持 `damiao_node.py` 多电机、多模式结构与 mode 代号不变
+- [x] 启动时读取 `CTRL_MODE(0x0A)`，不匹配才切换模式
+- [x] 保留 `set_zero_position()` 初始化动作
+- [x] 新增 ID 7 / speed 1 简单测试 bash
+- [x] 新增非 ROS2 ID 7 原始串口测试脚本，并只打印 raw bytes
+- [x] 删除 `scripts` 目录旧 Python 原始测试脚本
+- [x] 新增 ID 7 POS_VEL 每秒递增 1 rad / 速度 1 rad/s 测试脚本
+- [x] 在测试脚本中打印返回 CAN data 与解算后的 q/dq/tau/enable
+- [x] 固定脚本启动顺序为先 enable ID 7，再传 POS_VEL 数据
+- [x] 增加 enable 后首帧反馈等待与无 CAN 反馈诊断提示
+- [x] 默认跳过 CTRL_MODE 写寄存器，避免测试脚本引入额外配置变量
+- [x] 复制 base 单电机测试 bash，并加入自动启动 base damiao_node 的命令
+- [x] 将原始 POS_VEL 测试默认电机改为 ID 6，并支持 `--motor-id`
+- [x] 兼容 HDSC USB-CAN 返回帧 data 偏移，修复反馈解算不更新的问题
+- [x] 兼容 HDSC 33-byte 返回帧，避免隔帧解析和 data 被截短
+- [x] 将 ID 6 原始 POS_VEL 测试改为固定 35 rad 保持，每秒重复发送
 - [ ] 设计达妙电机反馈读取接口
-- [ ] 支持任意控制模式下读取 position / velocity / torque / enable 状态
-- [ ] 支持 enable 电机作为传感器使用
-- [ ] 将串口设备、波特率、电机 ID、控制模式、超时策略参数化
+- [x] 支持任意控制模式下读取 position / velocity / torque / enable 状态的底层缓存
+- [x] 支持 enable 电机作为传感器使用的基础反馈读取逻辑
+- [ ] 将串口设备、波特率、电机 ID、控制模式、超时策略参数化为 ROS 参数
 - [ ] 增加控制指令 watchdog，并在 README 中记录触发条件和安全行为
 - [ ] 增加反馈 topic 或自定义 msg
