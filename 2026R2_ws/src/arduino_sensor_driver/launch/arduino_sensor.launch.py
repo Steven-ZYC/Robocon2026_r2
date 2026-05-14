@@ -30,6 +30,12 @@ def generate_launch_description():
         description='Whether to publish odom->base_link TF'
     )
 
+    imu_yaw_offset_arg = DeclareLaunchArgument(
+        'imu_yaw_offset_deg',
+        default_value='0.0',
+        description='IMU yaw offset in degrees (positive = CCW). Calibrates IMU chip misalignment relative to robot forward direction.'
+    )
+
     # Arduino sensor parser node
     arduino_node = Node(
         package='arduino_sensor_driver',
@@ -44,6 +50,7 @@ def generate_launch_description():
             'encoder_cpr': 8192,  # AMT103: PPR=2048, CPR=8192
             'wheel_radius_m': 0.029,  # 29mm radius (58mm diameter encoder wheel)
             'publish_tf': LaunchConfiguration('publish_tf'),
+            'imu_yaw_offset_deg': LaunchConfiguration('imu_yaw_offset_deg'),
         }]
     )
 
@@ -52,5 +59,6 @@ def generate_launch_description():
         device_id_pattern_arg,
         baud_rate_arg,
         publish_tf_arg,
+        imu_yaw_offset_arg,
         arduino_node,
     ])

@@ -27,7 +27,7 @@ ID=<pkg_id> T=<ms> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt> crc=<hex>
 Arduino端坐标系转换（源头处理，ROS端无需再转换）：
 - e1 为用户X轴（横向，向右正），e2 为用户Y轴（纵向，向前正）
 - ENC第一位 输出 e2_cnt   => REP X（向前）
-- ENC第二位 输出 e1_cnt  => REP Y（向左）
+- ENC第二位 输出 -e1_cnt  => REP Y（向左）
 
 超时保护：
 - 若 1.0 秒内未收到新数据包，发布零速度 Odometry
@@ -88,6 +88,7 @@ class ArduinoSensorParser(Node):
         # 若 encoder 方向实测发现相反，可直接改成 -1.0
         self.declare_parameter("enc_x_sign", 1.0)
         self.declare_parameter("enc_y_sign", 1.0)
+        self.declare_parameter("imu_yaw_offset_deg", 0.0)
 
         # 读取参数
         port_param = self.get_parameter("serial_port").value
@@ -105,6 +106,7 @@ class ArduinoSensorParser(Node):
 
         self.enc_x_sign = float(self.get_parameter("enc_x_sign").value)
         self.enc_y_sign = float(self.get_parameter("enc_y_sign").value)
+        self.imu_yaw_offset_deg = float(self.get_parameter("imu_yaw_offset_deg").value)
 
         # ===== 自动设备发现逻辑 =====
         if not port_param:  # 如果 serial_port 为空，则启用自动发现
@@ -149,7 +151,8 @@ class ArduinoSensorParser(Node):
         self.last_enc_y = None
         self.odom_x = 0.0
         self.odom_y = 0.0
-        self.odom_yaw = 0.0  # 从 IMU heading 获取
+        self.odom_yaw = 0.0  # /state_odom 使用的 yaw，单位 rad
+        self.pose2d_theta_deg = 0.0  # /state_pose2d.theta 直接透传 IMU heading，单位 deg
         self.last_heading = None
         self.last_recv_time = time.time()
         self.last_ts_ms = None
@@ -287,7 +290,7 @@ class ArduinoSensorParser(Node):
         msg.packet_id = data["pkg_id"]
         msg.timestamp_ms = data["ts_ms"]
 
-        msg.imu_heading_deg = data["imu"]["hdg"]
+        msg.imu_heading_deg = data["imu"]["hdg"] + self.imu_yaw_offset_deg
         msg.imu_rate_rad_s = data["imu"]["rate"]
         msg.imu_ax = data["imu"]["ax"]
         msg.imu_ay = data["imu"]["ay"]
@@ -320,10 +323,12 @@ class ArduinoSensorParser(Node):
         """
         enc_x = data["enc"]["x"]  # forward counts
         enc_y = data["enc"]["y"]  # left counts
-        heading_deg = data["imu"]["hdg"]
+        heading_deg = data["imu"]["hdg"] + self.imu_yaw_offset_deg
         rate_rad_s = data["imu"]["rate"]
         ts_ms = data["ts_ms"]
 
+        # IMU heading 原始输出为 [-179, 179] deg。Odometry/TF 仍按 ROS 标准使用 rad，
+        # 但 /state_pose2d.theta 面向队内二维状态接口，按需求直接发布 deg。
         yaw_rad = math.radians(heading_deg)
 
         # 初始化
@@ -333,6 +338,7 @@ class ArduinoSensorParser(Node):
             self.last_heading = yaw_rad
             self.last_ts_ms = ts_ms
             self.odom_yaw = yaw_rad
+            self.pose2d_theta_deg = heading_deg
             return
 
         # 编码器增量
@@ -363,6 +369,7 @@ class ArduinoSensorParser(Node):
         self.odom_x += dx_world
         self.odom_y += dy_world
         self.odom_yaw = yaw_rad
+        self.pose2d_theta_deg = heading_deg
 
         # 时间差（优先用 Arduino 时间戳）
         dt = None
@@ -392,7 +399,7 @@ class ArduinoSensorParser(Node):
         msg = Pose2D()
         msg.x = self.odom_x
         msg.y = self.odom_y
-        msg.theta = self.odom_yaw
+        msg.theta = self.pose2d_theta_deg
         self.pose2d_pub.publish(msg)
 
     def publish_odometry(self, angular_velocity: float):
