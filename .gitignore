@@ -12,3 +12,9 @@
 **/build/
 **/install/
 **/log/
+**/log/
+**/.ros_log/
+
+AGENTS.md
+.codex/
+.claude/
