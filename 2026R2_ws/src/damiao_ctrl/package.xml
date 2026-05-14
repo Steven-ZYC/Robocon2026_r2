@@ -1,15 +1,15 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>base_omniwheel_r2_700</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="yanczhang8@gmail.com">Steven Zhang</maintainer>
-  <license>Apache-2.0</license>
+  <name>damiao_ctrl</name>
+  <version>0.1.0</version>
+  <description>Unified Damiao motor controller over USB-CAN. Supports per-motor control modes for multi-subsystem robots (chassis + arm).</description>
+  <maintainer email="yanczhang8@gmail.com">Steven Zhang Yancheng</maintainer>
+  <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
-  <depend>damiao_ctrl</depend>
+  <depend>pyserial</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -76,7 +76,15 @@ Inside the container:
 ```bash
 source /opt/ros/jazzy/setup.bash
 source /workspace/2026R2_ws/install/setup.bash
-ros2 launch r2_launch launch.py
+
+# 1. 先启动统一电机控制（独占 USB-CAN）
+ros2 launch damiao_ctrl damiao_ctrl.launch.py
+
+# 2. 启动各子系统
+ros2 launch arduino_sensor_driver arduino_sensor.launch.py
+ros2 launch base_omniwheel_r2_700 base.launch.py
+ros2 launch arm arm.launch.py
+ros2 launch global_navigation global_navigation.launch.py
 ```
 
 **ROS Topics and Message Structures**
@@ -151,7 +159,9 @@ segments:
 |---|---|---|
 | `arduino_sensor_driver` | ament_python | Arduino 串口解析：IMU + 双编码器 → odometry |
 | `arduino_sensor_msgs` | ament_cmake | 自定义消息 `ArduinoSensorData` |
-| `base_omniwheel_r2_700` | ament_python | 底盘控制：运动学 + Damiao USB-CAN 电机驱动 |
+| `damiao_ctrl` | ament_python | **统一** Damiao USB-CAN 电机驱动，支持每电机独立模式（底盘 VEL + arm POS_VEL） |
+| `base_omniwheel_r2_700` | ament_python | 底盘逆运动学 + 本地导航（依赖 damiao_ctrl） |
+| `arm` | ament_python | 机械臂关节控制（依赖 damiao_ctrl） |
 | `global_navigation` | ament_python | FSM 全局导航：`/state_pose2d` → `/local_driving` |
 | `joystick_driver` | ament_python | evdev 手柄 → `joystick_msgs/Joystick` |
 | `joystick_msgs` | ament_cmake | 自定义消息 `Joystick` |
@@ -163,11 +173,32 @@ segments:
 joystick_driver (/joystick_input, joystick_msgs/Joystick)
         ↓
 global_navigation_node (/state_pose2d ← arduino, → /local_driving)
-        ↓
-local_navigation_node (逆运动学, → /damiao_control)
-        ↓
-motor_controller_node / damiao_node (USB-CAN → Damiao 电机)
+        ↓                                    arm_ctrl_node (/arm/joint_command → /damiao_control)
+        ↓                                          ↓
+local_navigation_node (逆运动学, → /damiao_control)  (motor 5-6, POS_VEL)
+        ↓                                          ↓
+        └──────────── damiao_control ──────────────┘
+                           ↓
+              damiao_ctrl / damiao_node (USB-CAN → 全部 6 电机)
+              motor_modes: [3,3,3,3,2,2] = VEL×4 + POS_VEL×2
 ```
+
+### 电机模式分配
+
+`damiao_ctrl` 通过 `motor_modes` 参数为每电机指定控制模式：
+
+```
+motor_ids  = [1,  2,  3,  4,  5,  6]
+motor_modes= [3,  3,  3,  3,  2,  2]
+              ↑   ↑   ↑   ↑   ↑   ↑
+             VEL VEL VEL VEL POS POS
+             └─── 底盘全向轮 ──┘└─ arm 关节 ─┘
+```
+
+- 底盘 `local_navigation_node` 发布 `[1-4, 3, speed]` (VEL 速度模式)
+- arm `arm_ctrl_node` 发布 `[5-6, 2, speed, position]` (POS_VEL 位置-速度模式)
+- 所有指令走同一个 `damiao_control` topic，由唯一的 `damiao_ctrl` 节点处理
+- 无串口冲突：`damiao_ctrl` 独占 USB-CAN 设备
 
 ### 各节点话题与消息格式
 
@@ -223,21 +254,32 @@ FSM 状态：`WAIT_FOR_POSE → DRIVE_TO_GOAL → ALIGN_HEADING → RUN_ACTION �
 
 机械参数：轮心距中心 0.299m，4 轮角度 135°(左前)/45°(右前)/315°(右后)/225°(左后)，经校准的方向符号修正。
 
-#### motor_controller_node / damiao_node (base_omniwheel_r2_700)
+#### damiao_motor_controller / damiao_node (damiao_ctrl)
 
-USB-CAN 桥接到 Damiao DMH3510 电机。通过 `/dev/serial/by-id/` 自动发现 HDSC CDC 设备。
+**统一的** USB-CAN Damiao 电机驱动节点。独占 USB-CAN 串口，管理全部 6 个电机，支持每电机独立控制模式。
 
 | 方向 | 话题 | 类型 |
 |---|---|---|
 | Sub | `/damiao_control` | `std_msgs/Float32MultiArray` |
 
 `/damiao_control` 格式：`[motor_id, mode, speed]` 或 `[motor_id, mode, speed, position]`
-- `motor_id`: 1-4 (float)
-- `mode`: 3 = VEL 速度模式, 2 = POS_VEL 位置-速度模式, 0 = 失能
-- `speed`: 目标角速度 (rad/s)，直接发送，**无缩放因子**
-- `position`: 目标位置 (rad)，仅 mode=2 时使用
+- `motor_id`: 1-6 (float)
+- `mode`: 3 = VEL, 2 = POS_VEL, 0 = 失能
+- `speed`: 目标角速度 (rad/s)
+- `position`: 目标位置 (rad)，仅 mode=2
+
+关键参数：`motor_ids` (默认 `[1,2,3,4,5,6]`), `motor_modes` (默认 `[3,3,3,3,2,2]`), `device_id`, `command_timeout` (0.5s watchdog)。
 
 含 command-timeout 看门狗：若 `/damiao_control` 停止 0.5s，所有电机自动发送零速。
+
+#### arm_ctrl_node (arm)
+
+| 方向 | 话题 | 类型 |
+|---|---|---|
+| Sub | `arm/joint_command` | `std_msgs/Float32MultiArray` |
+| Pub | `damiao_control` | `std_msgs/Float32MultiArray` |
+
+`arm/joint_command` 格式：`[joint_1_target, joint_2_target, ...]`。默认 `control_mode=2` (POS_VEL)，发布 `[5, 2, speed, position]` 和 `[6, 2, speed, position]` 到 `damiao_control`。含方向符号和最大速度限制。
 
 #### joystick_publisher_node (joystick_driver)
 
@@ -256,3 +298,5 @@ USB-CAN 桥接到 Damiao DMH3510 电机。通过 `/dev/serial/by-id/` 自动发�
 5. **不存在 `general_driving` 话题**：全局导航直接发布到 `/local_driving`
 6. **航点配置**：通过 ROS 参数（非单独 YAML 地图文件），单位为 mm 和 rad
 7. **`r2_launch` 已过时**：引用了不存在的包，建议使用各包独立 launch 文件
+8. **`damiao_ctrl` 统一电机控制**：电机驱动从各包抽出为独立 `damiao_ctrl` 包，独占 USB-CAN，支持 `motor_modes` 参数为每电机指定模式（底盘 VEL / arm POS_VEL）
+9. **新增 `arm` 包**：机械臂关节控制，发布 POS_VEL 指令到 `damiao_control`

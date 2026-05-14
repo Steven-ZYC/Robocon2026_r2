@@ -2,15 +2,14 @@ from setuptools import find_packages, setup
 from glob import glob
 import os
 
-package_name = 'base_omniwheel_r2_700'
+package_name = 'arm'
 
 setup(
     name=package_name,
-    version='0.0.0',
+    version='0.1.0',
     packages=find_packages(exclude=['test']),
     install_requires=[
         'setuptools',
-        'numpy'
     ],
     extras_require={'test': ['pytest']},
     data_files=[
@@ -20,13 +19,13 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
     zip_safe=True,
-    maintainer='steven',
+    maintainer='Steven Zhang Yancheng',
     maintainer_email='yanczhang8@gmail.com',
-    description='Omniwheel chassis kinematics and local navigation',
-    license='Apache-2.0',
+    description='Damiao-motor-driven robotic arm control',
+    license='MIT',
     entry_points={
         'console_scripts': [
-            'local_navigation_node = base_omniwheel_r2_700.local_navigation_node:main',
+            'arm_ctrl_node = arm.arm_ctrl_node:main',
         ],
     },
 )
