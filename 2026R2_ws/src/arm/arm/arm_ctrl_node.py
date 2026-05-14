@@ -9,7 +9,7 @@ Subscribes:
 - arm/pneu_command (Float32MultiArray): [gripper, lift, stopper]  (0.0/1.0)
 
 Publishes:
-- joint_damiao_control (Float32MultiArray): [motor_id, mode, speed, position?]
+- damiao_control (Float32MultiArray): [motor_id, mode, speed, position?]
 - joint_pneu_control (Float32MultiArray): [gripper, lift, stopper] (0.0/1.0)
 """
 
@@ -97,7 +97,7 @@ class ArmCtrlNode(Node):
         # ---- Publishers ----
         self.motor_publisher = self.create_publisher(
             Float32MultiArray,
-            "joint_damiao_control",
+            "damiao_control",
             10,
         )
         self.pneu_publisher = self.create_publisher(
@@ -135,7 +135,7 @@ class ArmCtrlNode(Node):
         self.publish_joint_commands(targets)
 
     def publish_joint_commands(self, targets):
-        """Convert joint targets to per-motor joint_damiao_control messages."""
+        """Convert joint targets to per-motor damiao_control messages."""
         for i, target in enumerate(targets):
             motor_id = self.joint_motor_ids[i]
             direction = (
