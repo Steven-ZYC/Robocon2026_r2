@@ -17,3 +17,6 @@
 2026R2_ws/src/test_damiao/resource/*.pdf
 
 AGENTS.md
+AGENTS.md
+.codex/
+.claude/
