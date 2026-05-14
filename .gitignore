@@ -13,3 +13,7 @@
 **/install/
 **/log/
 **/.ros_log/
+
+AGENTS.md
+.codex/
+.claude/
