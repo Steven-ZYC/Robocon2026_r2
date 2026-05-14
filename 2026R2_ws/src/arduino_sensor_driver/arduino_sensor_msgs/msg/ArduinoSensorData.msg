@@ -1,22 +1,24 @@
-# Raw sensor data from Arduino
-# Format: ID=XXX T=XXX IMU=... ENC=... DEG=... crc=XX
+# Raw sensor data from Arduino.
+# Format: ID=XXX T=XXX IMU=... ENC=... crc=XX
 
 std_msgs/Header header
 
-uint32 packet_id        # Package ID from Arduino
-uint32 timestamp_ms     # Arduino millis() timestamp
+uint32 packet_id        # Package ID from Arduino, unitless
+uint32 timestamp_ms     # Arduino millis() timestamp, unit: ms
 
 # IMU data (LPBUS format)
-float32 imu_heading_deg    # Heading in degrees [0, 360)
-float32 imu_rate_rad_s     # Angular rate in rad/s
-float32 imu_ax             # Acceleration X (normalized)
-float32 imu_ay             # Acceleration Y (normalized)
-float32 imu_az             # Acceleration Z (normalized)
+float32 imu_heading_deg    # Heading, unit: deg
+float32 imu_rate_rad_s     # Angular rate around Z, unit: rad/s
+float32 imu_ax             # Acceleration X, normalized by g
+float32 imu_ay             # Acceleration Y, normalized by g
+float32 imu_az             # Acceleration Z, normalized by g
 
-# Encoder data (AMT103, CPR=8192)
-int64 enc_x_counts         # X-axis encoder counts (horizontal motion)
-int64 enc_y_counts         # Y-axis encoder counts (vertical motion)
-float32 enc_x_deg          # X-axis position in degrees [0, 360)
-float32 enc_y_deg          # Y-axis position in degrees [0, 360)
+# Encoder data in the robot body frame, following ROS REP 103.
+int64 enc_x_counts         # REP X forward-positive accumulated counts, unit: counts
+int64 enc_y_counts         # REP Y left-positive accumulated counts, unit: counts
 
-bool crc_valid             # CRC8-ATM validation result
+# Reserved compatibility fields. The current Arduino firmware does not emit DEG.
+float32 enc_x_deg          # Unit: deg, currently published as 0.0
+float32 enc_y_deg          # Unit: deg, currently published as 0.0
+
+bool crc_valid             # CRC8-ATM validation result, unitless

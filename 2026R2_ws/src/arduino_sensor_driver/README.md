@@ -2,6 +2,28 @@
 
 ## 项目进度（Changelog）
 
+### v0.2.5 (2026-05-13)
+- ✅ **补充 Odometry 计算逻辑说明**
+  - 说明 IMU heading 为 `±180°` 包角输出时，如何用 `wrap_angle_rad()` 得到正确的小角度 `dtheta`
+  - 说明编码器安装点偏移补偿公式，避免原地旋转被误算成平移
+  - 说明 `/state_odom` 使用 rad/quaternion，`/state_pose2d.theta` 直接使用 deg
+
+### v0.2.4 (2026-05-13)
+- ✅ **修正 `/state_pose2d.theta` 单位约定**
+  - Arduino raw sensor data 中 `imu_heading_deg` 实际为 `[-179, 179] deg` 包角输出
+  - `/state_pose2d.theta` 改为直接发布该 heading deg，不再转换为 rad
+  - `/state_odom` 与 TF 仍保持 ROS 标准：内部 yaw 使用 rad，并转换为四元数发布
+  - 注意：v0.2.2 曾将 `/state_pose2d.theta` 说明为 rad；从 v0.2.4 起以本条当前约定为准
+
+### v0.2.3 (2026-05-13)
+- ✅ **校准 README 与当前 package 内容**
+  - 协议说明更新为当前 ROS 端实际解析的 v2 格式：不再包含 `DEG=` 字段
+  - 参数表补齐 `device_id_pattern`、`enc_x_sign`、`enc_y_sign`
+  - 修正默认串口策略：`serial_port=""` 时按 `/dev/serial/by-id/` 自动发现设备
+  - 修正默认编码器轮半径为 `0.029 m`，与代码、launch、config 一致
+  - 补充所有输出字段、参数、坐标、速度与角度的单位定义
+  - 修正测试脚本说明：`test_arduino_sensors.sh` 当前实际输出 `/arduino/raw_sensor_data`
+
 ### v0.2.2 (2026-03-13)
 - ✅ **新增二维状态话题 `/state_pose2d`**
   - 使用标准消息 `geometry_msgs/Pose2D`
@@ -49,8 +71,8 @@
 本 package 提供 Arduino 传感器数据驱动，适用于：
 - **IMU**：使用 LPBUS 协议输出航向角（heading）与角速度（rate）
 - **双轴编码器**：AMT103（PPR=2048, CPR=8192）
-  - X 轴（第一位）：用户坐标系横向移动（向右为正）
-  - Y 轴（第二位）：用户坐标系纵向移动（向前为正）
+  - ROS 端接收的 `ENC` 第一位：REP 103 X 方向累计计数，向前为正
+  - ROS 端接收的 `ENC` 第二位：REP 103 Y 方向累计计数，向左为正
 
 ### 适用范围
 - 二自由度平移平台（X-Y 移动机构）
@@ -64,8 +86,8 @@
 - **e1（编码器1）**：横向轴，向右为正
 - **e2（编码器2）**：纵向轴，向前为正
 
-#### Arduino端输出（REP 103 compliant）
-Arduino `emit_package()` 中完成转换：
+#### Arduino 端输出（REP 103 compliant）
+Arduino `emit_package()` 中应完成转换：
 ```
 ENC第一位 (rep_x) = e2_cnt     // REP X（向前）= 用户Y
 ENC第二位 (rep_y) = -e1_cnt    // REP Y（向左）= -用户X
@@ -105,30 +127,39 @@ ENC第二位 (rep_y) = -e1_cnt    // REP Y（向左）= -用户X
 | `/state_odom` | `nav_msgs/Odometry` | ~100Hz | 标准 ROS 里程计接口；仅表达二维状态，供导航节点与 TF 使用 |
 | `/state_pose2d` | `geometry_msgs/Pose2D` | ~100Hz | 简化二维状态接口，仅包含 `x`、`y`、`theta` |
 
+#### `/state_pose2d` 字段单位
+| 字段 | 含义 | 单位 |
+|------|------|------|
+| `x` | 机器人在 `odom` 坐标系下的 X 方向位置，向前为正 | m |
+| `y` | 机器人在 `odom` 坐标系下的 Y 方向位置，向左为正 | m |
+| `theta` | 直接透传 Arduino IMU heading，范围约 `[-179, 179]`，逆时针为正 | deg |
+
 #### TF 广播（可选）
 - **Frame**: `odom` → `base_link`
 - **条件**: 参数 `publish_tf: true`
 
 #### 参数
-| 参数名 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `serial_port` | string | `/dev/ttyACM0` | Arduino 串口设备路径 |
-| `baud_rate` | int | `115200` | 串口波特率（必须与 Arduino 一致） |
-| `timeout_sec` | double | `1.0` | 超时时间（秒），超过此时间未收到数据则发布零速度 |
-| `encoder_cpr` | int | `8192` | 编码器每转计数（AMT103 固定值） |
-| `wheel_radius_m` | double | `0.05` | 编码器轮半径（米），用于计算线性位移 |
-| `enc_x_pos_x_m` | double | `0.0` | X encoder 安装点相对机器人中心的 X 坐标 |
-| `enc_x_pos_y_m` | double | `0.153102` | X encoder 安装点相对机器人中心的 Y 坐标 |
-| `enc_y_pos_x_m` | double | `-0.153102` | Y encoder 安装点相对机器人中心的 X 坐标 |
-| `enc_y_pos_y_m` | double | `0.0` | Y encoder 安装点相对机器人中心的 Y 坐标 |
-| `publish_tf` | bool | `true` | 是否发布 odom→base_link TF |
+| 参数名 | 类型 | 默认值 | 单位 | 说明 |
+|--------|------|--------|------|------|
+| `serial_port` | string | `""` | - | Arduino 串口设备路径；空字符串表示启用自动发现 |
+| `device_id_pattern` | string | `Arduino` | - | 自动发现时匹配 `/dev/serial/by-id/` 文件名的关键词 |
+| `baud_rate` | int | `115200` | bit/s | 串口波特率，必须与 Arduino `Serial.begin()` 一致 |
+| `timeout_sec` | double | `1.0` | s | 超时时间，超过此时间未收到完整数据包则发布零速度 |
+| `encoder_cpr` | int | `8192` | counts/rev | 编码器每转计数，AMT103 PPR=2048 时四倍频 CPR=8192 |
+| `wheel_radius_m` | double | `0.029` | m | 编码器轮半径，当前配置对应直径 58 mm |
+| `enc_x_pos_x_m` | double | `0.0` | m | X/forward encoder 安装点相对机器人旋转中心的 X 坐标 |
+| `enc_x_pos_y_m` | double | `0.153102` | m | X/forward encoder 安装点相对机器人旋转中心的 Y 坐标 |
+| `enc_y_pos_x_m` | double | `-0.153102` | m | Y/left encoder 安装点相对机器人旋转中心的 X 坐标 |
+| `enc_y_pos_y_m` | double | `0.0` | m | Y/left encoder 安装点相对机器人旋转中心的 Y 坐标 |
+| `enc_x_sign` | double | `1.0` | - | X/forward encoder 方向修正；方向反了改为 `-1.0` |
+| `enc_y_sign` | double | `1.0` | - | Y/left encoder 方向修正；方向反了改为 `-1.0` |
+| `publish_tf` | bool | `true` | - | 是否发布 `odom` → `base_link` TF |
 
 Encoder position coordinates use the robot body frame:
-
 - Origin: robot rotation center
 - +X: robot forward
 - +Y: robot left
-- Unit: meter
+- Unit: meter (`m`)
 
 ---
 
@@ -136,12 +167,12 @@ Encoder position coordinates use the robot body frame:
 
 ### Arduino 输出格式
 ```
-ID=<pkg_id> T=<ms> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt> DEG=<x_deg>,<y_deg> crc=<hex>
+ID=<pkg_id> T=<ms> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt> crc=<hex>
 ```
 
 **示例**：
 ```
-ID=4836 T=48400 IMU=-0.11,0.02,-0.985,-0.073,-0.077 ENC=68,31039 DEG=2.99,284.02 crc=D8
+ID=4836 T=48400 IMU=-0.11,0.02,-0.985,-0.073,-0.077 ENC=68,31039 crc=D8
 ```
 
 ### 字段说明
@@ -149,12 +180,16 @@ ID=4836 T=48400 IMU=-0.11,0.02,-0.985,-0.073,-0.077 ENC=68,31039 DEG=2.99,284.02
 |------|------|------|
 | `ID` | 数据包 ID（递增） | - |
 | `T` | Arduino 时间戳（millis） | ms |
-| `IMU` | 航向角, 角速度, 加速度 X/Y/Z | deg, rad/s, g |
-| `ENC` | **REP X（向前）计数**, **REP Y（向左）计数** | counts |
-| `DEG` | REP X角度, REP Y角度 | deg [0, 360) |
+| `IMU[0]` | 航向角 heading | deg |
+| `IMU[1]` | 绕 Z 轴角速度 yaw rate | rad/s |
+| `IMU[2..4]` | 加速度 X/Y/Z，当前按 IMU 归一化输出直接透传 | g |
+| `ENC[0]` | REP X（向前）累计计数 | counts |
+| `ENC[1]` | REP Y（向左）累计计数 | counts |
 | `crc` | CRC8-ATM 校验值（不含 "crc=XX" 部分） | hex |
 
-**ENC 字段说明**：Arduino端已完成坐标系转换，直接输出符合REP 103标准的计数。物理安装上e1为横向（右正）、e2为纵向（前正），但输出时交换为 `ENC=e2_cnt, -e1_cnt`。
+**ENC 字段说明**：Arduino 端应完成坐标系转换，直接输出符合 REP 103 标准的计数。物理安装上 e1 为横向（右正）、e2 为纵向（前正），输出时应映射为 `ENC=e2_cnt,-e1_cnt`。
+
+**兼容性说明**：当前 `ArduinoSensorData.msg` 仍保留 `enc_x_deg`、`enc_y_deg` 字段，但 ROS 端 v2 解析器不再读取 `DEG=`，发布原始消息时这两个字段固定置为 `0.0 deg`，仅用于保持消息兼容。
 
 ### CRC8-ATM 校验
 - **多项式**: `0x07`
@@ -175,14 +210,17 @@ ros2 launch arduino_sensor_driver arduino_sensor.launch.py
 ```bash
 ros2 launch arduino_sensor_driver arduino_sensor.launch.py \
   serial_port:=/dev/ttyUSB0 \
+  device_id_pattern:=Arduino \
   baud_rate:=115200 \
   publish_tf:=true
 ```
 
+如果 `serial_port` 保持空字符串，节点会在 `/dev/serial/by-id/` 下查找文件名包含 `device_id_pattern` 的设备。
+
 ### 方法 2：直接运行 node
 ```bash
 ros2 run arduino_sensor_driver arduino_sensor_parser \
-  --ros-args -p serial_port:=/dev/ttyACM0
+  --ros-args -p serial_port:=/dev/ttyACM0 -p wheel_radius_m:=0.029
 ```
 
 ### 方法 3：使用 package 内置 bash 脚本
@@ -192,7 +230,7 @@ cd ~/robotics/Robocon2026_r2/2026R2_ws/src/arduino_sensor_driver/scripts
 # 绕过 ROS，直接读取 Arduino 原始串口数据（包含 CRC 结果）
 ./test_imu_encoder.sh
 
-# 通过 ROS 启动 arduino_sensor_driver 并读取 /state_pose2d
+# 通过 ROS 启动 arduino_sensor_driver 并读取 /arduino/raw_sensor_data
 ./test_arduino_sensors.sh
 ```
 
@@ -204,23 +242,121 @@ cd ~/robotics/Robocon2026_r2/2026R2_ws/src/arduino_sensor_driver/scripts
 - **Odometry Frame**: `odom`（世界坐标系，固定于启动位置）
 - **Robot Frame**: `base_link`（机器人本体坐标系）
 - **朝向来源**: IMU heading（绝对角度，相对初始朝向）
-- **二维状态输出**: `/state_pose2d` 中的 `x/y/theta` 与 `/state_odom` 中的平面位姿保持一致
+- **二维状态输出**: `/state_pose2d` 中的 `x/y/theta` 单位分别为 `m`、`m`、`deg`；其中 `theta` 直接使用 Arduino IMU heading
+- **标准 Odometry 输出**: `/state_odom` 仍使用 ROS 标准姿态表达，yaw 在节点内部以 `rad` 参与计算，并发布为四元数
 
 ### 编码器数据约定（REP 103 compliant，由Arduino端完成转换）
 - **ENC X（第一位）**：向前为正（REP X，Arduino端输出 e2_cnt）
 - **ENC Y（第二位）**：向左为正（REP Y，Arduino端输出 -e1_cnt）
 - **位移计算**：`delta_distance = (delta_counts / CPR) * 2π * wheel_radius`
+- **速度计算**：`linear_vx/linear_vy = 本周期机器人本体系位移 / Arduino 时间戳差值`，单位为 `m/s`
 - ROS端无需额外坐标转换，直接使用
 
 ### 数据假设
 1. Arduino 每 10ms 发送一行数据（~100Hz）
-2. IMU heading 为绝对朝向（0~360°）
+2. IMU heading 为包角后的绝对朝向，范围约 `[-179, 179] deg`
 3. 编码器轮与机器人刚性固连（无打滑）
 4. 串口数据以 ASCII 文本行传输，换行符为 `\n`
 
+### Odometry 计算逻辑
+`arduino_sensor_parser` 使用 IMU heading 提供朝向，用双轴编码器提供本体坐标系下的平移增量。计算结果发布到 `/state_odom`，并同步生成简化接口 `/state_pose2d`。
+
+#### 1. heading 单位与两个输出接口
+- Arduino raw data 的 `imu_heading_deg` 是 `±180°` 包角输出，例如 `179°` 后继续逆时针旋转会跳到 `-179°`。
+- `/state_odom` 是 ROS 标准 Odometry，节点内部会把 heading 从 `deg` 转成 `rad`，再发布为 quaternion。
+- `/state_pose2d.theta` 是队内二维状态接口，直接发布 `imu_heading_deg`，单位为 `deg`，不会转成 `rad`。
+
+#### 2. heading 跳变处理
+虽然 IMU heading 会在 `179°` 和 `-179°` 附近跳变，但 odometry 不直接使用普通减法作为真实转角，而是使用包角函数：
+
+```python
+yaw_rad = math.radians(heading_deg)
+dtheta = wrap_angle_rad(yaw_rad - last_heading)
+```
+
+`wrap_angle_rad()` 会把角度差限制到 `[-pi, pi]`：
+
+```python
+wrap_angle_rad(angle) = atan2(sin(angle), cos(angle))
+```
+
+因此当 heading 从 `179°` 跳到 `-179°` 时：
+
+```text
+普通差值: -179° - 179° = -358°
+包角后:   +2°
+```
+
+这表示机器人实际只转过了约 `2°`，不会被误认为反向转了 `358°`。
+
+#### 3. 编码器增量转位移
+编码器累计计数先做差分，再按编码器轮半径和 CPR 转成本体坐标系位移：
+
+```python
+delta_x_counts = enc_x - last_enc_x
+delta_y_counts = enc_y - last_enc_y
+meters_per_count = 2 * pi * wheel_radius_m / encoder_cpr
+
+dx_meas = enc_x_sign * delta_x_counts * meters_per_count
+dy_meas = enc_y_sign * delta_y_counts * meters_per_count
+```
+
+其中：
+- `dx_meas`：机器人本体 X 方向位移，向前为正，单位 `m`
+- `dy_meas`：机器人本体 Y 方向位移，向左为正，单位 `m`
+
+#### 4. 编码器安装点偏移补偿
+如果编码器轮没有安装在机器人旋转中心，机器人原地转动时，编码器也会测到一段由旋转造成的假位移。节点用 IMU 计算出的 `dtheta` 补偿这部分误差：
+
+```python
+dx_center = dx_meas + enc_x_pos_y_m * dtheta
+dy_center = dy_meas - enc_y_pos_x_m * dtheta
+```
+
+含义：
+- `enc_x_pos_y_m`：X/forward 编码器安装点相对旋转中心的 Y 坐标
+- `enc_y_pos_x_m`：Y/left 编码器安装点相对旋转中心的 X 坐标
+- `dx_center/dy_center`：补偿后，估算出的机器人旋转中心平移量
+
+如果机器人原地旋转但中心没有平移，正确的参数应让 `dx_center/dy_center` 接近 `0`。
+
+#### 5. body frame 转 odom frame
+补偿后的位移仍然在机器人本体坐标系中。节点使用本周期的中间朝向 `yaw_mid` 把它旋转到 `odom` 坐标系：
+
+```python
+yaw_mid = wrap_angle_rad(last_heading + 0.5 * dtheta)
+
+dx_world = dx_center * cos(yaw_mid) - dy_center * sin(yaw_mid)
+dy_world = dx_center * sin(yaw_mid) + dy_center * cos(yaw_mid)
+
+odom_x += dx_world
+odom_y += dy_world
+odom_yaw = yaw_rad
+```
+
+使用 `yaw_mid` 的原因是：一个周期内机器人可能同时平移和旋转，用区间中间朝向积分通常比直接用上一帧或当前帧朝向更稳定。
+
+#### 6. 速度估算
+节点优先使用 Arduino 时间戳计算周期时间：
+
+```python
+dt = (ts_ms - last_ts_ms) / 1000.0
+linear_vx = dx_center / dt
+linear_vy = dy_center / dt
+```
+
+只有当 `dt` 在合理范围内时才更新线速度；如果时间戳异常或间隔过大，线速度会置为 `0.0`，避免发布明显错误的速度。
+
+#### 7. 算法适用与注意事项
+- 该算法适用于低速到中速的二维平面定位，假设编码器轮不严重打滑。
+- `±180°` heading 跳变不会破坏 `/state_odom` 的位置积分，因为 `dtheta` 已做包角处理。
+- `/state_odom.pose.pose.orientation` 是 quaternion，不表达“累计转了几圈”，只表达当前朝向。
+- 如果下游节点需要连续累计角度，应单独订阅 heading 并自行 unwrap，不应直接从 `/state_odom` quaternion 推断圈数。
+- 如果下游节点使用 `/state_pose2d.theta` 做三角函数或角度误差控制，必须先从 `deg` 转为 `rad`。
+
 ### 输出设计说明
 - `/state_odom` 面向 ROS 标准生态，保留 `nav_msgs/Odometry` 类型，避免破坏现有导航节点、TF 和调试工具
-- `/state_pose2d` 面向二维底盘业务接口，专门提供最小必要状态：`x`、`y`、`theta`
+- `/state_pose2d` 面向二维底盘业务接口，专门提供最小必要状态：`x`、`y`、`theta_deg`
 - 如果下游节点只关心平面位姿，优先订阅 `/state_pose2d`
 - 如果下游节点需要标准消息、frame 语义或 TF 配合，继续使用 `/state_odom`
 
@@ -233,7 +369,7 @@ cd ~/robotics/Robocon2026_r2/2026R2_ws/src/arduino_sensor_driver/scripts
 
 ### 超时行为
 1. 打印 WARNING 日志：`Arduino data timeout! Publishing zero-velocity odometry.`
-2. 发布零速度 Odometry（位置保持不变，速度为 0）
+2. 发布零速度 Odometry（位置保持不变，`linear.x/y/z = 0.0 m/s`，`angular.z = 0.0 rad/s`）
 3. 不停止 node，继续等待数据恢复
 
 ### 参数配置
@@ -274,7 +410,7 @@ ros2 topic echo /arduino/raw_sensor_data | grep "crc_valid: false"
 
 ### 6. 查看串口设备
 ```bash
-ls -l /dev/ttyACM* /dev/ttyUSB*
+ls -l /dev/serial/by-id/ /dev/ttyACM* /dev/ttyUSB*
 ```
 
 ### 7. 使用脚本直接读取原始串口数据（无 ROS2）
@@ -284,12 +420,12 @@ cd ~/robotics/Robocon2026_r2/2026R2_ws/src/arduino_sensor_driver/scripts
 ```
 说明：脚本会自动查找 Arduino 串口，并在终端中打印原始数据包解析结果与 CRC 校验结果。
 
-### 8. 使用脚本读取 /state_pose2d（通过 ROS2）
+### 8. 使用脚本读取 ROS2 原始消息
 ```bash
 cd ~/robotics/Robocon2026_r2/2026R2_ws/src/arduino_sensor_driver/scripts
 ./test_arduino_sensors.sh
 ```
-说明：脚本会先启动 `arduino_sensor_driver`，再持续输出 `/state_pose2d` 的 `x`、`y`、`theta`。
+说明：脚本会先启动 `arduino_sensor_driver`，检查 `/state_pose2d` publisher 是否出现，然后持续输出 `/arduino/raw_sensor_data`。当前脚本名称和提示文字保留了旧调试意图，但实际 echo 的 topic 是 `/arduino/raw_sensor_data`。
 
 ---
 
@@ -300,7 +436,7 @@ cd ~/robotics/Robocon2026_r2/2026R2_ws/src/arduino_sensor_driver/scripts
 **解决**:
 ```bash
 # 1. 查看实际设备名称
-ls /dev/ttyACM* /dev/ttyUSB*
+ls -l /dev/serial/by-id/ /dev/ttyACM* /dev/ttyUSB*
 
 # 2. 添加用户到 dialout 组（需重新登录）
 sudo usermod -aG dialout $USER
@@ -350,7 +486,7 @@ sudo chmod 666 /dev/ttyACM0
 - `nav_msgs`
 - `geometry_msgs`
 - `tf2_ros`
-- `arduino_sensor_msgs`（本 package 自定义消息）
+- `arduino_sensor_msgs`（同工作区自定义消息 package）
 
 ### Python 依赖
 - `pyserial` (需额外安装)
@@ -366,20 +502,42 @@ pip3 install pyserial
 ```
 arduino_sensor_driver/
 ├── arduino_sensor_driver/
+│   ├── config/
+│   │   └── arduino_sensor.yaml             # 历史内层配置副本，当前安装使用外层 config/
+│   ├── launch/
+│   │   └── arduino_sensor.launch.py        # 历史内层 launch 副本，当前安装使用外层 launch/
+│   ├── resource/
+│   │   └── arduino_sensor_driver           # 历史内层 resource 副本
 │   ├── __init__.py
-│   └── arduino_sensor_parser_node.py       # 主节点
+│   ├── arduino_sensor_parser_node.py       # 主节点
+│   ├── package.xml                         # 历史内层 package 描述副本
+│   ├── setup.cfg                           # 历史内层 Python 安装配置副本
+│   └── setup.py                            # 历史内层 Python 安装脚本副本
+├── arduino_sensor_msgs/
+│   ├── msg/
+│   │   └── ArduinoSensorData.msg           # 原始 Arduino 数据消息定义
+│   ├── CMakeLists.txt
+│   └── package.xml
+├── scripts/
+│   ├── test_arduino_sensors.sh             # ROS2 方式启动并 echo 原始消息
+│   └── test_imu_encoder.sh                 # 非 ROS2 串口直读测试
 ├── launch/
 │   └── arduino_sensor.launch.py            # Launch 文件
 ├── config/
 │   └── arduino_sensor.yaml                 # 默认参数
+├── rviz/
+│   └── r1_rviz.rviz                        # RViz 调试配置
+├── urdf/
+│   └── r1_base.urdf                        # 调试用 URDF
 ├── resource/
 │   └── arduino_sensor_driver
 ├── package.xml
+├── setup.cfg
 ├── setup.py
 ├── README.md
 └── TODO.md
 
-arduino_sensor_msgs/                         # 自定义消息 package
+../arduino_sensor_msgs/                      # 工作区中另有一份同名自定义消息 package
 ├── msg/
 │   └── ArduinoSensorData.msg
 ├── CMakeLists.txt

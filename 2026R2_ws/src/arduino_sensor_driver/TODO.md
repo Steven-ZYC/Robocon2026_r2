@@ -1,5 +1,21 @@
 # TODO List - arduino_sensor_driver
 
+## v0.2.4 已完成 (2026-05-13)
+- [x] 修正 `/state_pose2d.theta` 单位约定
+  - 确认 Arduino raw sensor data 的 `imu_heading_deg` 为 `[-179, 179] deg`
+  - `/state_pose2d.theta` 直接发布 heading deg，不再转换为 rad
+  - `/state_odom` 与 TF 继续保持 ROS 标准 rad/四元数表达
+  - README 追加 v0.2.4 说明，保留 v0.2.2 的历史 rad 设计记录
+
+## v0.2.3 已完成 (2026-05-13)
+- [x] 核对 README 与当前 package 内容一致性
+  - 修正当前协议为无 `DEG=` 字段的 v2 串口格式
+  - 补齐 `device_id_pattern`、`enc_x_sign`、`enc_y_sign` 参数说明
+  - 修正 `serial_port` 默认值为空字符串并启用自动发现
+  - 修正 `wheel_radius_m` 默认值为 `0.029 m`
+  - 补充 topic、参数、协议字段、坐标、速度、角度的单位定义
+  - 标注 `test_arduino_sensors.sh` 当前实际 echo `/arduino/raw_sensor_data`
+
 ## v0.2.1 已完成 (2026-03-06)
 - [x] **坐标系转换移至Arduino端（源头处理）**
   - 移除ROS端用户坐标系→REP 103的手动转换代码
