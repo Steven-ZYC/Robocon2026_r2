@@ -62,3 +62,96 @@ This package works in conjunction with the `base_omniwheel_r2_700` package:
 - **Motor Control** (in `base_omniwheel_r2_700`): Direct motor commands via CAN bus
 
 For complete system operation, both packages must be running. See `START_GUIDE.md` for detailed setup instructions.
+
+---
+
+## v0.2 — Mission Executor（2026-05-15）
+
+### 架构变更
+
+全局导航 node 从单一路径跟踪升级为 Mission Executor，统一协调底盘、手臂电机和气动。
+
+### 数据流
+
+```
+[Mission YAML] → Global Navigation Node (MissionExecutor)
+                    ├── /local_driving       → local_navigation_node → damiao_ctrl → Motor 1-4
+                    ├── damiao_control        → damiao_ctrl → Motor 5-6 (arm joints)
+                    └── joint_pneu_control    → pneumatics → Arduino → 气动阀
+                          ↑
+                    /state_pose2d  (arduino_sensor_driver)
+                    /arduino/raw_sensor_data  (conditional evaluation)
+```
+
+### Mission YAML 结构
+
+Mission YAML 包含四部分：
+
+| 区块 | 说明 |
+|---|---|
+| `waypoints` | 所有坐标集中定义，Python 不写死任何坐标 |
+| `profiles` | 导航参数模板（slow / normal / fast） |
+| `actuators` | 执行器语义映射（arm_yaw_motor: front → motor_id=5, position=0.0） |
+| `stages` | 任务脚本，支持 7 种 stage type |
+
+### Stage Types
+
+| type | 说明 | 示例 |
+|---|---|---|
+| `navigate` | 导航到 waypoint，使用指定 profile | `{ type: navigate, to: wp_pickup, profile: slow }` |
+| `arm` | 设置执行器语义状态 | `{ type: arm, arm_yaw_motor: front, arm_gripper: open }` |
+| `sequential` | 顺序执行子步骤 | `{ type: sequential, steps: [...] }` |
+| `wait` | 等待指定秒数 | `{ type: wait, duration_s: 0.5 }` |
+| `conditional` | 根据传感器值跳转 | `{ type: conditional, condition: {...}, then: throw, else: retry }` |
+| `parallel` | 同时执行多个动作 | `{ type: parallel, actions: [...], wait_until: all_complete }` |
+| `terminate` | 停止任务，气动归零 | `{ type: terminate }` |
+
+### 执行器语义
+
+Mission 中用自然语言描述执行器状态，数值映射集中在 `actuators` 区块：
+
+```yaml
+actuators:
+  arm_yaw_motor:         # 大秒电机 5
+    type: motor
+    motor_id: 5
+    mode: pos_vel
+    speed: 3.0
+    positions:
+      front: 0.0
+      back:  3.14
+      mid:   1.57
+
+  arm_gripper:           # 气动夹爪 index 0
+    type: pneumatic
+    index: 0
+    states:
+      open:  1.0
+      close: 0.0
+```
+
+### 启动
+
+```bash
+ros2 launch navigation navigation.launch.py mission_file:=/path/to/mission_1.yaml
+```
+
+### Topics
+
+| 方向 | Topic | 类型 |
+|---|---|---|
+| Sub | `/state_pose2d` | `Pose2D` |
+| Sub | `/arduino/raw_sensor_data` | `ArduinoSensorData` |
+| Pub | `/local_driving` | `Float32MultiArray` |
+| Pub | `damiao_control` | `Float32MultiArray` |
+| Pub | `joint_pneu_control` | `Float32MultiArray` |
+| Pub | `/global_nav/status` | `String` |
+
+---
+
+## 更新记录
+
+| 日期 | 说明 |
+|---|---|
+| 2026-05-15 | v0.2 — Mission Executor 取代 route loader，支持 arm/pneu/conditional |
+| 2026-05-14 | v0.1 — 初始路径跟踪，cubic speed profiling |

@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""
-Launch file for Global Navigation System
-
-Launches:
-1. global_navigation_node - Waypoint-based path following with cubic speed profiling
-
-Usage:
-    ros2 launch navigation navigation.launch.py
-"""
+"""Launch global navigation with mission executor."""
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
@@ -19,14 +11,13 @@ import os
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory('navigation')
-    
-    # Launch arguments
-    route_file_arg = DeclareLaunchArgument(
-        'route_file',
-        default_value=os.path.join(pkg_dir, 'routes', 'route_A.yaml'),
-        description='Path to route YAML file'
+
+    mission_file_arg = DeclareLaunchArgument(
+        'mission_file',
+        default_value=os.path.join(pkg_dir, 'routes', 'mission_1.yaml'),
+        description='Path to mission YAML file'
     )
-    
+
     params_file_arg = DeclareLaunchArgument(
         'params_file',
         default_value=os.path.join(pkg_dir, 'config', 'global_nav_params.yaml'),
@@ -34,10 +25,9 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        route_file_arg,
+        mission_file_arg,
         params_file_arg,
-        
-        # Launch global_navigation_node
+
         Node(
             package='navigation',
             executable='global_navigation_node',
@@ -46,7 +36,7 @@ def generate_launch_description():
             emulate_tty=True,
             parameters=[
                 LaunchConfiguration('params_file'),
-                {'route_file': LaunchConfiguration('route_file')}
+                {'mission_file': LaunchConfiguration('mission_file')},
             ],
         ),
     ])
