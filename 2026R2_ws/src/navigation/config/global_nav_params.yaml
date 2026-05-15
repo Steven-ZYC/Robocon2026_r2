@@ -1,5 +1,6 @@
 global_navigation_node:
   ros__parameters:
-    mission_file: "/home/sunrise/robotics/Robocon2026_r2/2026R2_ws/src/navigation/routes/mission_1.yaml"
+    mission_file: ""                    # set via launch arg; default → routes/mission_1.yaml
     control_rate_hz: 50.0
     arrived_stable_count: 5
+    pose_timeout_s: 0.5

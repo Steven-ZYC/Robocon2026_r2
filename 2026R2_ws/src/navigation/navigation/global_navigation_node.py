@@ -13,6 +13,9 @@ Publishes:
 - arm/pneu_command (Float32MultiArray): arm pneumatic targets → arm_ctrl_node
 """
 
+import math
+import time
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, String
@@ -30,9 +33,11 @@ class GlobalNavigationNode(Node):
         self.declare_parameter('mission_file', '')
         self.declare_parameter('control_rate_hz', 50.0)
         self.declare_parameter('arrived_stable_count', 5)
+        self.declare_parameter('pose_timeout_s', 0.5)
 
         mission_file = self.get_parameter('mission_file').value
         control_rate = self.get_parameter('control_rate_hz').value
+        self.pose_timeout_s = self.get_parameter('pose_timeout_s').value
 
         # Mission executor
         self.mission = MissionExecutor(self.get_logger(), self)
@@ -62,16 +67,20 @@ class GlobalNavigationNode(Node):
         # Sensor subscriptions for conditional evaluation
         self._setup_sensor_subs()
 
+        # Pose timeout state
+        self._last_pose_time = time.monotonic()
+        self._pose_timeout_warned = False
+
         # Timer
         self.timer = self.create_timer(1.0 / control_rate, self.control_loop)
 
         self.get_logger().info(
-            f'Global Navigation Node started @ {control_rate}Hz'
+            f'Global Navigation Node started @ {control_rate}Hz, '
+            f'pose_timeout={self.pose_timeout_s}s'
         )
 
     def _setup_sensor_subs(self):
         """Subscribe to sensor topics for conditional stage evaluation."""
-        # Arduino raw sensor data (IMU, encoders)
         try:
             from arduino_sensor_msgs.msg import ArduinoSensorData
             self.arduino_sensor_sub = self.create_subscription(
@@ -100,13 +109,31 @@ class GlobalNavigationNode(Node):
         }
 
     def pose_callback(self, msg):
+        # arduino_sensor_parser publishes theta in degrees; convert to rad
+        self._last_pose_time = time.monotonic()
+        if self._pose_timeout_warned:
+            self.get_logger().info('Pose recovered')
+            self._pose_timeout_warned = False
         self.mission.set_pose({
             'x': msg.x,
             'y': msg.y,
-            'yaw': msg.theta,
+            'yaw': math.radians(msg.theta),
         })
 
+    def _pose_timed_out(self):
+        return (time.monotonic() - self._last_pose_time) > self.pose_timeout_s
+
     def control_loop(self):
+        if self._pose_timed_out():
+            if not self._pose_timeout_warned:
+                self.get_logger().error(
+                    f'Pose timeout ({self.pose_timeout_s}s) — stopping local_driving',
+                    throttle_duration_sec=2.0,
+                )
+                self._pose_timeout_warned = True
+            self._pub_zero_driving()
+            return
+
         self.mission.update()
 
         # Publish status
@@ -119,6 +146,11 @@ class GlobalNavigationNode(Node):
             self._pub_status(f"STAGE: {stage.get('id', '?')} [{stage.get('type', '?')}]")
         else:
             self._pub_status('IDLE')
+
+    def _pub_zero_driving(self):
+        msg = Float32MultiArray()
+        msg.data = [0.0, 0.0, 0.0]
+        self.cmd_pub.publish(msg)
 
     def _pub_status(self, info):
         msg = String()
