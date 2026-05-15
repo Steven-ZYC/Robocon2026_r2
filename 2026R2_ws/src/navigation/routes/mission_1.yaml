@@ -3,11 +3,10 @@ frame_id: map
 
 # ===== 坐标 =====
 waypoints:
-  wp_start:         { pose: { x: 0.0, y: 0.0, yaw: 0.0 } }
-  wp_approach_ball: { pose: { x: 1.2, y: 0.3, yaw: 1.57 } }
-  wp_pickup:        { pose: { x: 1.2, y: 0.3, yaw: 1.57 } }
-  wp_throw_zone:    { pose: { x: 2.5, y: 0.0, yaw: 3.14 } }
-  wp_retry:         { pose: { x: 1.0, y: 0.5, yaw: 1.57 } }
+  wp_start:    { pose: { x: 0.0, y: 0.0, yaw: 0.0 } }
+  wp_mid:      { pose: { x: 1.0, y: 0.0, yaw: 0.0 } }
+  wp_target:   { pose: { x: 1.0, y: 0.5, yaw: 1.57 } }
+  wp_return:   { pose: { x: 0.0, y: 0.0, yaw: 0.0 } }
 
 # ===== 导航预设 =====
 profiles:
@@ -62,66 +61,69 @@ actuators:
 
 # ===== 任务脚本 =====
 stages:
-  - id: nav_to_ball
+  # --- 导航到中间点 ---
+  - id: nav_to_mid
     type: navigate
-    to: wp_approach_ball
+    to: wp_mid
     profile: normal
 
-  - id: arm_prepare
+  # --- 手臂下放 ---
+  - id: arm_down
     type: arm
     arm_yaw_motor: front
-    arm_roll_motor: up
+    arm_roll_motor: down
     arm_gripper: open
     arm_lift: low
     arm_stopper: low
 
-  - id: fine_approach
-    type: navigate
-    to: wp_pickup
-    profile: slow
+  # --- 等待 ---
+  - id: wait_1
+    type: wait
+    duration_s: 1.0
 
-  - id: grab
-    type: sequential
-    steps:
-      - { type: arm, arm_gripper: close }
-      - { type: wait, duration_s: 0.5 }
-      - { type: arm, arm_stopper: high }
-      - { type: wait, duration_s: 0.3 }
-
-  - id: arm_lift_object
+  # --- 手臂收回 ---
+  - id: arm_up
     type: arm
     arm_yaw_motor: mid
     arm_roll_motor: up
+    arm_gripper: close
     arm_lift: high
 
-  - id: nav_to_throw
+  # --- 导航到目标点 ---
+  - id: nav_to_target
     type: navigate
-    to: wp_throw_zone
-    profile: fast
-
-  - id: check_ball_present
-    type: conditional
-    condition:
-      topic: /arduino/raw_sensor_data
-      field: imu_ax
-      op: gt
-      value: 0.5
-    then: throw_ball
-    else: nav_to_retry
-
-  - id: throw_ball
-    type: sequential
-    steps:
-      - { type: arm, arm_yaw_motor: front, arm_roll_motor: down }
-      - { type: wait, duration_s: 0.5 }
-      - { type: arm, arm_gripper: open }
-      - { type: wait, duration_s: 0.3 }
-      - { type: arm, arm_yaw_motor: front, arm_roll_motor: up, arm_gripper: close }
-
-  - id: nav_to_retry
-    type: navigate
-    to: wp_retry
+    to: wp_target
     profile: normal
 
+  # --- 夹爪操作 ---
+  - id: gripper_seq
+    type: sequential
+    steps:
+      - { type: arm, arm_gripper: open }
+      - { type: wait, duration_s: 0.5 }
+      - { type: arm, arm_stopper: high }
+      - { type: wait, duration_s: 0.3 }
+      - { type: arm, arm_gripper: close }
+
+  # --- 返回起点 ---
+  - id: nav_home
+    type: navigate
+    to: wp_return
+    profile: fast
+
+  # --- 结束 ---
   - id: finish
     type: terminate
+
+# ===== 条件跳转示例（需 sensor 条件时启用）=====
+#  将下面 block 替换到 stages 中即可使用：
+#
+#  - id: check_sensor
+#    type: conditional
+#    condition:
+#      topic: /arduino/raw_sensor_data
+#      field: enc_x_counts      # 编码器累计值
+#      op: gte                  # gt / lt / gte / lte
+#      value: 1000
+#    then: arm_down             # 条件成立 → 跳到此 stage
+#    else: nav_home             # 不成立 → 跳到此 stage
