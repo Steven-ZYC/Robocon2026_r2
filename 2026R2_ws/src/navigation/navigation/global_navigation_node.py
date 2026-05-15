@@ -8,9 +8,9 @@ Subscribes:
 - /arduino/raw_sensor_data (ArduinoSensorData): for conditional evaluation
 
 Publishes:
-- /local_driving (Float32MultiArray): chassis motion commands
-- damiao_control (Float32MultiArray): motor commands to damiao_ctrl
-- joint_pneu_control (Float32MultiArray): pneumatic commands to pneumatics
+- /local_driving (Float32MultiArray): chassis motion → local_navigation_node
+- arm/joint_command (Float32MultiArray): arm joint targets → arm_ctrl_node
+- arm/pneu_command (Float32MultiArray): arm pneumatic targets → arm_ctrl_node
 """
 
 import rclpy
@@ -45,13 +45,13 @@ class GlobalNavigationNode(Node):
 
         # Publishers
         self.cmd_pub = self.create_publisher(Float32MultiArray, '/local_driving', 10)
-        self.motor_pub = self.create_publisher(Float32MultiArray, 'damiao_control', 10)
-        self.pneu_pub = self.create_publisher(Float32MultiArray, 'joint_pneu_control', 10)
+        self.joint_pub = self.create_publisher(Float32MultiArray, 'arm/joint_command', 10)
+        self.pneu_pub = self.create_publisher(Float32MultiArray, 'arm/pneu_command', 10)
         self.status_pub = self.create_publisher(String, '/global_nav/status', 10)
 
         # Wire publishers into mission executor
         self.mission.pub_driving = self.cmd_pub
-        self.mission.pub_motor = self.motor_pub
+        self.mission.pub_joint = self.joint_pub
         self.mission.pub_pneu = self.pneu_pub
 
         # Subscribers

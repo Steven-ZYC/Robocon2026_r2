@@ -66,8 +66,8 @@ class MissionExecutor:
 
         # Publishers (set after init by global_navigation_node)
         self.pub_driving = None
-        self.pub_motor = None
-        self.pub_pneu = None
+        self.pub_joint = None   # arm/joint_command
+        self.pub_pneu = None    # arm/pneu_command
 
         # Sensor subscriptions (set after init)
         self._sensor_subs = {}
@@ -261,7 +261,19 @@ class MissionExecutor:
     # ------------------------------------------------------------------
 
     def _execute_arm(self, stage):
-        """Translate semantic arm commands to damiao_control + joint_pneu_control."""
+        """Translate semantic arm commands → arm/joint_command + arm/pneu_command.
+
+        Builds joint target array from motor-type actuators and pneumatic
+        target array from pneumatic-type actuators, then publishes to the
+        arm topics for arm_ctrl_node to process.
+        """
+        # Determine array sizes from actuators
+        num_joints = sum(1 for a in self.actuators.values() if a['type'] == 'motor')
+        num_pneu = sum(1 for a in self.actuators.values() if a['type'] == 'pneumatic')
+
+        joint_targets = [0.0] * max(num_joints, 1)
+        pneu_targets = [0.0] * max(num_pneu, 1)
+
         for name, value in stage.items():
             if name == 'type' or name == 'id':
                 continue
@@ -272,44 +284,32 @@ class MissionExecutor:
                 continue
 
             if act['type'] == 'motor':
-                self._pub_motor_cmd(
-                    motor_id=act['motor_id'],
-                    mode=act.get('mode', 'pos_vel'),
-                    speed=act.get('speed', 3.0),
-                    position=act['positions'][value],
-                )
+                idx = act.get('joint_index', act['motor_id'] - 5)
+                if idx < len(joint_targets):
+                    joint_targets[idx] = act['positions'][value]
+
             elif act['type'] == 'pneumatic':
-                self._pub_pneu_single(
-                    index=act['index'],
-                    state=act['states'][value],
-                )
+                idx = act['index']
+                if idx < len(pneu_targets):
+                    pneu_targets[idx] = act['states'][value]
 
-    def _pub_motor_cmd(self, motor_id, mode, speed, position):
-        if self.pub_motor is None:
+        self._pub_joint_cmd(joint_targets)
+        self._pub_pneu_cmd(pneu_targets)
+
+    def _pub_joint_cmd(self, targets):
+        """Publish joint target array to arm/joint_command."""
+        if self.pub_joint is None:
             return
-        mode_num = 2 if mode == 'pos_vel' else 3
         msg = Float32MultiArray()
-        msg.data = [float(motor_id), float(mode_num), float(speed), float(position)]
-        self.pub_motor.publish(msg)
+        msg.data = [float(t) for t in targets]
+        self.pub_joint.publish(msg)
 
-    def _pub_pneu_single(self, index, state):
+    def _pub_pneu_cmd(self, targets):
+        """Publish pneumatic target array to arm/pneu_command."""
         if self.pub_pneu is None:
             return
-        self._pending_pneu[index] = state
-        self._flush_pneu()
-
-    _pending_pneu = {}
-
-    def _flush_pneu(self):
-        """Publish full pneumatic state array."""
-        if self.pub_pneu is None:
-            return
-        data = [0.0, 0.0, 0.0]
-        for idx, val in self._pending_pneu.items():
-            if idx < len(data):
-                data[idx] = float(val)
         msg = Float32MultiArray()
-        msg.data = data
+        msg.data = [float(t) for t in targets]
         self.pub_pneu.publish(msg)
 
     # ------------------------------------------------------------------
@@ -432,7 +432,11 @@ class MissionExecutor:
 
     def _execute_terminate(self):
         self._pub_zero_driving()
-        # Set pneumatics to safe state
+        # Set arm to safe state
+        if self.pub_joint is not None:
+            msg = Float32MultiArray()
+            msg.data = [0.0, 0.0]
+            self.pub_joint.publish(msg)
         if self.pub_pneu is not None:
             msg = Float32MultiArray()
             msg.data = [0.0, 0.0, 0.0]

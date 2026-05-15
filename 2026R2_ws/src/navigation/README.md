@@ -75,9 +75,9 @@ For complete system operation, both packages must be running. See `START_GUIDE.m
 
 ```
 [Mission YAML] → Global Navigation Node (MissionExecutor)
-                    ├── /local_driving       → local_navigation_node → damiao_ctrl → Motor 1-4
-                    ├── damiao_control        → damiao_ctrl → Motor 5-6 (arm joints)
-                    └── joint_pneu_control    → pneumatics → Arduino → 气动阀
+                    ├── /local_driving    → local_navigation_node → damiao_control → damiao_ctrl → Motor 1-4
+                    ├── arm/joint_command → arm_ctrl_node → damiao_control → damiao_ctrl → Motor 5-6
+                    └── arm/pneu_command  → arm_ctrl_node → joint_pneu_control → pneumatics → Arduino
                           ↑
                     /state_pose2d  (arduino_sensor_driver)
                     /arduino/raw_sensor_data  (conditional evaluation)
@@ -143,8 +143,8 @@ ros2 launch navigation navigation.launch.py mission_file:=/path/to/mission_1.yam
 | Sub | `/state_pose2d` | `Pose2D` |
 | Sub | `/arduino/raw_sensor_data` | `ArduinoSensorData` |
 | Pub | `/local_driving` | `Float32MultiArray` |
-| Pub | `damiao_control` | `Float32MultiArray` |
-| Pub | `joint_pneu_control` | `Float32MultiArray` |
+| Pub | `arm/joint_command` | `Float32MultiArray` |
+| Pub | `arm/pneu_command` | `Float32MultiArray` |
 | Pub | `/global_nav/status` | `String` |
 
 ---
