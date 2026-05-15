@@ -81,13 +81,18 @@ README 必须清晰说明：
 - main 分支仅保存**稳定、可执行版本**
 - 只有当用户明确说明"就是要进 main"，才允许update main分支
 
-### 5.2 分支策略（以包为单位，强制）
-- 分支必须以ros2 package为单位，以功能为导向，例如：
-  - `feat/arduino_sensor_driver`
-  - `feat/navigation`
-  - `fix/can-timeout`
+### 5.2 分支策略（单 dev 分支 + 短生命周期 feature 分支）
+```
+main          ← 只放稳定、可执行版本
+  └── dev     ← 日常开发，包含全部 package
+        └── feat/xxx   ← 短生命周期（< 1 周），做完即合并回 dev，删分支
+        └── fix/xxx    ← 同上
+```
 
-- 不允许长期在 main 上直接开发, ros2 package 分支固定好才可以合并进main分支
+- **dev 分支包含所有 package**，确保 `colcon build` 始终可用
+- feature/fix 分支从 dev 分出，完成后立即合并回 dev 并删除
+- 禁止长期存在的 per-package 分支（导致包分散，无法联合编译）
+- 不允许长期在 main 上直接开发，dev 稳定后合并进 main
 
 ---
 
