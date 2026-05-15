@@ -10,7 +10,6 @@ setup(
     packages=find_packages(exclude=['test']),
     install_requires=[
         'setuptools',
-        'pyserial>=3.0,<4.0',
         'numpy'
     ],
     extras_require={'test': ['pytest']},
@@ -23,12 +22,10 @@ setup(
     zip_safe=True,
     maintainer='steven',
     maintainer_email='yanczhang8@gmail.com',
-    description='TODO: Package description',
+    description='Omniwheel chassis kinematics and local navigation',
     license='Apache-2.0',
-#    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'damiao_node = base_omniwheel_r2_700.damiao_node:main',
             'local_navigation_node = base_omniwheel_r2_700.local_navigation_node:main',
         ],
     },

@@ -449,4 +449,28 @@ Notes:
 - **VEL 协议简化**：
   - `damiao_control` 的 VEL 模式改为 `[motor_id, 3, speed]`。
   - 移除 VEL `duration` 自动停止计时器；速度生命周期由上层新命令和底层 watchdog 管理。
->>>>>>> feat/base_omniwheel_r2_700
+### 2026-05-14 (v12 - damiao_node 迁移至 damiao_ctrl)
+- **架构变更**：
+  - `DM_CAN.py` 和 `damiao_node.py` 已迁移至新的 `damiao_ctrl` 包。
+  - `damiao_ctrl` 是统一的电机控制节点，独占 USB-CAN 串口，管理全部电机（1-6）。
+  - 本包不再包含底层电机驱动，仅保留 `local_navigation_node`（运动学 + 控制）。
+- **依赖变更**：
+  - `package.xml` 新增 `<depend>damiao_ctrl</depend>`
+  - 移除 `pyserial` 依赖（已随 damiao_node 迁至 damiao_ctrl）
+- **启动方式变更**：
+  - 底盘需与 `damiao_ctrl` 一起启动：
+    ```bash
+    ros2 launch damiao_ctrl damiao_ctrl.launch.py
+    ros2 launch base_omniwheel_r2_700 base.launch.py
+    ```
+  - `base.launch.py` 不再启动 damiao_node
+- **damiao_ctrl 中的模式分配**（默认）：
+  ```
+  motor_ids  = [1,  2,  3,  4,  5,  6]
+  motor_modes= [3,  3,  3,  3,  2,  2]
+                ↑   ↑   ↑   ↑   ↑   ↑
+               VEL VEL VEL VEL POS POS
+               └─── 底盘 ───┘└─ arm ─┘
+  ```
+  - 底盘 motor 1-4 默认使用 VEL（速度模式），与原有行为一致。
+  - arm motor 5-6 默认使用 POS_VEL（位置-速度模式），由 `arm_ctrl_node` 控制。
