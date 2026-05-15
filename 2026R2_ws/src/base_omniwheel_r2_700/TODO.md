@@ -1,0 +1,23 @@
+# base_omniwheel_r2_700 TODO
+
+- [x] 提供直接 launch 方法：`ros2 launch base_omniwheel_r2_700 base.launch.py`
+- [x] 修正 launch 文件注释中的旧文件名
+- [x] 修复 `DM_CAN.__uint_to_float()` 反馈换算错误
+- [x] 兼容 HDSC USB-CAN 30-byte / 33-byte 返回帧与反馈数据偏移
+- [x] 避免反馈未及时刷新时反复发送 motor enable
+- [x] 为 `local_navigation_node` 增加 `local_driving` 超时零速保护
+- [x] 为 `damiao_node` 增加 `damiao_control` 超时零速保护
+- [x] 串口打开后增加 1.0s USB-CAN 稳定等待并清空 buffer
+- [x] 初始化时增加 enable 后反馈验证和 raw CAN feedback 日志
+- [x] 修复 HDSC feedback payload 错位导致 `00 00 00 92 ...` 被误解析的问题
+- [x] 取消 `enable()` 本地强行置 True，避免误报已使能
+- [x] 启动时读取 `CTRL_MODE(0x0A)`，不匹配才切换到 VEL
+- [x] 切换控制模式后读回 `CTRL_MODE` 验证，失败则跳过 enable
+- [x] 将 `MOTOR_DIRECTION` 实际应用到 `local_navigation_node` 输出轮速
+- [x] 将 `local_driving` 改为保持最后目标，并由 `local_navigation_node` 持续刷新到底层
+- [x] 移除 `damiao_node` VEL 模式 duration 自动停止计时器
+- [ ] 上车实测四个电机 ID、方向和轮速符号是否与当前 `MOTOR_DIRECTION` 一致
+- [ ] 根据 `state_code` 和 raw feedback 确认达妙反馈使能位定义是否完全正确
+- [ ] 将 motor IDs、轮距、轮半径、轮角、方向和串口设备 ID 改为 launch/config 参数
+- [ ] 在 launch 文件中暴露 `command_timeout` 参数
+- [ ] 增加只启动 `damiao_node` 的低层硬件测试 launch

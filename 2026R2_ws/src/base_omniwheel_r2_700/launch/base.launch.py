@@ -7,7 +7,7 @@ Launches:
 2. local_navigation_node - High-level motion control
 
 Usage:
-    ros2 launch base_omniwheel_r2_700 base_control.launch.py
+    ros2 launch base_omniwheel_r2_700 base.launch.py
 """
 
 from launch import LaunchDescription

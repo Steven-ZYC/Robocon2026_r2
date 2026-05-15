@@ -18,7 +18,7 @@ from std_msgs.msg import Float32MultiArray
 import numpy as np
 
 # 机械参数
-WHEEL_RADIUS_M = 0.327038  # 轮心到底盘中心距离 (m)
+WHEEL_RADIUS_M = 0.299128  # 轮心到底盘中心距离 (m)
 WHEEL_BASE_RADIUS = WHEEL_RADIUS_M  # 别名，更清晰
 
 # 轮子角度 (X 型布局，单位：弧度)
@@ -42,7 +42,7 @@ MOTOR_DIRECTION = {
 
 # ROS2 控制参数
 DEFAULT_MOTOR_MODE = 3  # VEL 模式
-DEFAULT_DURATION = 0.0  # 0 = 持续运行，由下一条指令更新
+DEFAULT_REPUBLISH_RATE_HZ = 20.0  # 持续向底层驱动刷新当前目标速度
 
 
 class LocalNavigationNode(Node):
@@ -56,7 +56,7 @@ class LocalNavigationNode(Node):
         - rotation_rad/s: 旋转速度（rad/s，逆时针为正）
     
     发布: damiao_control (Float32MultiArray)
-        格式: [motor_id, mode, speed_rad/s, duration]
+        格式: [motor_id, mode, speed_rad/s]
         - 为 4 个电机独立发布速度指令
     
     运动学模型: 4 轮全向 X 型布局
@@ -64,6 +64,10 @@ class LocalNavigationNode(Node):
     
     def __init__(self):
         super().__init__("local_navigation_node")
+        self.republish_rate_hz = float(
+            self.declare_parameter("republish_rate_hz", DEFAULT_REPUBLISH_RATE_HZ).value
+        )
+        self.latest_wheel_speeds = None
         
         # 订阅高层指令
         self.subscription = self.create_subscription(
@@ -79,10 +83,13 @@ class LocalNavigationNode(Node):
             "damiao_control",
             10
         )
+        timer_period = 1.0 / max(self.republish_rate_hz, 1.0)
+        self.command_timer = self.create_timer(timer_period, self.publish_latest_command)
         
         self.get_logger().info("Local Navigation Node initialized")
         self.get_logger().info(f"Wheel base radius: {WHEEL_BASE_RADIUS*1000:.2f} mm")
         self.get_logger().info(f"Motor control mode: {DEFAULT_MOTOR_MODE} (VEL)")
+        self.get_logger().info(f"Republish rate: {self.republish_rate_hz:.1f} Hz")
     
     def driving_callback(self, msg):
         """
@@ -94,7 +101,7 @@ class LocalNavigationNode(Node):
         if len(msg.data) < 3:
             self.get_logger().warn(f"Invalid driving command: expected 3 values, got {len(msg.data)}")
             return
-        
+
         direction_rad = msg.data[0]
         plane_speed_cm = msg.data[1]
         rotation_rad = msg.data[2]
@@ -109,9 +116,10 @@ class LocalNavigationNode(Node):
             rotation_rad
         )
         
-        # 发布电机指令
-        for motor_id, speed in wheel_speeds.items():
-            self.publish_motor_command(motor_id, speed)
+        # local_driving 表示当前目标速度。收到一次后先立即发布，并由
+        # publish_latest_command() 继续刷新到底层 damiao watchdog。
+        self.latest_wheel_speeds = wheel_speeds
+        self.publish_latest_command()
         
         self.get_logger().debug(
             f"Driving cmd: dir={np.rad2deg(direction_rad):.1f}°, "
@@ -158,14 +166,17 @@ class LocalNavigationNode(Node):
             # 轮子线速度 (m/s)
             v_wheel = v_translation + v_rotation
             
-            # 轮子半径: 直径12cm = 0.12m, 半径 = 0.06m
-            WHEEL_RADIUS = 0.06  # m
+            # 轮子半径: 直径12.7cm = 0.127m, 半径 = 0.0635m
+            WHEEL_RADIUS = 0.0635  # m
             
             # 转换线速度为角速度 (rad/s)
             # ω = v / r
             wheel_angular_speed = v_wheel / WHEEL_RADIUS
             
-            wheel_speeds[motor_id] = wheel_angular_speed
+            # Motor wiring and mechanical installation can invert the positive
+            # rotation direction.  Apply the calibrated sign before publishing
+            # so the same kinematic command produces the intended chassis motion.
+            wheel_speeds[motor_id] = wheel_angular_speed * MOTOR_DIRECTION.get(motor_id, 1)
         
         return wheel_speeds
     
@@ -181,10 +192,17 @@ class LocalNavigationNode(Node):
         msg.data = [
             float(motor_id),
             float(DEFAULT_MOTOR_MODE),
-            float(speed_rad),
-            float(DEFAULT_DURATION)
+            float(speed_rad)
         ]
         self.motor_publisher.publish(msg)
+
+    def publish_latest_command(self):
+        """Republish the latest target wheel speeds for low-level safety timing."""
+        if self.latest_wheel_speeds is None:
+            return
+
+        for motor_id, speed in self.latest_wheel_speeds.items():
+            self.publish_motor_command(motor_id, speed)
 
 
 def main(args=None):
