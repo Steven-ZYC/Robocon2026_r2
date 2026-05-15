@@ -1,0 +1,55 @@
+version: 1
+frame_id: map
+
+defaults:
+  cruise_speed_mps: 0.6
+  pos_tolerance_m: 0.05
+  yaw_tolerance_rad: 0.1
+
+action_presets:
+  wait_0p5: { type: wait, duration_s: 0.5 }
+  wait_1s: { type: wait, duration_s: 1.0 }
+
+waypoints:
+  - id: wp_start
+    pose: { x: 0.0, y: 0.0, yaw: 0.0 }
+    actions: [ { preset: wait_0p5 } ]
+
+  - id: wp_1
+    pose: { x: 1.0, y: 0.0, yaw: 3.14159 }
+    actions: [ { preset: wait_1s } ]
+
+  - id: wp_2
+    pose: { x: 1.5, y: 0.0, yaw: 0.0 }
+    actions: [ { type: wait, duration_s: 1.0 } ]
+
+segments:
+  - from: wp_start
+    to: wp_1
+    track:
+      method: pid_cte
+      k_p: 1.5
+      speed_mps: 0.5
+    limits:
+      speed_mps: 0.5
+      yaw_rate_rps: 1.0
+    speed_profile:
+      start_radius_m: 0.3
+      end_radius_m: 0.3
+      curve: cubic_ease
+      omega_min_scale: 0.3
+
+  - from: wp_1
+    to: wp_2
+    track:
+      method: pid_cte
+      k_p: 1.5
+      speed_mps: 0.4
+    limits:
+      speed_mps: 0.4
+      yaw_rate_rps: 1.0
+    speed_profile:
+      start_radius_m: 0.2
+      end_radius_m: 0.2
+      curve: cubic_ease
+      omega_min_scale: 0.3

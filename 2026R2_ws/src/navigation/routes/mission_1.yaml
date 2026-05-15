@@ -1,0 +1,134 @@
+version: 1
+frame_id: map
+
+# ===== 坐标 =====
+waypoints:
+  wp_start:      { pose: { x: 0.0, y: 0.0, yaw: 0.0 } }
+  wp_pickup:     { pose: { x: 1.0, y: 0.3, yaw: 0.0 } }
+  wp_place:      { pose: { x: 1.5, y: -0.3, yaw: -1.57 } }
+  wp_home:       { pose: { x: 0.0, y: 0.0, yaw: 0.0 } }
+
+# ===== 导航预设 =====
+profiles:
+  slow:   { speed_mps: 0.3, yaw_rate_rps: 0.8, start_radius_m: 0.2, end_radius_m: 0.2 }
+  normal: { speed_mps: 0.6, yaw_rate_rps: 1.5, start_radius_m: 0.3, end_radius_m: 0.3 }
+  fast:   { speed_mps: 1.0, yaw_rate_rps: 2.0, start_radius_m: 0.4, end_radius_m: 0.4 }
+
+# ===== 执行器语义映射 =====
+actuators:
+  arm_yaw_motor:
+    type: motor
+    motor_id: 5
+    joint_index: 0
+    mode: pos_vel
+    speed: 3.0
+    positions:
+      front: 0.0
+      back:  3.14
+      mid:   1.57
+
+  arm_roll_motor:
+    type: motor
+    motor_id: 6
+    joint_index: 1
+    mode: pos_vel
+    speed: 3.0
+    positions:
+      up:    0.0
+      down: -1.57
+      mid:  -0.78
+
+  arm_gripper:
+    type: pneumatic
+    index: 0
+    states:
+      open:  1.0
+      close: 0.0
+
+  arm_lift:
+    type: pneumatic
+    index: 1
+    states:
+      high: 1.0
+      low:  0.0
+
+  arm_stopper:
+    type: pneumatic
+    index: 2
+    states:
+      high: 1.0
+      low:  0.0
+
+# ===== 任务脚本 =====
+stages:
+  # --- 导航到取件区 ---
+  - id: nav_to_pickup
+    type: navigate
+    to: wp_pickup
+    profile: normal
+
+  # --- 手臂就位（夹取姿态）---
+  - id: arm_ready
+    type: arm
+    arm_yaw_motor: front
+    arm_roll_motor: up
+    arm_lift: low
+    arm_gripper: open
+    arm_stopper: low
+
+  # --- 等待手臂稳定 ---
+  - id: wait_stable
+    type: wait
+    duration_s: 1.0
+
+  # --- 条件判断：编码器确认到位后才夹取 ---
+  - id: check_position_ok
+    type: conditional
+    condition:
+      topic: /arduino/raw_sensor_data
+      field: enc_x_counts
+      op: gte
+      value: 5000
+    then: grab_weapon_head      # 到位 → 夹取
+    else: nav_to_pickup          # 未到位 → 重新导航
+
+  # --- 夹取 weapon head ---
+  - id: grab_weapon_head
+    type: sequential
+    steps:
+      - { type: arm, arm_gripper: close }
+      - { type: wait, duration_s: 0.5 }
+      - { type: arm, arm_stopper: high }
+      - { type: wait, duration_s: 0.3 }
+
+  # --- 抬臂 ---
+  - id: arm_lift_up
+    type: arm
+    arm_yaw_motor: mid
+    arm_roll_motor: up
+    arm_lift: high
+    arm_stopper: high
+
+  # --- 导航到放置区 ---
+  - id: nav_to_place
+    type: navigate
+    to: wp_place
+    profile: normal
+
+  # --- 释放 ---
+  - id: release
+    type: sequential
+    steps:
+      - { type: arm, arm_gripper: open }
+      - { type: wait, duration_s: 0.3 }
+      - { type: arm, arm_stopper: low }
+
+  # --- 回原点 ---
+  - id: nav_home
+    type: navigate
+    to: wp_home
+    profile: fast
+
+  # --- 结束 ---
+  - id: finish
+    type: terminate
