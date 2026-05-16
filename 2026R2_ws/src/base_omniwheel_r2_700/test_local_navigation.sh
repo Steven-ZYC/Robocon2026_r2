@@ -76,7 +76,7 @@ $TERM_CMD $TERM_ARGS bash -c "
     echo '=== Damiao Motor Controller ==='
     echo 'Node will start in 2 seconds...'
     sleep 2
-    ros2 run base_omniwheel_r2_700 damiao_node
+    ros2 run damiao_ctrl damiao_node
     echo ''
     echo 'Node terminated. Press Enter to close...'
     read

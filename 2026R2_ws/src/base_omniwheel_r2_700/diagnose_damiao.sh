@@ -23,7 +23,7 @@ fi
 
 # 2. 检查工作空间
 echo "[2] 检查工作空间..."
-WORKSPACE_SETUP="/home/sunrise/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash"
+WORKSPACE_SETUP="/home/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash"
 if [ -f "$WORKSPACE_SETUP" ]; then
     source "$WORKSPACE_SETUP"
     echo "  ✓ 工作空间已构建"
@@ -40,7 +40,7 @@ if pgrep -f damiao_node > /dev/null; then
     ps aux | grep damiao_node | grep -v grep
 else
     echo "  ✗ damiao_node 未运行"
-    echo "  请先启动: ros2 run base_omniwheel_r2_700 damiao_node"
+    echo "  请先启动: ros2 run damiao_ctrl damiao_node"
 fi
 
 # 4. 检查串口设备
@@ -77,7 +77,7 @@ echo "=========================================="
 echo ""
 echo "建议步骤:"
 echo "1. 如果 damiao_node 未运行，先启动它:"
-echo "   ros2 run base_omniwheel_r2_700 damiao_node"
+echo "   ros2 run damiao_ctrl damiao_node"
 echo ""
 echo "2. 然后在另一个终端运行测试脚本:"
 echo "   bash test_damiao_vel.sh"

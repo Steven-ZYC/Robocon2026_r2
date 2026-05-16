@@ -41,23 +41,17 @@ actuators:
   arm_gripper:
     type: pneumatic
     index: 0
-    states:
-      open:  1.0
-      close: 0.0
+    states: [open, close]
 
   arm_lift:
     type: pneumatic
     index: 1
-    states:
-      high: 1.0
-      low:  0.0
+    states: [low, high]
 
   arm_stopper:
     type: pneumatic
     index: 2
-    states:
-      high: 1.0
-      low:  0.0
+    states: [low, high]
 
 # ===== 任务脚本 =====
 stages:

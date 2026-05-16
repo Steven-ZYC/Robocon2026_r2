@@ -9,8 +9,8 @@ echo "=========================================="
 echo ""
 
 # Source environment
-source /opt/ros/humble/setup.bash 2>/dev/null || source /opt/ros/jazzy/setup.bash
-source /home/sunrise/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
+source /opt/ros/jazzy/setup.bash 2>/dev/null
+source /home/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
 
 echo "[1] 检查 damiao_node 是否运行..."
 if ros2 node list 2>/dev/null | grep -q motor_controller_node; then
@@ -48,7 +48,7 @@ echo "2. control_callback 没有被调用"
 echo ""
 echo "解决方案："
 echo "1. 启用 DEBUG 日志："
-echo "   ros2 run base_omniwheel_r2_700 damiao_node --ros-args --log-level debug"
+echo "   ros2 run damiao_ctrl damiao_node --ros-args --log-level debug"
 echo ""
 echo "2. 检查电机是否真的在转："
 echo "   - 听声音"

@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
-from base_omniwheel_r2_700.DM_CAN import *
+from test_damiao.DM_CAN import *
 import serial
 import os
 import time

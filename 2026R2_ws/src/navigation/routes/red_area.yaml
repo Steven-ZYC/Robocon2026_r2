@@ -1,0 +1,99 @@
+version: 1
+frame_id: map
+
+# ===== Red Area: 简化测试流程 =====
+# nav_to_rack → arm_at_rack → wait_stable → nav_to_head_1 → arm_at_head_1 → done
+
+# ===== 坐标 (m, deg) =====
+waypoints:
+  wp_start:      { pose: { x: 0.0, y: 0.0, yaw: 0.0 } }
+  wp_rack:       { pose: { x: 0.0, y: -0.875, yaw: 0.0 } }
+  wp_head_1:     { pose: { x: 0.130, y: -0.875, yaw: 0.0 } }
+
+# ===== 导航预设 =====
+profiles:
+  slow:   { speed_mps: 0.3, yaw_rate_rps: 0.8, start_radius_m: 0.2, end_radius_m: 0.2 }
+  normal: { speed_mps: 0.5, yaw_rate_rps: 1.5, start_radius_m: 0.3, end_radius_m: 0.3 }
+  fast:   { speed_mps: 0.8, yaw_rate_rps: 2.0, start_radius_m: 0.4, end_radius_m: 0.4 }
+
+# ===== 执行器语义映射 =====
+actuators:
+  arm_yaw_motor:
+    type: motor
+    motor_id: 5
+    joint_index: 0
+    mode: pos_vel
+    speed: 3.0
+    positions:
+      front: 0.0
+      back:  3.14
+      mid:   1.57
+      right: 1.57
+
+  arm_roll_motor:
+    type: motor
+    motor_id: 6
+    joint_index: 1
+    mode: pos_vel
+    speed: 3.0
+    positions:
+      up:    0.0
+      down: -1.57
+      mid:  -0.78
+      right: 1.57
+
+  arm_gripper:
+    type: pneumatic
+    index: 0
+    states: [open, close]
+
+  arm_lift:
+    type: pneumatic
+    index: 1
+    states: [low, high]
+
+  arm_stopper:
+    type: pneumatic
+    index: 2
+    states: [low, high]
+
+# ===== 任务脚本 =====
+stages:
+  # --- 导航到 weapon head rack ---
+  - id: nav_to_rack
+    type: navigate
+    to: wp_rack
+    profile: normal
+
+  # --- 手臂就位 (rack 初始姿态) ---
+  - id: arm_at_rack
+    type: arm
+    arm_yaw_motor: front
+    arm_roll_motor: up
+    arm_lift: low
+    arm_gripper: open
+    arm_stopper: low
+
+  # --- 等待手臂稳定 ---
+  - id: wait_stable
+    type: wait
+    duration_s: 1.0
+
+  # --- 移动到 weapon head 1 ---
+  - id: nav_to_head_1
+    type: navigate
+    to: wp_head_1
+    profile: slow
+
+  # --- 到达 head 1 后手臂待命 ---
+  - id: arm_at_head_1
+    type: arm
+    arm_yaw_motor: front
+    arm_roll_motor: up
+    arm_lift: low
+    arm_gripper: open
+    arm_stopper: low
+
+  # --- 任务结束 ---
+  - id: done
+    type: terminate

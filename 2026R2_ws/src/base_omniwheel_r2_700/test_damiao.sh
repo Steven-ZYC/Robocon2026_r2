@@ -43,7 +43,7 @@ if ! python3 -c "import serial" >/dev/null 2>&1; then
 fi
 
 # Start motor interface in background
-ros2 run base_omniwheel_r2_700 damiao_node --ros-args -p control_mode:=vel &
+ros2 run damiao_ctrl damiao_node --ros-args -p control_mode:=vel &
 DAMIAO_PID=$!
 
 cleanup() {

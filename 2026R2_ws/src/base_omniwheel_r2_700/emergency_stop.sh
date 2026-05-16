@@ -4,7 +4,7 @@
 # 紧急停止所有电机
 
 source /opt/ros/humble/setup.bash 2>/dev/null || source /opt/ros/jazzy/setup.bash
-source /home/sunrise/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
+source /home/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
 
 echo "=========================================="
 echo "紧急停止所有电机"

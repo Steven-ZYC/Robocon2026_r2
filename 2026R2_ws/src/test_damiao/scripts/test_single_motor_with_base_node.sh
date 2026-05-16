@@ -12,12 +12,10 @@ SPEED="${SPEED:-2.0}"
 DURATION="${DURATION:-3.0}"
 
 source_ros() {
-    if [ -f /opt/ros/humble/setup.bash ]; then
-        source /opt/ros/humble/setup.bash
-    elif [ -f /opt/ros/jazzy/setup.bash ]; then
+    if [ -f /opt/ros/jazzy/setup.bash ]; then
         source /opt/ros/jazzy/setup.bash
     else
-        echo "No ROS2 setup.bash found in /opt/ros." >&2
+        echo "No ROS2 Jazzy setup.bash found in /opt/ros." >&2
         exit 1
     fi
 }
@@ -49,7 +47,7 @@ cleanup() {
         "{data: [${MOTOR_ID}.0, 0.0, 0.0, 0.0]}" --once >/dev/null 2>&1 || true
 
     if [ -n "${DAMIAO_NODE_PID:-}" ]; then
-        echo "关闭 base_omniwheel_r2_700 damiao_node..."
+        echo "关闭 damiao_ctrl damiao_node..."
         kill "${DAMIAO_NODE_PID}" 2>/dev/null || true
         wait "${DAMIAO_NODE_PID}" 2>/dev/null || true
     fi
@@ -58,7 +56,7 @@ cleanup() {
 trap cleanup EXIT
 
 source_ros
-source /home/sunrise/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
+source /home/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
 
 echo "=========================================="
 echo "单电机测试（自动启动 base damiao_node）"
@@ -68,8 +66,8 @@ echo "base_omniwheel_r2_700/damiao_node 默认只初始化 1-4 号电机。"
 echo "当前测试电机 ${MOTOR_ID}，模式 ${MODE}，速度 ${SPEED} rad/s，持续 ${DURATION} 秒"
 echo ""
 
-echo "启动 base_omniwheel_r2_700 damiao_node..."
-ros2 run base_omniwheel_r2_700 damiao_node &
+echo "启动 damiao_ctrl damiao_node..."
+ros2 run damiao_ctrl damiao_node &
 DAMIAO_NODE_PID=$!
 
 wait_for_topic /damiao_control 10

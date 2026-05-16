@@ -291,7 +291,8 @@ class MissionExecutor:
             elif act['type'] == 'pneumatic':
                 idx = act['index']
                 if idx < len(pneu_targets):
-                    pneu_targets[idx] = act['states'][value]
+                    # states is ordered list: [state0, state1] → 0.0 / 1.0
+                    pneu_targets[idx] = float(act['states'].index(value))
 
         self._pub_joint_cmd(joint_targets)
         self._pub_pneu_cmd(pneu_targets)

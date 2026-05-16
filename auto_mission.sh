@@ -15,7 +15,15 @@
 
 set -e
 
-WS_DIR="$(cd "$(dirname "$0")" && pwd)/2026R2_ws"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WS_DIR="$SCRIPT_DIR/2026R2_ws"
+
+# 激活项目虚拟环境
+if [ -f "$SCRIPT_DIR/venv_raspi_r2/bin/activate" ]; then
+    source "$SCRIPT_DIR/venv_raspi_r2/bin/activate"
+fi
+
+source /opt/ros/jazzy/setup.bash 2>/dev/null
 source "$WS_DIR/install/setup.bash" 2>/dev/null || {
     echo "请先 build: cd $WS_DIR && colcon build"
     exit 1

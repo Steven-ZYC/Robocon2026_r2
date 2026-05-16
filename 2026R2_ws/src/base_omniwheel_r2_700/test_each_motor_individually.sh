@@ -4,7 +4,7 @@
 # 逐个测试每个电机，验证硬件和 CAN ID
 
 source /opt/ros/humble/setup.bash 2>/dev/null || source /opt/ros/jazzy/setup.bash
-source /home/sunrise/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
+source /home/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
 
 MODE=3
 SPEED=3.0

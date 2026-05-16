@@ -15,7 +15,6 @@
   <depend>launch_ros</depend>
   
   <!-- Project-specific dependencies -->
-  <depend>shooter</depend>
   <depend>navigation</depend>
   <depend>joystick_driver</depend>
   
