@@ -16,7 +16,12 @@
 - [x] 将 `MOTOR_DIRECTION` 实际应用到 `local_navigation_node` 输出轮速
 - [x] 将 `local_driving` 改为保持最后目标，并由 `local_navigation_node` 持续刷新到底层
 - [x] 移除 `damiao_node` VEL 模式 duration 自动停止计时器
-- [ ] 上车实测四个电机 ID、方向和轮速符号是否与当前 `MOTOR_DIRECTION` 一致
+- [x] 删除残留的 `damiao_node.py`（已迁移至 damiao_ctrl）
+- [x] 修正 WHEEL_ANGLES 为实测电机正转推动方向（M1左后, M2左前, M3右前, M4右后）
+- [x] 移除 v_y/rotation 符号补丁，MOTOR_DIRECTION 全部置 1
+- [ ] 上车实测修正后的运动学是否方向正确，必要时重新确认 MOTOR_DIRECTION
+- [ ] 上车实测确认 WHEEL_BASE_RADIUS (0.299128 m) 是否准确
+- [ ] 确认 WHEEL_RADIUS (直径 12.7cm vs 12cm) 哪个是正确的
 - [ ] 根据 `state_code` 和 raw feedback 确认达妙反馈使能位定义是否完全正确
 - [ ] 将 motor IDs、轮距、轮半径、轮角、方向和串口设备 ID 改为 launch/config 参数
 - [ ] 在 launch 文件中暴露 `command_timeout` 参数

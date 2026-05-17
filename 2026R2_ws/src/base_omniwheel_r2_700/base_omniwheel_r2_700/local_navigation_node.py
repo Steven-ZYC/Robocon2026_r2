@@ -7,9 +7,10 @@ Local Navigation Node for R2 Omniwheel Base
 - 发布各电机速度控制指令到 damiao_control
 
 机械参数:
-- 4 轮 X 型布局
-- 轮心距中心距离: 327.038 mm = 0.327038 m
-- 轮子编号: 1(左前/135°), 2(右前/45°), 3(右后/315°), 4(左后/225°)
+- 4 轮 X 型布局（达妙 DMH3510 电机）
+- 轮心距中心距离: 299.128 mm = 0.299128 m
+- 电机正转推动方向（即各轮有效驱动方向）:
+  1号: 左后 (135°), 2号: 左前 (45°), 3号: 右前 (315°), 4号: 右后 (225°)
 """
 
 import rclpy
@@ -21,23 +22,21 @@ import numpy as np
 WHEEL_RADIUS_M = 0.299128  # 轮心到底盘中心距离 (m)
 WHEEL_BASE_RADIUS = WHEEL_RADIUS_M  # 别名，更清晰
 
-# 轮子角度 (X 型布局，单位：弧度)
-# 修正：实际测试确定的角度配置
-# Motor 1: 左前 (135°), Motor 2: 右前 (45°), Motor 3: 右后 (315°), Motor 4: 左后 (225°)
+# 电机正转推动方向（REP 103: +x前, +y左）
+# 各轮有效驱动方向，实测确定
 WHEEL_ANGLES = {
-    1: np.deg2rad(135),   # 左前
-    2: np.deg2rad(45),    # 右前
-    3: np.deg2rad(315),   # 右后
-    4: np.deg2rad(225),   # 左后
+    1: np.deg2rad(135),   # 左后
+    2: np.deg2rad(45),    # 左前
+    3: np.deg2rad(315),   # 右前
+    4: np.deg2rad(225),   # 右后
 }
 
-# 电机方向反转标志 (1=正常, -1=反转)
-# 根据实际测试确定：Motor 1, 2 需要反转
+# 电机方向标志：驱动方向已由 WHEEL_ANGLES 完整定义，全部正向
 MOTOR_DIRECTION = {
-    1: -1,  # 反转（左前）
-    2: -1,  # 反转（右前）
-    3: 1,   # 正常（右后）
-    4: 1,   # 正常（左后）
+    1: 1,
+    2: 1,
+    3: 1,
+    4: 1,
 }
 
 # ROS2 控制参数
@@ -140,20 +139,16 @@ class LocalNavigationNode(Node):
         
         运动学公式 (X 型布局):
             v_wheel_i = v_x * cos(θ_i) + v_y * sin(θ_i) + ω * R
-        
+
         其中:
             v_x = plane_speed * cos(direction)
             v_y = plane_speed * sin(direction)
-            θ_i = 轮子 i 的安装角度
+            θ_i = 轮子 i 的正转推动方向角度
             R = 轮心到中心的距离
         """
         # 分解平移速度到机体坐标系
         v_x = plane_speed_m * np.cos(direction_rad)
         v_y = plane_speed_m * np.sin(direction_rad)
-        
-        # 根据实际测试：Y轴和旋转方向需要取反
-        v_y = -v_y
-        rotation_rad = -rotation_rad
         
         wheel_speeds = {}
         

@@ -17,7 +17,7 @@ import os
 import time
 
 # 配置参数
-DEFAULT_DEVICE_ID = "usb-HDSC_CDC_Device_00000000050C-if00"
+DEFAULT_DEVICE_ID = "/dev/damiao_can"
 DEFAULT_MOTOR_IDS = [1, 2, 3, 4, 5, 6]
 DEFAULT_MOTOR_MODES = [3, 3, 3, 3, 2, 2]  # 底盘 1-4: VEL, 机械臂 5-6: POS_VEL
 FALLBACK_CONTROL_MODE = Control_Type.VEL
@@ -30,17 +30,6 @@ RECV_POLL_INTERVAL_S = 0.01
 CTRL_MODE_RID = 0x0A
 MODE_READ_TIMEOUT_S = 0.25
 MODE_VERIFY_ATTEMPTS = 2
-
-
-def find_device_port(device_id):
-    by_id_dir = "/dev/serial/by-id/"
-    try:
-        for entry in os.listdir(by_id_dir):
-            if device_id in entry:
-                return os.path.realpath(os.path.join(by_id_dir, entry))
-    except FileNotFoundError:
-        pass
-    return None
 
 
 class MotorControllerNode(Node):
@@ -116,14 +105,14 @@ class MotorControllerNode(Node):
     def _init_hardware(self):
         """初始化硬件连接和所有电机，每电机使用其配置的模式。"""
         try:
-            port = find_device_port(self.device_id)
-            if not port:
+            port = self.device_id
+            if not os.path.exists(port):
                 self.get_logger().warn(
-                    f"Device {self.device_id} not found in /dev/serial/by-id/"
+                    f"Device {port} not found"
                 )
                 return False
 
-            self.get_logger().info(f"Found device at {port}")
+            self.get_logger().info(f"Opening device at {port}")
 
             try:
                 if hasattr(self, "ser") and self.ser.is_open:

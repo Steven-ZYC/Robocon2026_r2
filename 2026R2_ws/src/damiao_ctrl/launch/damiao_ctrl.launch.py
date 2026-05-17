@@ -14,7 +14,7 @@ def generate_launch_description():
             output="screen",
             emulate_tty=True,
             parameters=[{
-                "device_id": "usb-HDSC_CDC_Device_00000000050C-if00",
+                "device_id": "/dev/damiao_can",
                 "motor_ids": [1, 2, 3, 4, 5, 6],
                 "motor_modes": [3, 3, 3, 3, 2, 2],
                 "command_timeout": 0.5,

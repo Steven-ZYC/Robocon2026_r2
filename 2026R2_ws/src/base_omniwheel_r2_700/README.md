@@ -133,33 +133,41 @@ ros2 topic pub --once /damiao_control std_msgs/msg/Float32MultiArray "{data: [3.
 
 ## Kinematic Model
 
-### Wheel Configuration
-The omniwheel base follows an X-type 4-wheel configuration:
-- **Wheel Angles**: 135° (Left Front), 45° (Right Front), 315° (Right Rear), 225° (Left Rear)
-- **Motor Mapping**: Motor 1 (Left Front), Motor 2 (Right Front), Motor 3 (Right Rear), Motor 4 (Left Rear)
-- **Wheel Diameter**: 12 cm (radius: 6 cm)
-- **Layout Type**: Standard X-type omnidirectional platform
+### v1 — 初始设计（2026-01-29，已废弃）
+> 以下为旧版设计决策记录，实际代码已按 v13 更新。
 
-### Inverse Kinematics Formula
-For the X-type omniwheel configuration, the inverse kinematics formula is:
+原设计基于以下假设：
+- Motor 1 (Left Front, 135°), Motor 2 (Right Front, 45°), Motor 3 (Right Rear, 315°), Motor 4 (Left Rear, 225°)
+- 部分电机需取反 (M1/M2: -1, M3/M4: 1)
+- Y 轴和旋转方向需取反补丁 (`v_y = -v_y`, `rotation = -rotation`)
+- 轮心距: 0.327038 m, 轮半径: 0.06 m
+
+### v13 — 修正电机正转推动方向（2026-05-17）
+
+实际电机正转推动方向（即有效驱动方向）：
+| 电机 | 正转推动方向 | 角度 (REP 103) |
+|------|------------|---------------|
+| 1 | 左后 | 135° |
+| 2 | 左前 | 45° |
+| 3 | 右前 | 315° |
+| 4 | 右后 | 225° |
+
+驱动方向已在 `WHEEL_ANGLES` 中完整定义，`MOTOR_DIRECTION` 不再需要取反（全部 1）。移除了上一版中根据错误角度实测打上的 `v_y`/`rotation` 符号补丁。
+
+### 当前逆运动学公式
 
 ```
-v_wheel_i = v_x * cos(θ_i) + v_y * sin(θ_i) + ω * R
+v_wheel_i = v_x · cos(θ_i) + v_y · sin(θ_i) + ω · R
 ω_motor_i = v_wheel_i / r
 ```
 
-Where:
-- `v_x = plane_speed * cos(direction)` - X-axis velocity component
-- `v_y = -plane_speed * sin(direction)` - Y-axis velocity component (inverted for hardware coordination)
-- `θ_i` - Installation angle of wheel i
-- `ω = -rotation_rad` - Angular velocity (inverted for clockwise convention)
-- `R` - Distance from wheel center to robot center (0.327038 m)
-- `r` - Wheel radius (0.06 m)
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `θ_i` | 见上表 | 各电机正转推动方向 |
+| `R` | 0.299128 m | 轮心距中心距离 |
+| `r` | 0.0635 m | 轮半径（直径 12.7 cm） |
 
-**Coordinate System Notes:**
-- Y-axis direction is inverted to match hardware orientation
-- Rotation direction is inverted: positive value = clockwise rotation
-- These corrections ensure the theoretical kinematics match the actual robot behavior
+公式中不再有额外的 Y 轴或旋转方向取反。所有符号由 `cos(θ_i)` / `sin(θ_i)` 自然得出。
 
 ## Auto-Reconnection
 
@@ -449,6 +457,15 @@ Notes:
 - **VEL 协议简化**：
   - `damiao_control` 的 VEL 模式改为 `[motor_id, 3, speed]`。
   - 移除 VEL `duration` 自动停止计时器；速度生命周期由上层新命令和底层 watchdog 管理。
+### 2026-05-17 (v13 — 修正运动学电机方向)
+- **电机正转推动方向修正**：
+  - 旧定义（基于物理安装角，不反映实际驱动方向）：M1 左前/135°, M2 右前/45°, M3 右后/315°, M4 左后/225°
+  - 新定义（基于各电机正转推动方向）：M1 左后/135°, M2 左前/45°, M3 右前/315°, M4 右后/225°
+  - 移除了上一版中 `v_y = -v_y` 和 `rotation_rad = -rotation_rad` 的符号补丁
+  - 所有 `MOTOR_DIRECTION` 置 1，驱动方向由 `WHEEL_ANGLES` 完全定义
+- **参数确认**：`WHEEL_BASE_RADIUS = 0.299128 m`, `WHEEL_RADIUS = 0.0635 m`
+- **残留文件清理**：删除已迁移至 `damiao_ctrl` 的 `damiao_node.py`
+
 ### 2026-05-14 (v12 - damiao_node 迁移至 damiao_ctrl)
 - **架构变更**：
   - `DM_CAN.py` 和 `damiao_node.py` 已迁移至新的 `damiao_ctrl` 包。
