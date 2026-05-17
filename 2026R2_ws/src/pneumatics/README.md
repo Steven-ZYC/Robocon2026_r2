@@ -31,22 +31,25 @@ Arduino 驱动的机械臂气动阀控制包。通过串口控制电磁阀，实
 
 #### 串口协议
 
-文本行格式，一个空格分隔：
+文本行格式，与 Arduino 固件约定一致（v0.2 起）：
 ```
-G=<0|1> L=<0|1> S=<0|1>\n
+[1,0,0]\n
 ```
 
-Arduino 端解析后控制对应数字引脚。
+- `[0,0,0]` = 全部关闭
+- `[1,0,0]` = D5 继电器 ON（gripper）
+- `[0,1,0]` = D6 继电器 ON（lift）
+- `[0,0,1]` = D8 继电器 ON（stopper）
+- `[1,1,1]` = 全部 ON
 
 #### 参数
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `serial_port` | `""` | 串口路径，空=自动发现 |
-| `device_id_pattern` | `"Arduino"` | /dev/serial/by-id/ 匹配关键词 |
-| `baud_rate` | `115200` | 波特率 |
+| `serial_port` | `/dev/pneu_arduino` | 串口路径（udev 固定符号链接） |
+| `baud_rate` | `9600` | 波特率（匹配 Arduino 固件） |
 | `timeout_sec` | `1.0` | 超时未收到指令则全部置 0 |
-| `publish_rate_hz` | （已移除） | v0.2.2: 移除周期重发，改为仅在指令变化时发送 + timeout 安全关闭 |
+| `serial_read_rate_hz` | `10.0` | Arduino 串口返回数据读取频率 |
 | `pneu_names` | `["arm_gripper", "arm_lift", "arm_stopper"]` | 执行器名称列表 |
 
 #### 超时保护

@@ -17,9 +17,9 @@
                      ┌─────────────────────────┐
                      │     damiao_ctrl 包        │
                      │                          │
-  /dev/serial/by-id/ │  DM_CAN.py (CAN 协议库)   │
+  /dev/damiao_can    │  DM_CAN.py (CAN 协议库)   │
   ──────────────────→│  damiao_node.py (独占串口) │
-  USB-CAN 设备        │                          │
+  (udev symlink)      │                          │
   (唯一, 独占打开)     │  motor_modes:            │
                      │  [3,3,3,3,2,2]           │
                      │   ↑       ↑              │
@@ -75,7 +75,7 @@
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `device_id` | `usb-HDSC_CDC_Device_00000000050C-if00` | USB-CAN 设备 ID 匹配关键词 |
+| `device_id` | `/dev/damiao_can` | USB-CAN 设备路径（udev 固定符号链接） |
 | `motor_ids` | `[1, 2, 3, 4, 5, 6]` | 管理的电机 ID 列表 |
 | `motor_modes` | `[3, 3, 3, 3, 2, 2]` | 每电机初始化模式，与 motor_ids 一一对应 |
 | `command_timeout` | `0.5` | 超时未收到指令则发送零速 (s) |

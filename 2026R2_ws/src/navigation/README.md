@@ -41,10 +41,10 @@ ros2 launch navigation navigation.launch.py
 
 ## Topics
 - **Subscribed**: `/state_pose2d` (`geometry_msgs/Pose2D`)
-  - Coordinate system: REP 103 compliant planar state (`x` = forward, `y` = left, `theta` = yaw in radians)
+  - Coordinate system: REP 103 compliant planar state (`x` = forward, `y` = left, `theta` = yaw in **degrees**)
   - Source: `arduino_sensor_driver` package simplified planar output
 - **Published**: `/local_driving` (`std_msgs/Float32MultiArray`) - `[direction_rad, speed_cm_s, omega_rad_s]`
-- **Debug**: `/global_nav/status`, `/global_nav/target_pose`
+- **Debug**: `/global_nav/status` (`std_msgs/String`)
 
 ## Coordinate System
 All navigation follows **ROS REP 103** standard in the 2D plane:

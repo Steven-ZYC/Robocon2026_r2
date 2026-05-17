@@ -148,8 +148,7 @@ ENC第二位 (rep_y) = -e1_cnt    // REP Y（向左）= -用户X
 #### 参数
 | 参数名 | 类型 | 默认值 | 单位 | 说明 |
 |--------|------|--------|------|------|
-| `serial_port` | string | `""` | - | Arduino 串口设备路径；空字符串表示启用自动发现 |
-| `device_id_pattern` | string | `Arduino` | - | 自动发现时匹配 `/dev/serial/by-id/` 文件名的关键词 |
+| `serial_port` | string | `/dev/sensor_arduino` | - | Arduino 串口设备路径（udev 固定符号链接） |
 | `baud_rate` | int | `115200` | bit/s | 串口波特率，必须与 Arduino `Serial.begin()` 一致 |
 | `timeout_sec` | double | `1.0` | s | 超时时间，超过此时间未收到完整数据包则发布零速度 |
 | `encoder_cpr` | int | `8192` | counts/rev | 编码器每转计数，AMT103 PPR=2048 时四倍频 CPR=8192 |
@@ -160,6 +159,7 @@ ENC第二位 (rep_y) = -e1_cnt    // REP Y（向左）= -用户X
 | `enc_y_pos_y_m` | double | `0.0` | m | Y/left encoder 安装点相对机器人旋转中心的 Y 坐标 |
 | `enc_x_sign` | double | `1.0` | - | X/forward encoder 方向修正；方向反了改为 `-1.0` |
 | `enc_y_sign` | double | `1.0` | - | Y/left encoder 方向修正；方向反了改为 `-1.0` |
+| `imu_yaw_offset_deg` | double | `0.0` | deg | IMU yaw 角度零位偏移修正 |
 | `publish_tf` | bool | `true` | - | 是否发布 `odom` → `base_link` TF |
 
 Encoder position coordinates use the robot body frame:
@@ -217,12 +217,12 @@ ros2 launch arduino_sensor_driver arduino_sensor.launch.py
 ```bash
 ros2 launch arduino_sensor_driver arduino_sensor.launch.py \
   serial_port:=/dev/ttyUSB0 \
-  device_id_pattern:=Arduino \
   baud_rate:=115200 \
-  publish_tf:=true
+  publish_tf:=true \
+  imu_yaw_offset_deg:=0.0
 ```
 
-如果 `serial_port` 保持空字符串，节点会在 `/dev/serial/by-id/` 下查找文件名包含 `device_id_pattern` 的设备。
+设备路径默认为 udev 固定符号链接 `/dev/sensor_arduino`，可通过 `serial_port` 参数覆盖。
 
 ### 方法 2：直接运行 node
 ```bash

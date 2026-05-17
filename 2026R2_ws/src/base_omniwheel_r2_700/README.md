@@ -5,10 +5,10 @@ ROS 2 motor control package for R2 omniwheel base.
 
 ## Nodes
 
-### 1. damiao_node
-Low-level motor driver for DM motors via USB-CAN interface.
+> **注意**: `damiao_node` 已于 v12 (2026-05-14) 迁移至 `damiao_ctrl` 包。
+> 本包仅保留 `local_navigation_node`。
 
-### 2. local_navigation_node
+### local_navigation_node
 High-level motion control for holonomic navigation.
 
 ## Topics
@@ -17,23 +17,24 @@ High-level motion control for holonomic navigation.
 - **local_driving** (Float32MultiArray): High-level motion commands
   - Format: `[direction_rad, plane_speed_cm/s, rotation_rad/s]`
   - Subscribed by: `local_navigation_node`
-  
+
+### Published Topics
 - **damiao_control** (Float32MultiArray): Low-level motor commands
   - Format: `[motor_id, mode, speed, param4]`
-  - Subscribed by: `damiao_node`
+  - Published by: `local_navigation_node`, consumed by `damiao_ctrl/damiao_node`
 
 ## Node Architecture
 
 ```
-[User/Strategy Layer]
+[User/Strategy Layer]  (global_navigation_node / joystick_control_node)
         ↓
    local_driving topic [direction, speed, rotation]
         ↓
-[local_navigation_node] ← inverse kinematics
+[local_navigation_node] ← inverse kinematics  (本包)
         ↓
    damiao_control topic [motor_id, mode, speed] × 4
         ↓
-   [damiao_node] ← hardware driver
+   [damiao_ctrl / damiao_node] ← hardware driver
         ↓
    [USB-CAN Adapter]
         ↓
@@ -42,25 +43,19 @@ High-level motion control for holonomic navigation.
 
 ## Parameters
 
-### damiao_node Parameters
-- **DEFAULT_CONTROL_MODE**: Default is `VEL` (mode 3, pure velocity control)
-  - Can be changed in `damiao_node.py` line 11
-  - Available modes: `Control_Type.MIT` (1), `Control_Type.POS_VEL` (2), `Control_Type.VEL` (3)
-- **RECONNECT_INTERVAL**: Auto-reconnection check interval (default: 2.0 seconds)
-- **RECONNECT_MAX_ATTEMPTS**: Max reconnection attempts (default: 5, set to 0 for infinite)
+> **注意**: damiao_node 已于 v12 迁移至 `damiao_ctrl` 包，其参数见 damiao_ctrl README。
 
 ### local_navigation_node Parameters
-- **WHEEL_BASE_RADIUS**: Distance from wheel center to robot center (default: 0.327038 m)
-- **WHEEL_RADIUS**: Wheel radius for angular velocity conversion (default: 0.06 m, diameter: 12 cm)
-- **WHEEL_ANGLES**: X-configuration wheel angles
-  - Motor 1 (Left Front): 135°
-  - Motor 2 (Right Front): 45°
-  - Motor 3 (Right Rear): 315°
-  - Motor 4 (Left Rear): 225°
+- **WHEEL_BASE_RADIUS**: Distance from wheel center to robot center (default: 0.299128 m) — v13 更新
+- **WHEEL_RADIUS**: Wheel radius for angular velocity conversion (default: 0.0635 m, diameter: 12.7 cm) — v13 更新
+- **WHEEL_ANGLES**: 电机正转推动方向（v13 修正）
+  - Motor 1: 左后 135°
+  - Motor 2: 左前 45°
+  - Motor 3: 右前 315°
+  - Motor 4: 右后 225°
+- **MOTOR_DIRECTION**: 全部 1，驱动方向由 WHEEL_ANGLES 完整定义（v13 修正）
 - **DEFAULT_MOTOR_MODE**: VEL mode (3) for continuous control
-- **DEFAULT_DURATION**: 0.0 (continuous, updated by next command)
 - **republish_rate_hz**: `local_navigation_node` 持续刷新当前目标轮速的频率，默认 `20.0 Hz`
-- **Coordinate System Correction**: Y-axis and rotation direction are inverted to match hardware
 
 ## Local Navigation Protocol
 
@@ -201,16 +196,16 @@ ros2 launch base_omniwheel_r2_700 base.launch.py
 ```
 
 This will start:
-- `damiao_node` - Motor driver
 - `local_navigation_node` - Motion control
+- (damiao_node now runs from `damiao_ctrl` package — start it separately)
 
 ### Manual Node Startup
 Alternatively, start nodes individually in separate terminals:
 
 ```bash
-# Terminal 1: Start damiao_node
+# Terminal 1: Start damiao_ctrl (motor driver, must start first)
 source ~/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
-ros2 run base_omniwheel_r2_700 damiao_node
+ros2 run damiao_ctrl damiao_node
 
 # Terminal 2: Start local_navigation_node
 source ~/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash

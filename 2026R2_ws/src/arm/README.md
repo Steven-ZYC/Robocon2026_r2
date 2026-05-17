@@ -12,39 +12,12 @@ Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 
 
 ## Node 列表
 
+> **注意**: `damiao_node` 已于 v0.2 (2026-05-14) 从本包移除，电机控制统一由 `damiao_ctrl` 包负责。
+> 本包仅保留 `arm_ctrl_node`。
+
 | Node | 可执行文件 | 职责 |
 |---|---|---|
-| arm_motor_controller_node | `damiao_node` | 底层 USB-CAN 电机驱动，订阅 `damiao_control` |
-| arm_ctrl_node | `arm_ctrl_node` | 关节级控制器，订阅 `arm/joint_command`，转换为电机指令 |
-
----
-
-### damiao_node（arm 副本）
-
-底盘 `base_omniwheel_r2_700` 中 damiao_node 的 arm 适配版。
-
-#### 接口
-
-| 方向 | Topic | 类型 |
-|---|---|---|
-| Sub | `damiao_control` | `std_msgs/Float32MultiArray` |
-
-消息格式：`[motor_id, mode, speed, position?]`
-- mode=3: VEL 速度模式
-- mode=2: POS_VEL 位置-速度模式
-- mode=0: 失能
-
-#### 参数
-
-| 参数 | 默认值 | 说明 |
-|---|---|---|
-| `motor_ids` | `[5, 6]` | 管理的电机 ID 列表 |
-| `device_id` | `usb-HDSC_CDC_Device_00000000050C-if00` | USB-CAN 设备 ID 匹配关键词 |
-| `command_timeout` | `0.5` | 超时未收到指令则发送零速（秒） |
-
-#### 超时保护
-
-若 `damiao_control` 在 `command_timeout`（默认 0.5s）内无新指令，所有电机自动发送零速。
+| arm_ctrl_node | `arm_ctrl_node` | 关节级控制器，订阅 `arm/joint_command` 和 `arm/pneu_command`，发布 `damiao_control` |
 
 ---
 
@@ -87,7 +60,6 @@ ros2 launch arm arm.launch.py
 或单独启动：
 
 ```bash
-ros2 run arm damiao_node --ros-args -p motor_ids:="[5,6]"
 ros2 run arm arm_ctrl_node --ros-args -p joint_motor_ids:="[5,6]"
 ```
 
