@@ -44,7 +44,6 @@ import serial
 import re
 import math
 import time
-import os  # 新增导入
 
 
 class ArduinoSensorParser(Node):
@@ -55,24 +54,8 @@ class ArduinoSensorParser(Node):
     def __init__(self):
         super().__init__("arduino_sensor_parser")
 
-        # ===== 自动设备发现函数 =====
-        def find_device_port(device_id_pattern):
-            """根据设备 ID 模式自动查找串口设备"""
-            by_id_dir = "/dev/serial/by-id/"
-            try:
-                for entry in os.listdir(by_id_dir):
-                    if device_id_pattern in entry:
-                        full_path = os.path.join(by_id_dir, entry)
-                        real_path = os.path.realpath(full_path)
-                        self.get_logger().info(f"Found device '{entry}' -> {real_path}")
-                        return real_path
-            except FileNotFoundError:
-                pass
-            return None
-
         # 参数声明
-        self.declare_parameter("serial_port", "")  # 默认空字符串表示启用自动发现
-        self.declare_parameter("device_id_pattern", "Arduino")  # 设备 ID 匹配关键词
+        self.declare_parameter("serial_port", "/dev/sensor_arduino")
         self.declare_parameter("baud_rate", 115200)
         self.declare_parameter("timeout_sec", 1.0)
         self.declare_parameter("encoder_cpr", 8192)  # AMT103: PPR=2048, CPR=2048*4
@@ -91,8 +74,7 @@ class ArduinoSensorParser(Node):
         self.declare_parameter("imu_yaw_offset_deg", 0.0)
 
         # 读取参数
-        port_param = self.get_parameter("serial_port").value
-        device_pattern = self.get_parameter("device_id_pattern").value
+        port = self.get_parameter("serial_port").value
         baud = self.get_parameter("baud_rate").value
         self.timeout_sec = self.get_parameter("timeout_sec").value
         self.encoder_cpr = self.get_parameter("encoder_cpr").value
@@ -108,23 +90,7 @@ class ArduinoSensorParser(Node):
         self.enc_y_sign = float(self.get_parameter("enc_y_sign").value)
         self.imu_yaw_offset_deg = float(self.get_parameter("imu_yaw_offset_deg").value)
 
-        # ===== 自动设备发现逻辑 =====
-        if not port_param:  # 如果 serial_port 为空，则启用自动发现
-            self.get_logger().info(
-                f"Auto-discovery enabled. Searching for device containing '{device_pattern}'..."
-            )
-            port = find_device_port(device_pattern)
-            if port is None:
-                self.get_logger().fatal(
-                    f"No device found matching pattern '{device_pattern}' in /dev/serial/by-id/"
-                )
-                raise RuntimeError(
-                    f"Device discovery failed for pattern: {device_pattern}"
-                )
-            self.get_logger().info(f"Auto-discovered device: {port}")
-        else:
-            port = port_param
-            self.get_logger().info(f"Using manually specified port: {port}")
+        self.get_logger().info(f"Opening serial port: {port}")
 
         # 串口初始化
         try:

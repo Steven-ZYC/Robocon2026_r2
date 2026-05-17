@@ -8,6 +8,7 @@ All numeric values (coordinates, speeds, positions) live in the YAML.
 Python code only does interpretation and publishing — no hardcoded values.
 """
 
+import os
 import time
 import math
 import numpy as np
@@ -77,7 +78,16 @@ class MissionExecutor:
     # ------------------------------------------------------------------
 
     def load(self, filepath):
-        """Load a mission YAML file."""
+        """Load a mission YAML file.
+
+        Relative paths are resolved against the navigation package share directory
+        so that launch-file overrides like mission_file:=routes/red_area.yaml work
+        regardless of the process working directory.
+        """
+        if not os.path.isabs(filepath):
+            from ament_index_python.packages import get_package_share_directory
+            pkg_dir = get_package_share_directory('navigation')
+            filepath = os.path.join(pkg_dir, filepath)
         with open(filepath, 'r') as f:
             data = yaml.safe_load(f)
 

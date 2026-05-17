@@ -26,6 +26,7 @@ setup(
     entry_points={
         'console_scripts': [
             'joystick_node = joystick_driver.joystick_publisher_node:main',
+            'joystick_control_node = joystick_driver.joystick_control_node:main',
         ],
     },
 )

@@ -1,0 +1,20 @@
+[Unit]
+Description=R2 Robot Bringup (ROS2 Jazzy)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=robotics
+Group=robotics
+WorkingDirectory=/home/robotics/Robocon2026_r2
+ExecStart=/home/robotics/Robocon2026_r2/r2_bringup.sh
+Restart=on-failure
+RestartSec=3
+
+# 日志输出到 journald
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

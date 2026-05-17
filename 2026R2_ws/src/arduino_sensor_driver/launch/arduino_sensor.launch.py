@@ -8,16 +8,10 @@ def generate_launch_description():
     # Declare launch arguments
     serial_port_arg = DeclareLaunchArgument(
         'serial_port',
-        default_value='',  # 空字符串表示启用自动发现
-        description='Serial port for Arduino. Leave empty to auto-discover by device ID pattern.'
+        default_value='/dev/sensor_arduino',
+        description='Serial port for Arduino (fixed udev symlink)'
     )
-    
-    device_id_pattern_arg = DeclareLaunchArgument(
-        'device_id_pattern',
-        default_value='Arduino',
-        description='Device ID pattern to match in /dev/serial/by-id/ (e.g., Arduino, HDSC)'
-    )
-    
+
     baud_rate_arg = DeclareLaunchArgument(
         'baud_rate',
         default_value='115200',
@@ -44,7 +38,6 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'serial_port': LaunchConfiguration('serial_port'),
-            'device_id_pattern': LaunchConfiguration('device_id_pattern'),
             'baud_rate': LaunchConfiguration('baud_rate'),
             'timeout_sec': 1.0,
             'encoder_cpr': 8192,  # AMT103: PPR=2048, CPR=8192
@@ -56,7 +49,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         serial_port_arg,
-        device_id_pattern_arg,
         baud_rate_arg,
         publish_tf_arg,
         imu_yaw_offset_arg,

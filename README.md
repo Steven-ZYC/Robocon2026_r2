@@ -140,10 +140,80 @@ segments:
 
 ---
 
+## v3 — 手柄设备绑定与开机自启 (2026-05-17)
+
+### 手柄硬件接入
+
+R2 使用 **8BitDo Ultimate Wireless Controller for PC (2.4GHz)** 进行手动控制。
+
+| 项目 | 值 |
+|------|-----|
+| VID/PID (已连接) | `2dc8:3106` |
+| VID/PID (待机) | `2dc8:3109` |
+| 设备路径 | 自动发现 / `device_path` 参数指定 |
+| 驱动方式 | evdev → `/dev/input/eventN` |
+| 发布话题 | `joystick_input` (joystick_msgs/Joystick) |
+| 发布频率 | 20 Hz |
+
+### 设备绑定（必做一次）
+
+`/dev/input/eventN` 的 N 因开机/插拔变化。推荐创建 udev 规则固定 symlink：
+
+```bash
+sudo tee /etc/udev/rules.d/99-8bitdo-joystick.rules <<'EOF'
+# 8BitDo Ultimate Wireless Controller for PC (2.4GHz)
+SUBSYSTEM=="input", ATTRS{idVendor}=="2dc8", ATTRS{idProduct}=="3106", SYMLINK+="input/8bitdo_joystick"
+EOF
+
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+### 权限（必做一次）
+
+所有 `/dev/input/event*` 属于 `root:input` 组，需将运行用户加入 `input` 组：
+
+```bash
+sudo usermod -a -G input $USER
+sudo reboot
+```
+
+### 开机自启
+
+`r2_bringup.sh` 使用 `venv_raspi_r2` 启动全部节点（系统 Python 缺少 evdev）。
+
+```bash
+# 安装 systemd 服务
+sudo cp /home/robotics/Robocon2026_r2/r2_bringup.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable r2-bringup
+sudo systemctl start r2-bringup
+
+# 日常管理
+systemctl status r2-bringup          # 查看状态
+journalctl -u r2-bringup -f          # 实时日志
+sudo systemctl restart r2-bringup    # 重启
+sudo systemctl stop r2-bringup       # 停止
+```
+
+### 手柄无权限/找不到设备的排查
+
+```bash
+lsusb | grep 8BitDo          # IDLE = 手柄休眠, Connected = 已连接
+groups | grep input           # 确认用户在 input 组
+ls -la /dev/input/event*      # 查看是否有新 event 设备
+```
+
+节点日志中看到 "(无权限)" → 未加入 input 组或未重启
+节点日志中看不到 "8BitDo" → 手柄未开机/未配对
+
+---
+
 ## 更新记录
 
 | 日期 | 版本 | 说明 |
 |---|---|---|
+| 2026-05-17 | v3 | 新增手柄设备绑定说明，udev 规则，权限设置，开机自启配置 |
 | 2026-05-14 | v2 | 基于实际代码审查，修正节点名称、话题格式、包结构。v1 内容保留以备回溯。 |
 | 2025 | v1 | 初始版本（基于旧 navigation 包的文档，与当前代码不符）。 |
 
