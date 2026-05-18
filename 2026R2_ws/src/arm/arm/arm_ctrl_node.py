@@ -5,11 +5,15 @@ performs control logic computation, and publishes to the corresponding
 low-level control topics.
 
 Subscribes:
-- arm/joint_command (Float32MultiArray): [joint_1_target, joint_2_target, ...]
+- arm/joint_command (Float32MultiArray):
+    Triplet format: [motor_id, position_rad, speed_rad_s, ...]
+    motor_id is matched against joint_motor_ids param for routing.
 - arm/pneu_command (Float32MultiArray): [gripper, lift, stopper]  (0.0/1.0)
 
 Publishes:
-- damiao_control (Float32MultiArray): [motor_id, mode, speed, position?]
+- damiao_control (Float32MultiArray):
+    POS_VEL (mode 2): [motor_id, 2, speed, position]
+    VEL (mode 3):     [motor_id, 3, speed]
 - joint_pneu_control (Float32MultiArray): [gripper, lift, stopper] (0.0/1.0)
 """
 
@@ -20,8 +24,10 @@ import time
 
 DEFAULT_JOINT_MOTOR_IDS = [5, 6]
 DEFAULT_JOINT_DIRECTIONS = [1.0, 1.0]
-DEFAULT_CONTROL_MODE = 3  # VEL
-DEFAULT_MAX_SPEED_RAD_S = 6.0
+DEFAULT_CONTROL_MODE = 2  # POS_VEL（机械臂关节默认位置-速度模式）
+DEFAULT_MAX_SPEED_RAD_S = 2.0         # 输出端最大速度 (rad/s)，DMH3510 经 19.227 减速后 ≈ 2.34
+DEFAULT_GEAR_RATIO = 19.227           # DMH3510 减速比（电机轴 → 输出端）
+DEFAULT_MAX_MOTOR_SPEED_RAD_S = 45.0  # DMH3510 电机轴最大速度 (rad/s)
 DEFAULT_REPUBLISH_RATE_HZ = 20.0
 DEFAULT_PNEU_NAMES = ["arm_gripper", "arm_lift", "arm_stopper"]
 
@@ -45,6 +51,12 @@ class ArmCtrlNode(Node):
         )
         self.max_speed_rad_s = float(
             self.declare_parameter("max_speed_rad_s", DEFAULT_MAX_SPEED_RAD_S).value
+        )
+        self.gear_ratio = float(
+            self.declare_parameter("gear_ratio", DEFAULT_GEAR_RATIO).value
+        )
+        self.max_motor_speed_rad_s = float(
+            self.declare_parameter("max_motor_speed_rad_s", DEFAULT_MAX_MOTOR_SPEED_RAD_S).value
         )
 
         joint_motor_ids_param = self.declare_parameter(
@@ -115,6 +127,9 @@ class ArmCtrlNode(Node):
         self.get_logger().info(
             f"Arm Ctrl Node initialized: {self.num_joints} joints "
             f"(motor_ids={self.joint_motor_ids}, mode={self.control_mode}), "
+            f"gear_ratio={self.gear_ratio}, "
+            f"max_output_speed={self.max_speed_rad_s} rad/s, "
+            f"max_motor_speed={self.max_motor_speed_rad_s} rad/s, "
             f"{self.num_pneu} pneumatics ({self.pneu_names})"
         )
 
@@ -123,48 +138,83 @@ class ArmCtrlNode(Node):
     # ------------------------------------------------------------------
 
     def joint_command_callback(self, msg):
-        """Receive joint target command and publish immediately."""
-        if len(msg.data) < self.num_joints:
+        """Receive joint command triplets: [motor_id, pos, speed, ...].
+
+        Each triplet carries its own motor_id, so the caller (FSM or joystick)
+        decides which motor to address. motor_id is validated against
+        joint_motor_ids before forwarding to damiao_control.
+        """
+        if len(msg.data) < 3:
             self.get_logger().warn(
-                f"Expected {self.num_joints} joint targets, got {len(msg.data)}"
+                f"Triplet format requires at least 3 values (motor_id, pos, speed), "
+                f"got {len(msg.data)}"
+            )
+            return
+        if len(msg.data) % 3 != 0:
+            self.get_logger().warn(
+                f"Triplet format expects multiple of 3 values, got {len(msg.data)}"
             )
             return
 
-        targets = [float(msg.data[i]) for i in range(self.num_joints)]
-        self.latest_joint_targets = targets
-        self.publish_joint_commands(targets)
+        self.latest_joint_targets = list(msg.data)
+        self.publish_joint_commands(msg.data)
 
-    def publish_joint_commands(self, targets):
-        """Convert joint targets to per-motor damiao_control messages."""
-        for i, target in enumerate(targets):
-            motor_id = self.joint_motor_ids[i]
-            direction = (
-                self.joint_directions[i]
-                if i < len(self.joint_directions)
-                else 1.0
-            )
+    def publish_joint_commands(self, triplets):
+        """Convert joint triplets to per-motor damiao_control messages.
+
+        triplets format: [motor_id, position_rad, speed_rad_s, ...]
+
+        motor_id is matched against joint_motor_ids to look up the
+        per-joint direction scalar. Unknown motor IDs are skipped.
+        The YAML speed field is used directly (clamped to max_speed_rad_s).
+        """
+        for i in range(0, len(triplets), 3):
+            motor_id = int(triplets[i])
+            position = float(triplets[i + 1])
+            speed = float(triplets[i + 2])
+
+            # Look up direction for this motor_id
+            try:
+                idx = self.joint_motor_ids.index(motor_id)
+                direction = (
+                    self.joint_directions[idx]
+                    if idx < len(self.joint_directions)
+                    else 1.0
+                )
+            except ValueError:
+                self.get_logger().warn(
+                    f"Motor {motor_id} not in joint_motor_ids {self.joint_motor_ids}, "
+                    f"skipping"
+                )
+                continue
 
             if self.control_mode == 0:
                 self._publish_disable(motor_id)
                 continue
 
-            speed = target * direction
-            speed = max(-self.max_speed_rad_s, min(self.max_speed_rad_s, speed))
+            # Apply direction to position; speed magnitude clamp in output space
+            position = position * direction
+            speed = abs(speed)
+            speed = min(self.max_speed_rad_s, speed)
+
+            # Convert to motor-shaft space (before gear reduction)
+            motor_position = position * self.gear_ratio
+            motor_speed = speed * self.gear_ratio
+            motor_speed = min(self.max_motor_speed_rad_s, motor_speed)
 
             msg = Float32MultiArray()
             if self.control_mode == 2:
-                position = target * direction
                 msg.data = [
                     float(motor_id),
                     float(self.control_mode),
-                    float(speed),
-                    float(position),
+                    float(motor_speed),
+                    float(motor_position),
                 ]
             else:
                 msg.data = [
                     float(motor_id),
                     float(self.control_mode),
-                    float(speed),
+                    float(motor_speed),
                 ]
             self.motor_publisher.publish(msg)
 

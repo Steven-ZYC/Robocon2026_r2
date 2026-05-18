@@ -6,6 +6,10 @@ so that omniwheel motors can run in VEL mode while arm joints use POS_VEL.
 
 Subscribes:
 - damiao_control (Float32MultiArray): [motor_id, mode, speed, position?]
+
+Publishes:
+- damiao_feedback (Float32MultiArray): [motor_id, q_rad, dq_rad_s, tau_Nm, enabled]
+  Publishes motor 5 feedback at 50 Hz for torque monitoring during arm FSM stages.
 """
 
 import rclpy
@@ -27,6 +31,7 @@ DEFAULT_COMMAND_TIMEOUT = 0.5
 SERIAL_OPEN_SETTLE_S = 1.0
 ENABLE_FEEDBACK_TIMEOUT_S = 0.25
 RECV_POLL_INTERVAL_S = 0.01
+FEEDBACK_PUBLISH_HZ = 50.0
 CTRL_MODE_RID = 0x0A
 MODE_READ_TIMEOUT_S = 0.25
 MODE_VERIFY_ATTEMPTS = 2
@@ -90,6 +95,14 @@ class MotorControllerNode(Node):
 
         self.subscription = self.create_subscription(
             Float32MultiArray, "damiao_control", self.control_callback, 10
+        )
+
+        # 扭矩/状态反馈发布（电机 5，50Hz，供 FSM arm stage 监测）
+        self.feedback_pub = self.create_publisher(
+            Float32MultiArray, "damiao_feedback", 10
+        )
+        self.feedback_timer = self.create_timer(
+            1.0 / FEEDBACK_PUBLISH_HZ, self._feedback_loop
         )
 
     def _get_motor_mode(self, motor_id):
@@ -406,6 +419,30 @@ class MotorControllerNode(Node):
             f"No damiao_control command for {self.command_timeout:.2f}s; "
             f"sent zero velocity to all motors."
         )
+
+
+    def _feedback_loop(self):
+        """50Hz: drain CAN feedback, publish motor 5 state for torque monitoring."""
+        if not self.is_connected:
+            return
+        try:
+            self.motor_control.recv()
+        except Exception:
+            return
+
+        motor = self.motors.get(5)
+        if motor is None:
+            return
+
+        msg = Float32MultiArray()
+        msg.data = [
+            float(5),
+            float(motor.state_q),
+            float(motor.state_dq),
+            float(motor.state_tau),
+            1.0 if motor.isEnable else 0.0,
+        ]
+        self.feedback_pub.publish(msg)
 
 
 def main(args=None):

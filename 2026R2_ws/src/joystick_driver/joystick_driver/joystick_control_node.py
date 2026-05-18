@@ -7,7 +7,9 @@ joystick_control_node: 手柄直驱控制节点
 
 发布 (与 global_navigation_node 相同):
 - /local_driving (Float32MultiArray): [direction_rad, speed_cm/s, rotation_rad/s]
-- arm/joint_command (Float32MultiArray): [joint_0_speed_radps, joint_1_speed_radps]
+- arm/joint_command (Float32MultiArray):
+    Triplet format: [motor_id, pos_rad, speed_rad_s, ...]
+    手柄速度值同时用作 position（实现 POS_VEL 下的连续运动）和 speed。
 - arm/pneu_command (Float32MultiArray): [gripper, lift, stopper]  0.0/1.0
 
 订阅:
@@ -220,9 +222,19 @@ class JoystickControlNode(Node):
     # ------------------------------------------------------------------
 
     def _pub_joint_cmd(self, targets):
-        """发布关节速度指令到 arm/joint_command。"""
+        """发布关节指令到 arm/joint_command（triplet 格式）。
+
+        targets: [joint_0_val, joint_1_val] 速度值列表
+        转换为 triplet: [motor_id, position=speed_val, speed=abs(speed_val), ...]
+        POS_VEL 模式下 position 持续更新实现连续运动。
+        """
+        joint_motor_ids = [5, 6]  # 机械臂关节对应的 damiao 电机 ID
+        triplets = []
+        for idx, val in enumerate(targets):
+            v = float(val)
+            triplets.extend([float(joint_motor_ids[idx]), v, abs(v)])
         msg = Float32MultiArray()
-        msg.data = [float(t) for t in targets]
+        msg.data = triplets
         self.joint_pub.publish(msg)
 
     def _pub_zero_joints(self):

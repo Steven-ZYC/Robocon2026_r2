@@ -19,8 +19,6 @@ actuators:
   arm_yaw_motor:
     type: motor
     motor_id: 5
-    joint_index: 0
-    mode: pos_vel
     speed: 3.0
     positions:
       front: 0.0
@@ -30,8 +28,6 @@ actuators:
   arm_roll_motor:
     type: motor
     motor_id: 6
-    joint_index: 1
-    mode: pos_vel
     speed: 3.0
     positions:
       up:    0.0

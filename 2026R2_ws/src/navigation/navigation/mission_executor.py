@@ -273,15 +273,16 @@ class MissionExecutor:
     def _execute_arm(self, stage):
         """Translate semantic arm commands → arm/joint_command + arm/pneu_command.
 
-        Builds joint target array from motor-type actuators and pneumatic
-        target array from pneumatic-type actuators, then publishes to the
-        arm topics for arm_ctrl_node to process.
+        arm/joint_command uses triplet format:
+          [motor_id, position_rad, speed_rad_s, ...]
+
+        motor_id comes directly from the actuator definition in YAML.
+        position is looked up from the actuator's positions table.
+        speed is read from the actuator's speed field (default 3.0 rad/s).
         """
-        # Determine array sizes from actuators
-        num_joints = sum(1 for a in self.actuators.values() if a['type'] == 'motor')
         num_pneu = sum(1 for a in self.actuators.values() if a['type'] == 'pneumatic')
 
-        joint_targets = [0.0] * max(num_joints, 1)
+        joint_triplets = []          # [motor_id, pos, speed, ...]
         pneu_targets = [0.0] * max(num_pneu, 1)
 
         for name, value in stage.items():
@@ -294,9 +295,10 @@ class MissionExecutor:
                 continue
 
             if act['type'] == 'motor':
-                idx = act.get('joint_index', act['motor_id'] - 5)
-                if idx < len(joint_targets):
-                    joint_targets[idx] = act['positions'][value]
+                motor_id = int(act['motor_id'])
+                position = float(act['positions'][value])
+                speed = float(act.get('speed', 3.0))
+                joint_triplets.extend([float(motor_id), position, speed])
 
             elif act['type'] == 'pneumatic':
                 idx = act['index']
@@ -304,11 +306,15 @@ class MissionExecutor:
                     # states is ordered list: [state0, state1] → 0.0 / 1.0
                     pneu_targets[idx] = float(act['states'].index(value))
 
-        self._pub_joint_cmd(joint_targets)
+        if joint_triplets:
+            self._pub_joint_cmd(joint_triplets)
         self._pub_pneu_cmd(pneu_targets)
 
     def _pub_joint_cmd(self, targets):
-        """Publish joint target array to arm/joint_command."""
+        """Publish joint triplets to arm/joint_command.
+
+        targets format: [motor_id, pos_rad, speed_rad_s, ...]
+        """
         if self.pub_joint is None:
             return
         msg = Float32MultiArray()
@@ -443,10 +449,14 @@ class MissionExecutor:
 
     def _execute_terminate(self):
         self._pub_zero_driving()
-        # Set arm to safe state
-        if self.pub_joint is not None:
+        # Stop all arm motors (triplet format: motor_id, pos=0, speed=0)
+        joint_triplets = []
+        for act in self.actuators.values():
+            if act.get('type') == 'motor':
+                joint_triplets.extend([float(act['motor_id']), 0.0, 0.0])
+        if joint_triplets and self.pub_joint is not None:
             msg = Float32MultiArray()
-            msg.data = [0.0, 0.0]
+            msg.data = joint_triplets
             self.pub_joint.publish(msg)
         if self.pub_pneu is not None:
             msg = Float32MultiArray()

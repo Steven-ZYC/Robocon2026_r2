@@ -6,10 +6,12 @@ Loads a mission YAML file and executes its stages: navigation, arm joint
 Subscribes:
 - /state_pose2d (Pose2D): robot planar state from arduino_sensor_driver
 - /arduino/raw_sensor_data (ArduinoSensorData): for conditional evaluation
+- /damiao_feedback (Float32MultiArray): motor 5 torque for torque-triggered stages
 
 Publishes:
 - /local_driving (Float32MultiArray): chassis motion → local_navigation_node
-- arm/joint_command (Float32MultiArray): arm joint targets → arm_ctrl_node
+- arm/joint_command (Float32MultiArray):
+    Triplet format: [motor_id, pos_rad, speed_rad_s, ...] → arm_ctrl_node
 - arm/pneu_command (Float32MultiArray): arm pneumatic targets → arm_ctrl_node
 """
 
@@ -81,6 +83,7 @@ class GlobalNavigationNode(Node):
 
     def _setup_sensor_subs(self):
         """Subscribe to sensor topics for conditional stage evaluation."""
+        # Arduino sensor data (encoders, IMU)
         try:
             from arduino_sensor_msgs.msg import ArduinoSensorData
             self.arduino_sensor_sub = self.create_subscription(
@@ -93,6 +96,14 @@ class GlobalNavigationNode(Node):
             self.get_logger().warn(
                 'arduino_sensor_msgs not available; sensor conditions will not work'
             )
+
+        # Damiao motor 5 torque feedback (50Hz, for torque-triggered FSM stages)
+        self.damiao_feedback_sub = self.create_subscription(
+            Float32MultiArray,
+            '/damiao_feedback',
+            self._damiao_feedback_callback,
+            10,
+        )
 
     def _arduino_sensor_callback(self, msg):
         """Cache arduino sensor fields for conditional evaluation."""
@@ -107,6 +118,18 @@ class GlobalNavigationNode(Node):
             'packet_id': msg.packet_id,
             'crc_valid': msg.crc_valid,
         }
+
+    def _damiao_feedback_callback(self, msg):
+        """Cache motor 5 torque/position for conditional stage evaluation.
+
+        damiao_feedback format: [motor_id, q_rad, dq_rad_s, tau_Nm, enabled]
+        """
+        if len(msg.data) >= 5:
+            self.mission.sensor_cache['/damiao_feedback'] = {
+                'motor_5_tau': float(msg.data[3]),
+                'motor_5_q': float(msg.data[1]),
+                'motor_5_dq': float(msg.data[2]),
+            }
 
     def pose_callback(self, msg):
         # arduino_sensor_parser publishes theta in degrees; convert to rad
