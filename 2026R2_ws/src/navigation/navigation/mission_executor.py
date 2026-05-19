@@ -21,6 +21,13 @@ from .speed_profiler import SpeedProfiler
 from .utils_math import normalize_angle, get_distance
 
 
+TRACKER_K_P = 1.5
+TRACKER_MAX_SPEED_MPS = 0.5
+DEFAULT_MIN_SPEED_SCALE = 0.20
+DEFAULT_MISSION_ANGLE_UNIT = 'rad'
+SUPPORTED_MISSION_ANGLE_UNITS = {'deg', 'rad'}
+
+
 class MissionExecutor:
     """Interprets and executes a mission YAML."""
 
@@ -33,6 +40,7 @@ class MissionExecutor:
         self.profiles = {}
         self.actuators = {}
         self.stages = []
+        self.angle_unit = DEFAULT_MISSION_ANGLE_UNIT
 
         # Navigation components
         self.tracker = Tracker()
@@ -60,6 +68,7 @@ class MissionExecutor:
         self._nav_target_wp = None
         self._nav_profile = {}
         self._nav_from_pose = None
+        self._active_nav_stage_id = None
 
         # Conditional state
         self.sensor_cache = {}
@@ -89,9 +98,13 @@ class MissionExecutor:
             pkg_dir = get_package_share_directory('navigation')
             filepath = os.path.join(pkg_dir, filepath)
         with open(filepath, 'r') as f:
-            data = yaml.safe_load(f)
+            data = yaml.safe_load(f) or {}
 
-        self.waypoints = data.get('waypoints', {})
+        self.angle_unit = self._read_angle_unit(data)
+        self.waypoints = self._normalize_waypoints(
+            data.get('waypoints', {}),
+            self.angle_unit,
+        )
         self.profiles = data.get('profiles', {})
         self.actuators = data.get('actuators', {})
         self.stages = data.get('stages', [])
@@ -101,9 +114,56 @@ class MissionExecutor:
             f"Mission loaded: {len(self.waypoints)} waypoints, "
             f"{len(self.profiles)} profiles, "
             f"{len(self.actuators)} actuators, "
-            f"{len(self.stages)} stages"
+            f"{len(self.stages)} stages, "
+            f"angle_unit={self.angle_unit}"
         )
         self._validate_stages()
+
+    def _read_angle_unit(self, data):
+        """Read the mission YAML angle unit used by waypoint yaw values."""
+        raw_unit = data.get('angle_unit', data.get('yaw_unit', DEFAULT_MISSION_ANGLE_UNIT))
+        unit = str(raw_unit).strip().lower()
+        aliases = {
+            'degree': 'deg',
+            'degrees': 'deg',
+            'radian': 'rad',
+            'radians': 'rad',
+        }
+        unit = aliases.get(unit, unit)
+
+        if unit not in SUPPORTED_MISSION_ANGLE_UNITS:
+            self.logger.warn(
+                f"Unknown mission angle_unit '{unit}', "
+                f"falling back to '{DEFAULT_MISSION_ANGLE_UNIT}'"
+            )
+            return DEFAULT_MISSION_ANGLE_UNIT
+        return unit
+
+    def _angle_to_rad(self, value, angle_unit):
+        """Convert a YAML angle value to radians for internal navigation math."""
+        numeric_value = float(value)
+        if angle_unit == 'deg':
+            return math.radians(numeric_value)
+        return numeric_value
+
+    def _normalize_waypoints(self, waypoints, angle_unit):
+        """Convert waypoint yaw/tolerance fields from mission units to radians."""
+        normalized = {}
+        for name, waypoint in waypoints.items():
+            wp = dict(waypoint)
+            pose = dict(wp.get('pose', {}))
+
+            if 'yaw' in pose:
+                pose['yaw'] = self._angle_to_rad(pose['yaw'], angle_unit)
+            wp['pose'] = pose
+
+            if 'yaw_tolerance_deg' in wp:
+                wp['yaw_tolerance'] = math.radians(float(wp['yaw_tolerance_deg']))
+            elif 'yaw_tolerance' in wp:
+                wp['yaw_tolerance'] = self._angle_to_rad(wp['yaw_tolerance'], angle_unit)
+
+            normalized[name] = wp
+        return normalized
 
     def _validate_stages(self):
         """Check that all referenced stage IDs, waypoints, and profiles exist."""
@@ -216,10 +276,23 @@ class MissionExecutor:
             self._advance_stage()
             return
 
+        self._begin_navigate_stage(stage, end_pose, profile)
+
         # Compute driving command
-        start_pose = self._nav_from_pose or self.current_pose
+        start_pose = self._nav_from_pose
+        tracker_speed_mps = min(
+            float(profile.get('speed_mps', TRACKER_MAX_SPEED_MPS)),
+            TRACKER_MAX_SPEED_MPS,
+        )
         vx_raw, vy_raw, omega_raw = self.tracker.compute_pid_cte(
-            self.current_pose, start_pose, end_pose, {'method': 'pid_cte', 'k_p': 1.5}
+            self.current_pose,
+            start_pose,
+            end_pose,
+            {
+                'method': 'pid_cte',
+                'k_p': TRACKER_K_P,
+                'speed_mps': tracker_speed_mps,
+            },
         )
 
         alpha = self.speed_profiler.compute_alpha(
@@ -230,6 +303,9 @@ class MissionExecutor:
                 'curve': 'cubic_ease',
             }
         )
+        min_speed_scale = float(profile.get('min_speed_scale', DEFAULT_MIN_SPEED_SCALE))
+        if dist > pos_tol and min_speed_scale > 0.0:
+            alpha = max(alpha, min(min_speed_scale, 1.0))
 
         vx = vx_raw * alpha
         vy = vy_raw * alpha
@@ -245,10 +321,42 @@ class MissionExecutor:
         max_omega = profile.get('yaw_rate_rps', 1.5)
         omega = max(-max_omega, min(max_omega, omega))
 
-        self._pub_driving_body(vx, vy, omega)
+        # 世界系 → 机体系旋转变换
+        # tracker 输出的是世界系速度，local_navigation_node 期望机体系
+        cos_yaw = math.cos(self.current_pose['yaw'])
+        sin_yaw = math.sin(self.current_pose['yaw'])
+        vx_body =  vx * cos_yaw + vy * sin_yaw
+        vy_body = -vx * sin_yaw + vy * cos_yaw
+
+        self._pub_driving_body(vx_body, vy_body, omega)
+
+    def _begin_navigate_stage(self, stage, end_pose, profile):
+        """Latch navigation start state once per navigate stage.
+
+        The speed profile is distance-based. If the start pose follows the
+        live robot pose every cycle, distance-from-start remains zero and the
+        cubic profile never produces translational speed.
+        """
+        stage_id = stage.get('id', '?')
+        if self._active_nav_stage_id == stage_id:
+            return
+
+        self._active_nav_stage_id = stage_id
+        self._nav_from_pose = dict(self.current_pose)
+        self._nav_target_wp = dict(end_pose)
+        self._nav_profile = dict(profile)
+        self.arrived_counter = 0
+        self.logger.info(
+            f"Navigate [{stage_id}] started from "
+            f"({self._nav_from_pose['x']:.3f}, {self._nav_from_pose['y']:.3f}) "
+            f"to ({end_pose['x']:.3f}, {end_pose['y']:.3f})"
+        )
 
     def _pub_driving_body(self, vx_body, vy_body, omega):
-        """Publish body-frame velocity command to /local_driving."""
+        """Publish body-frame velocity command to /local_driving.
+
+        vx_body, vy_body must already be in body frame (世界系已旋转到机体系).
+        """
         if self.pub_driving is None:
             return
 
@@ -421,6 +529,7 @@ class MissionExecutor:
                 self._seq_step_index = 0
                 self._parallel_active = []
                 self._wait_duration = 0.0
+                self._clear_navigation_state()
                 self.logger.info(f"Jumped to [{stage_id}]")
                 return
         self.logger.warn(f"Stage '{stage_id}' not found, skipping")
@@ -470,7 +579,16 @@ class MissionExecutor:
     # ------------------------------------------------------------------
 
     def _advance_stage(self):
+        self._clear_navigation_state()
         self.stage_index += 1
+
+    def _clear_navigation_state(self):
+        """Clear per-stage navigation state when leaving or jumping stages."""
+        self._nav_target_wp = None
+        self._nav_profile = {}
+        self._nav_from_pose = None
+        self._active_nav_stage_id = None
+        self.arrived_counter = 0
 
     def set_pose(self, pose):
         self.current_pose = pose
@@ -482,3 +600,4 @@ class MissionExecutor:
         self._seq_step_index = 0
         self._parallel_active = []
         self._wait_duration = 0.0
+        self._clear_navigation_state()

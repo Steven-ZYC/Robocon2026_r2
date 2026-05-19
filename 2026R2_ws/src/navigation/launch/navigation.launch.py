@@ -14,7 +14,7 @@ def generate_launch_description():
 
     mission_file_arg = DeclareLaunchArgument(
         'mission_file',
-        default_value=os.path.join(pkg_dir, 'routes', 'mission_1.yaml'),
+        default_value=os.path.join(pkg_dir, 'routes', 'forward_1m.yaml'),
         description='Path to mission YAML file'
     )
 

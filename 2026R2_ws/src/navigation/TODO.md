@@ -1,10 +1,18 @@
 # Navigation TODO
 
+- [x] 将 `navigation.launch.py` 默认 mission 改为存在的 `routes/forward_1m.yaml`
+- [x] 新增 `routes/forward_1m.yaml`，用于底盘沿 world/body +X 前进 1 m 的最小链路测试
+- [x] 支持 mission YAML 通过 `angle_unit` / `yaw_unit` 指定 deg/rad，并由 MissionExecutor 转换为内部 rad
+- [x] 补充 Tracker CTE-P 控制与 SpeedProfiler cubic ease 设计文档（v0.4 README）
+- [x] 修复 `navigate` stage 起点未锁定导致 speed profiler `alpha=0` 自锁
+- [x] 为 navigate profile 增加默认 `min_speed_scale` 起步保护
+- [x] 将 `Tracker.compute_pid_cte()` 的默认参数提到 `mission_executor.py` 顶部，并将 tracker 巡航速度封顶 `0.5 m/s`
+- [ ] 上车验证世界系到机体系速度转换在非零 yaw 下的方向是否正确
 - [ ] 与 arduino_sensor_driver 联调 /state_pose2d
 - [ ] 与 base_omniwheel 联调 /local_driving
 - [ ] 与 arm 联调 damiao_control (Motor 5-6)
 - [ ] 与 pneumatics 联调 joint_pneu_control
-- [ ] 实测各 waypoint 坐标，校准 mission_1.yaml
+- [ ] 实测各 waypoint 坐标，校准正式 mission YAML
 - [ ] 实测各执行器语义值（motor positions, pneu states）
 - [ ] 添加更多 conditional 传感器条件支持（enc_x_counts 到达阈值等）
 - [ ] 添加 joystick 手动 override / 紧急停止

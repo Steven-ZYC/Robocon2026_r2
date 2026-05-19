@@ -1,0 +1,149 @@
+version: 1
+frame_id: map
+angle_unit: deg
+
+# =============================================================================
+# Forward 1m chassis-only test mission
+#
+# Active behavior:
+#   1. Assume /state_pose2d has been zeroed near x=0, y=0, theta=0 deg.
+#   2. Navigate to world/map +X = 1.0 m, Y = 0.0 m.
+#   3. Do not execute arm, pneumatic, conditional, or wait stages.
+#
+# Coordinate convention:
+#   - World/map +X: forward when theta = 0
+#   - World/map +Y: left when theta = 0
+#   - Body +X: chassis forward
+#   - Body +Y: chassis left
+#   - yaw/theta positive: counter-clockwise, ROS standard
+#   - angle_unit above applies to waypoint pose.yaw and yaw_tolerance.
+#
+# Supported top-level mission parameters:
+#   version:    mission schema marker, currently informational
+#   frame_id:   frame name recorded by mission config, usually "map"
+#   angle_unit: "deg" or "rad"; MissionExecutor converts waypoint angles to rad
+#   yaw_unit:   alias of angle_unit if you prefer that name
+#
+# ROS node parameters are NOT read from this mission YAML. Set them in launch or
+# config/global_nav_params.yaml:
+#   mission_file:           path to this YAML
+#   control_rate_hz:        executor update rate, default 50.0 Hz
+#   arrived_stable_count:   arrival must be true for this many cycles, default 5
+#   pose_timeout_s:         stop publishing motion if /state_pose2d is stale
+# =============================================================================
+
+waypoints:
+  # Optional waypoint fields:
+  #   pose.x / pose.y:       target position in meters, world/map frame
+  #   pose.yaw:              target yaw in angle_unit
+  #   pos_tolerance:         arrival XY tolerance in meters, default 0.05
+  #   yaw_tolerance:         arrival yaw tolerance in angle_unit
+  #   yaw_tolerance_deg:     arrival yaw tolerance in degrees; overrides yaw_tolerance
+  wp_start:
+    pose: { x: 0.0, y: 0.0, yaw: 0.0 }
+
+  wp_forward_1m:
+    pose: { x: 1.0, y: 0.0, yaw: 0.0 }
+    pos_tolerance: 0.03
+    yaw_tolerance_deg: 3.0
+
+profiles:
+  # Profile fields currently read by MissionExecutor:
+  #   speed_mps:        translational speed limit and tracker cruise speed (m/s)
+  #                     tracker cruise speed is capped by TRACKER_MAX_SPEED_MPS
+  #   yaw_rate_rps:     angular velocity limit (rad/s)
+  #   start_radius_m:   cubic-ease acceleration distance from stage start (m)
+  #   end_radius_m:     cubic-ease deceleration distance before target (m)
+  #   min_speed_scale:  minimum translation alpha while not arrived, 0.0-1.0
+  #
+  # Profile fields often useful as documentation, but not currently read here:
+  #   curve:            executor currently passes "cubic_ease" internally
+  #
+  # Team speed convention for early chassis tests:
+  #   slow  = 0.15 m/s
+  #   fast  = 0.50 m/s
+  slow:
+    speed_mps: 0.15
+    yaw_rate_rps: 0.8
+    start_radius_m: 0.20
+    end_radius_m: 0.20
+    min_speed_scale: 0.20
+    curve: cubic_ease
+
+  normal:
+    speed_mps: 0.30
+    yaw_rate_rps: 1.2
+    start_radius_m: 0.25
+    end_radius_m: 0.25
+    min_speed_scale: 0.20
+    curve: cubic_ease
+
+  fast:
+    speed_mps: 0.50
+    yaw_rate_rps: 1.5
+    start_radius_m: 0.35
+    end_radius_m: 0.35
+    min_speed_scale: 0.20
+    curve: cubic_ease
+
+actuators: {}
+# Actuator examples only; keep commented for this chassis-only mission.
+# actuators:
+#   arm_yaw_motor:
+#     type: motor
+#     motor_id: 5
+#     speed: 3.0
+#     positions:
+#       front: 0.0
+#       mid: 1.57
+#       back: 3.14
+#   arm_gripper:
+#     type: pneumatic
+#     index: 0
+#     states: [open, close]
+
+stages:
+  # Supported stage fields:
+  #   navigate:    id, type, to, profile
+  #   arm:         id, type, plus actuator-name: semantic-state pairs
+  #   wait:        id, type, duration_s
+  #   sequential:  id, type, steps: [...]
+  #   parallel:    id, type, actions: [...], wait_until: all_complete
+  #   conditional: id, type, condition, then, else
+  #   terminate:   id, type
+  #
+  # Conditional condition fields currently supported:
+  #   topic: /arduino/raw_sensor_data or /damiao_feedback
+  #   field: cached sensor field name
+  #   op: gt / lt / gte / lte
+  #   value: threshold
+  #
+  # This mission intentionally uses only one navigate stage. On arrival,
+  # MissionExecutor publishes zero /local_driving once and then reports DONE.
+  - id: nav_forward_1m
+    type: navigate
+    to: wp_forward_1m
+    profile: slow
+
+# Example stages for future missions; do not uncomment for this test.
+# - id: wait_stable
+#   type: wait
+#   duration_s: 1.0
+#
+# - id: set_arm
+#   type: arm
+#   arm_yaw_motor: front
+#   arm_gripper: open
+#
+# - id: conditional_example
+#   type: conditional
+#   condition:
+#     topic: /arduino/raw_sensor_data
+#     field: enc_x_counts
+#     op: gte
+#     value: 1000
+#   then: next_stage
+#   else: retry_stage
+#
+# - id: done
+#   type: terminate
