@@ -4,8 +4,12 @@
 # 气动 Arduino (CH340 USB-Serial, 无唯一序列号)
 SUBSYSTEM=="tty", DRIVERS=="ch341", SYMLINK+="pneu_arduino"
 
-# 大喵 USB-CAN 适配器 (HDSC CDC, SN=00000000050C)
-SUBSYSTEM=="tty", ENV{ID_USB_SERIAL_SHORT}=="00000000050C", SYMLINK+="damiao_can"
+# 底盘大喵 USB-CAN 适配器 (HDSC CDC, SN=00000000050C)
+# damiao_can 保留作旧脚本兼容；当前底盘节点优先使用 chassis_damiao_can。
+SUBSYSTEM=="tty", ENV{ID_USB_SERIAL_SHORT}=="00000000050C", SYMLINK+="damiao_can", SYMLINK+="chassis_damiao_can"
+
+# Arm 大喵 USB-CAN 适配器：插上第二块板后，用 `udevadm info` 查实际 serial 再取消注释。
+# SUBSYSTEM=="tty", ENV{ID_USB_SERIAL_SHORT}=="ARM_USB_CAN_SERIAL_HERE", SYMLINK+="arm_damiao_can"
 
 # 传感器 Arduino (Mega 2560 R3, IMU+Encoder, SN=55838323935351014241)
 SUBSYSTEM=="tty", ENV{ID_USB_SERIAL_SHORT}=="55838323935351014241", SYMLINK+="sensor_arduino"

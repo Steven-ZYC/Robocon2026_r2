@@ -15,7 +15,11 @@
   <depend>launch_ros</depend>
   
   <!-- Project-specific dependencies -->
+  <depend>arduino_sensor_driver</depend>
+  <depend>arm</depend>
+  <depend>base_omniwheel_r2_700</depend>
   <depend>navigation</depend>
+  <depend>pneumatics</depend>
   <depend>joystick_driver</depend>
   
   <!-- Test dependencies (optional) -->

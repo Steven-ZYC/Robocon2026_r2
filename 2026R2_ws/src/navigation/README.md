@@ -45,7 +45,7 @@ ros2 launch navigation navigation.launch.py
 - **Subscribed**: `/state_pose2d` (`geometry_msgs/Pose2D`)
   - Coordinate system: REP 103 compliant planar state (`x` = forward, `y` = left, `theta` = yaw in **degrees**)
   - Source: `arduino_sensor_driver` package simplified planar output
-- **Published**: `/local_driving` (`std_msgs/Float32MultiArray`) - `[direction_rad, speed_cm_s, omega_rad_s]`
+- **Published**: `/local_driving` (`std_msgs/Float32MultiArray`) - `[direction_rad, speed_m_s, omega_rad_s]`
 - **Debug**: `/global_nav/status` (`std_msgs/String`)
 
 ## Coordinate System
@@ -170,6 +170,7 @@ ros2 launch navigation navigation.launch.py mission_file:=/path/to/mission.yaml
 
 | 日期 | 说明 |
 |---|---|
+| 2026-05-20 | v0.7 — `/local_driving` 速度单位从 cm/s 改为 m/s，`_pub_driving_body()` 不再 `* 100.0` |
 | 2026-05-20 | v0.6 — 新增 `routes/forward_1m.yaml` 底盘 +X 1m 最小测试 mission |
 | 2026-05-20 | v0.5 — Mission YAML 支持 angle_unit/yaw_unit，并由 executor 统一转换角度单位 |
 | 2026-05-20 | v0.4 — 补充 Tracker CTE-P 控制与 SpeedProfiler cubic ease 设计文档 |
@@ -474,7 +475,7 @@ omega = max(alpha, 0.3) × omega_raw
    vy_body = -vx × sin(yaw) + vy × cos(yaw)
 
 6. 发布 Float32MultiArray 到 /local_driving:
-   [direction_rad, speed_cm_s, omega_rad_s]
+   [direction_rad, speed_m_s, omega_rad_s]
 ```
 
 ### 四、当前设计局限

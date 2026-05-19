@@ -11,7 +11,7 @@ Subscribes:
 - arm/pneu_command (Float32MultiArray): [gripper, lift, stopper]  (0.0/1.0)
 
 Publishes:
-- damiao_control (Float32MultiArray):
+- arm/damiao_control (Float32MultiArray):
     POS_VEL (mode 2): [motor_id, 2, speed, position]
     VEL (mode 3):     [motor_id, 3, speed]
 - joint_pneu_control (Float32MultiArray): [gripper, lift, stopper] (0.0/1.0)
@@ -30,6 +30,7 @@ DEFAULT_GEAR_RATIO = 19.227           # DMH3510 减速比（电机轴 → 输出
 DEFAULT_MAX_MOTOR_SPEED_RAD_S = 45.0  # DMH3510 电机轴最大速度 (rad/s)
 DEFAULT_REPUBLISH_RATE_HZ = 20.0
 DEFAULT_PNEU_NAMES = ["arm_gripper", "arm_lift", "arm_stopper"]
+DEFAULT_MOTOR_CONTROL_TOPIC = "arm/damiao_control"
 
 
 class ArmCtrlNode(Node):
@@ -77,6 +78,9 @@ class ArmCtrlNode(Node):
             else DEFAULT_JOINT_DIRECTIONS
         )
 
+        self.motor_control_topic = str(
+            self.declare_parameter("motor_control_topic", DEFAULT_MOTOR_CONTROL_TOPIC).value
+        )
         self.num_joints = len(self.joint_motor_ids)
         self.latest_joint_targets = None
 
@@ -109,7 +113,7 @@ class ArmCtrlNode(Node):
         # ---- Publishers ----
         self.motor_publisher = self.create_publisher(
             Float32MultiArray,
-            "damiao_control",
+            self.motor_control_topic,
             10,
         )
         self.pneu_publisher = self.create_publisher(
@@ -126,7 +130,7 @@ class ArmCtrlNode(Node):
 
         self.get_logger().info(
             f"Arm Ctrl Node initialized: {self.num_joints} joints "
-            f"(motor_ids={self.joint_motor_ids}, mode={self.control_mode}), "
+            f"(motor_ids={self.joint_motor_ids}, mode={self.control_mode}, topic={self.motor_control_topic}), "
             f"gear_ratio={self.gear_ratio}, "
             f"max_output_speed={self.max_speed_rad_s} rad/s, "
             f"max_motor_speed={self.max_motor_speed_rad_s} rad/s, "
@@ -142,7 +146,7 @@ class ArmCtrlNode(Node):
 
         Each triplet carries its own motor_id, so the caller (FSM or joystick)
         decides which motor to address. motor_id is validated against
-        joint_motor_ids before forwarding to damiao_control.
+        joint_motor_ids before forwarding to arm/damiao_control.
         """
         if len(msg.data) < 3:
             self.get_logger().warn(
@@ -160,7 +164,7 @@ class ArmCtrlNode(Node):
         self.publish_joint_commands(msg.data)
 
     def publish_joint_commands(self, triplets):
-        """Convert joint triplets to per-motor damiao_control messages.
+        """Convert joint triplets to per-motor arm/damiao_control messages.
 
         triplets format: [motor_id, position_rad, speed_rad_s, ...]
 

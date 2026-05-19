@@ -160,6 +160,75 @@ ros2 launch arm arm.launch.py
 
 | 日期 | 说明 |
 |---|---|
+| 2026-05-20 | v0.4 — arm 独立 USB-CAN Damiao 驱动，输出改为 `arm/damiao_control`，`damiao_ctrl` 暂时悬置 |
 | 2026-05-15 | v0.3 — 新增 arm/pneu_command + joint_pneu_control，支持气动控制 |
 | 2026-05-14 | v0.2 — 移除 damiao_node，发布到 damiao_control，依赖 damiao_ctrl |
 | 2026-05-14 | v0.1 — 从 base_omniwheel_r2_700 分离，创建 arm 包 |
+---
+
+## v0.4 — Arm 独立 USB-CAN Damiao 驱动（2026-05-20）
+
+当前 arm 包不再依赖 `damiao_ctrl` 实车链路。`damiao_ctrl` package 保留在仓库中，但当前双 USB-CAN 调试阶段暂时不启动。
+
+### 当前 Node 列表
+
+| Node | 可执行文件 | 职责 |
+|---|---|---|
+| arm_damiao_motor_controller | `arm_damiao_node` | 独占 arm USB-CAN，控制 arm Damiao motor 5-6 |
+| arm_ctrl_node | `arm_ctrl_node` | 订阅 FSM/joystick 的 arm 指令，转换为 `arm/damiao_control`；同时转发气动指令 |
+
+### 当前 arm 控制链条
+
+```text
+arm/joint_command
+    ↓
+arm_ctrl_node
+    ↓
+arm/damiao_control
+    ↓
+arm_damiao_node
+    ↓
+/dev/arm_damiao_can
+    ↓
+Damiao motors 5-6 (POS_VEL)
+```
+
+气动链条不变：
+
+```text
+arm/pneu_command → arm_ctrl_node → joint_pneu_control → pneumatics/pneu_ctrl_node
+```
+
+### arm_damiao_node 接口
+
+| 方向 | Topic | 类型 | 说明 |
+|---|---|---|---|
+| Sub | `arm/damiao_control` | `std_msgs/Float32MultiArray` | `[motor_id, mode, speed, position?]` |
+| Pub | `/damiao_feedback` | `std_msgs/Float32MultiArray` | `[motor_id, q_rad, dq_rad_s, tau_Nm, enabled]`，默认发布 motor 5 |
+
+参数：
+
+| 参数 | 默认值 | 单位 | 说明 |
+|---|---|---|---|
+| `device_id` | `/dev/arm_damiao_can` | - | arm USB-CAN 设备路径 |
+| `motor_ids` | `[5, 6]` | - | arm Damiao 电机 ID |
+| `motor_modes` | `[2, 2]` | - | arm 默认 POS_VEL |
+| `control_topic` | `arm/damiao_control` | - | arm 低层电机控制 topic |
+| `feedback_topic` | `/damiao_feedback` | - | FSM torque condition 使用的反馈 topic |
+| `feedback_motor_id` | `5` | - | 默认发布反馈的 motor ID |
+| `command_timeout` | `0.5` | s | 超时未收到 `arm/damiao_control` 后保持/停止 arm 电机 |
+
+超时保护：若 `arm/damiao_control` 超过 `command_timeout` 没有刷新，`arm_damiao_node` 会对 POS_VEL 电机发送当前位置 hold + 零速度，避免上层崩溃后 arm 继续动作。
+
+### 启动
+
+```bash
+ros2 launch arm arm.launch.py
+```
+
+该 launch 会同时启动：
+
+```bash
+ros2 run arm arm_damiao_node
+ros2 run arm arm_ctrl_node
+```

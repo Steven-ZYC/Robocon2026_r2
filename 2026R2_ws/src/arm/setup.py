@@ -10,6 +10,8 @@ setup(
     packages=find_packages(exclude=['test']),
     install_requires=[
         'setuptools',
+        'pyserial>=3.0,<4.0',
+        'numpy',
     ],
     extras_require={'test': ['pytest']},
     data_files=[
@@ -26,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'arm_ctrl_node = arm.arm_ctrl_node:main',
+            'arm_damiao_node = arm.arm_damiao_node:main',
         ],
     },
 )

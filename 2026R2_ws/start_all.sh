@@ -34,9 +34,9 @@ tmux send-keys -t r2:nav \
     "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 launch navigation navigation.launch.py mission_file:=$MISSION_FILE" Enter
 
 # 创建其余窗口（顺序按依赖关系排列）
-tmux new-window -t r2 -n damiao
-tmux send-keys -t r2:damiao \
-    "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 launch damiao_ctrl damiao_ctrl.launch.py" Enter
+tmux new-window -t r2 -n base_damiao
+tmux send-keys -t r2:base_damiao \
+    "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 run base_omniwheel_r2_700 damiao_node" Enter
 
 tmux new-window -t r2 -n base
 tmux send-keys -t r2:base \

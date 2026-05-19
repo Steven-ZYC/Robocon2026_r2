@@ -364,7 +364,7 @@ class MissionExecutor:
         speed_mps = math.sqrt(vx_body ** 2 + vy_body ** 2)
 
         msg = Float32MultiArray()
-        msg.data = [float(direction), float(speed_mps * 100.0), float(omega)]
+        msg.data = [float(direction), float(speed_mps), float(omega)]
         self.pub_driving.publish(msg)
 
     def _pub_zero_driving(self):

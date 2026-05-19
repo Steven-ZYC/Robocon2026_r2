@@ -73,6 +73,8 @@ Notes:
 
 Inside the container:
 
+当前双 USB-CAN 实车调试请以 **v4 — 双 USB-CAN Damiao 临时架构说明** 为准；下面这组 `damiao_ctrl` 统一驱动启动命令保留为历史记录。
+
 ```bash
 source /opt/ros/jazzy/setup.bash
 source /workspace/2026R2_ws/install/setup.bash
@@ -86,6 +88,131 @@ ros2 launch base_omniwheel_r2_700 base.launch.py
 ros2 launch arm arm.launch.py
 ros2 launch global_navigation global_navigation.launch.py
 ```
+
+## v4 — 双 USB-CAN Damiao 临时架构说明（2026-05-20）
+
+当前调试目标是让底盘 Damiao 和 arm Damiao 分别使用两块 USB-CAN 板，避免一个 `damiao_ctrl` 节点同时管理 1-6 号电机时出现串口占用、接线范围不清和调试困难。
+
+### 当前决策
+
+- `damiao_ctrl` package **保留在仓库中**，暂时悬置，不删除。
+- 当前实车调试阶段 **不要启动** `ros2 launch damiao_ctrl damiao_ctrl.launch.py`。
+- 底盘 Damiao 由 `base_omniwheel_r2_700` package 内的 chassis damiao node 负责。
+- arm Damiao 由 `arm` package 内的 arm damiao node 负责。
+- 两个 Damiao node 必须打开不同 USB-CAN 设备；一个 node 只拥有一个串口。
+
+### 目标控制链条
+
+```text
+Chassis chain:
+
+/local_driving
+    ↓
+base_omniwheel_r2_700/local_navigation_node
+    ↓
+/damiao_control
+    ↓
+base_omniwheel_r2_700/damiao_node
+    ↓
+/dev/chassis_damiao_can
+    ↓
+Damiao motors 1-4 (VEL)
+```
+
+```text
+Arm chain:
+
+arm/joint_command
+    ↓
+arm/arm_ctrl_node
+    ↓
+arm/damiao_control
+    ↓
+arm/arm_damiao_node
+    ↓
+/dev/arm_damiao_can
+    ↓
+Damiao motors 5-6 (POS_VEL)
+```
+
+Pneumatics remains unchanged:
+
+```text
+arm/pneu_command
+    ↓
+arm/arm_ctrl_node
+    ↓
+joint_pneu_control
+    ↓
+pneumatics/pneu_ctrl_node
+    ↓
+Arduino pneumatic board
+```
+
+### Topic 约定
+
+| 子系统 | Topic | 类型 | 说明 |
+|---|---|---|---|
+| Chassis low-level | `/damiao_control` | `std_msgs/Float32MultiArray` | 只给底盘 1-4 号电机使用 |
+| Arm low-level | `arm/damiao_control` | `std_msgs/Float32MultiArray` | 只给 arm 5-6 号电机使用 |
+| Arm feedback | `/damiao_feedback` | `std_msgs/Float32MultiArray` | arm Damiao node 发布 motor 5 反馈，供 FSM torque condition 使用 |
+| Pneumatics | `joint_pneu_control` | `std_msgs/Float32MultiArray` | 气动阀控制，不经过 Damiao |
+
+低层 Damiao 命令格式保持一致：
+
+```text
+[motor_id, mode, speed]
+[motor_id, mode, speed, position]
+```
+
+- `mode = 3`: VEL，底盘电机使用。
+- `mode = 2`: POS_VEL，arm 关节电机使用。
+- `mode = 0`: disable。
+
+### USB-CAN 设备命名
+
+建议使用 udev 固定两个 symlink：
+
+```text
+/dev/chassis_damiao_can  → 底盘 USB-CAN
+/dev/arm_damiao_can      → arm USB-CAN
+```
+
+当前 `2026R2_ws/99-robocon-r2.rules` 已把 SN=`00000000050C` 的 HDSC USB-CAN 固定为 `/dev/chassis_damiao_can`，并保留 `/dev/damiao_can` 作为旧脚本兼容名。接第二块板后，需要根据它的实际 serial number 补齐 `/dev/arm_damiao_can` 规则。不要让两个 node 都使用同一个 `/dev/damiao_can`。
+
+### 启动顺序
+
+```bash
+# 1. 底盘 Damiao driver（chassis USB-CAN）
+ros2 run base_omniwheel_r2_700 damiao_node
+
+# 2. 底盘运动学
+ros2 run base_omniwheel_r2_700 local_navigation_node
+
+# 3. arm Damiao driver（arm USB-CAN）
+ros2 run arm arm_damiao_node
+
+# 4. arm 控制层
+ros2 run arm arm_ctrl_node
+
+# 5. 气动
+ros2 launch pneumatics pneumatics.launch.py
+
+# 6. 传感器与 FSM/navigation
+ros2 launch arduino_sensor_driver arduino_sensor.launch.py
+ros2 launch navigation navigation.launch.py
+```
+
+### `damiao_ctrl` 的状态
+
+`damiao_ctrl` 不是删除对象，而是暂时不在当前实车链路中使用。后续如果需要回到“一个 USB-CAN 管全部 Damiao 电机”的结构，或者要抽象出更统一的多 CAN 管理方式，可以继续以 `damiao_ctrl` 为基础改造。
+
+### 根目录启动脚本约定
+
+- `2026R2_ws/mission.sh`: 使用 `gnome-terminal` 手动打开每个需要启动的 node，适合现场逐个看日志。
+- `2026R2_ws/start_all.sh`: 使用 `tmux` 打开整车会话，适合长期运行。
+- 两个脚本当前都应遵循 v4 双 USB-CAN 架构，不应启动 `damiao_ctrl`。
+- 如果只测试底盘 0.1 m/s 前进 5 秒，使用 `2026R2_ws/src/base_omniwheel_r2_700/forward_0_1mps_5s.sh`。
 
 **ROS Topics and Message Structures**
 
@@ -213,11 +340,14 @@ ls -la /dev/input/event*      # 查看是否有新 event 设备
 
 | 日期 | 版本 | 说明 |
 |---|---|---|
+| 2026-05-20 | v4 | 说明当前双 USB-CAN Damiao 临时架构：底盘与 arm 分别用各自 damiao node，`damiao_ctrl` 暂时悬置。 |
 | 2026-05-17 | v3 | 新增手柄设备绑定说明，udev 规则，权限设置，开机自启配置 |
 | 2026-05-14 | v2 | 基于实际代码审查，修正节点名称、话题格式、包结构。v1 内容保留以备回溯。 |
 | 2025 | v1 | 初始版本（基于旧 navigation 包的文档，与当前代码不符）。 |
 
 ---
+
+> **说明**: 下面的 v2/v3 内容是当时的设计记录，按 README 演进规则保留，便于回溯。涉及 Damiao 启动链路时，当前实车调试以 v4 双 USB-CAN 说明为准；不要照旧的 `damiao_ctrl` 统一驱动方式启动整车。
 
 ## v2 — 当前实际架构（2026-05-14 代码审查）
 

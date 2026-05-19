@@ -15,30 +15,30 @@ High-level motion control for holonomic navigation.
 
 ### Subscribed Topics
 - **local_driving** (Float32MultiArray): High-level motion commands
-  - Format: `[direction_rad, plane_speed_cm/s, rotation_rad/s]`
+  - Format: `[direction_rad, plane_speed_m/s, rotation_rad/s]`
   - Subscribed by: `local_navigation_node`
 
 ### Published Topics
-- **damiao_control** (Float32MultiArray): Low-level motor commands
+- **base/damiao_control** (Float32MultiArray): Low-level motor commands
   - Format: `[motor_id, mode, speed, param4]`
-  - Published by: `local_navigation_node`, consumed by `damiao_ctrl/damiao_node`
+  - Published by: `local_navigation_node`, consumed by `damiao_node` (本包)
 
 ## Node Architecture
 
 ```
 [User/Strategy Layer]  (global_navigation_node / joystick_control_node)
         ↓
-   local_driving topic [direction, speed, rotation]
+   /local_driving topic [direction, speed_m/s, rotation_rad/s]
         ↓
 [local_navigation_node] ← inverse kinematics  (本包)
         ↓
-   damiao_control topic [motor_id, mode, speed] × 4
+   base/damiao_control topic [motor_id, mode, speed] × 4
         ↓
-   [damiao_ctrl / damiao_node] ← hardware driver
+[damiao_node] ← hardware driver  (本包)
         ↓
-   [USB-CAN Adapter]
+   [/dev/chassis_damiao_can]
         ↓
-   [4× DM Motors]
+   [4× DMH3510 Motors]  (ID 1-4)
 ```
 
 ## Parameters
@@ -46,84 +46,82 @@ High-level motion control for holonomic navigation.
 > **注意**: damiao_node 已于 v12 迁移至 `damiao_ctrl` 包，其参数见 damiao_ctrl README。
 
 ### local_navigation_node Parameters
-- **WHEEL_BASE_RADIUS**: Distance from wheel center to robot center (default: 0.299128 m) — v13 更新
-- **WHEEL_RADIUS**: Wheel radius for angular velocity conversion (default: 0.0635 m, diameter: 12.7 cm) — v13 更新
-- **WHEEL_ANGLES**: 电机正转推动方向（v13 修正）
+- **WHEEL_BASE_RADIUS**: Distance from wheel center to robot center (default: 0.299128 m)
+- **WHEEL_RADIUS**: Wheel radius for angular velocity conversion (default: 0.0635 m, diameter: 12.7 cm)
+- **WHEEL_ANGLES**: 电机正转推动方向
   - Motor 1: 左后 135°
   - Motor 2: 左前 45°
   - Motor 3: 右前 315°
   - Motor 4: 右后 225°
-- **MOTOR_DIRECTION**: 全部 1，驱动方向由 WHEEL_ANGLES 完整定义（v13 修正）
-- **DEFAULT_MOTOR_MODE**: VEL mode (3) for continuous control
-- **republish_rate_hz**: `local_navigation_node` 持续刷新当前目标轮速的频率，默认 `20.0 Hz`
+- **MOTOR_DIRECTION**: 全部 1，驱动方向由 WHEEL_ANGLES 完整定义
+- **gear_ratio**: DMH3510 减速比，默认 `19.227`（需按实际电机标签校准）
+- **max_motor_speed_rad_s**: 电机轴最大转速限幅，默认 `45.0 rad/s`
+- **republish_rate_hz**: 持续刷新频率，默认 `20.0 Hz`
+- **command_timeout**: `local_driving` 超时后发布零速，默认 `0.5 s`（≤0 禁用）
+
+### damiao_node Parameters
+- **device_id**: USB-CAN 设备路径，默认 `/dev/chassis_damiao_can`
 
 ## Local Navigation Protocol
 
 Topic: `local_driving` (Float32MultiArray)
 
-**Message format**: `[direction_rad, plane_speed_cm/s, rotation_rad/s]`
+**Message format**: `[direction_rad, plane_speed_m/s, rotation_rad/s]`
 
 | Parameter | Unit | Description |
 |-----------|------|-------------|
 | direction_rad | rad | Movement direction (0=forward, π/2=left, π=backward, -π/2=right) |
-| plane_speed_cm/s | cm/s | Translational speed magnitude |
+| plane_speed_m/s | m/s | Translational speed magnitude |
 | rotation_rad/s | rad/s | Rotational speed (positive=clockwise, negative=counter-clockwise) |
 
 **Examples:**
 ```bash
-# Move forward at 50 cm/s
-ros2 topic pub --once /local_driving std_msgs/msg/Float32MultiArray "{data: [0.0, 50.0, 0.0]}"
+# Move forward at 0.1 m/s (持续发送)
+ros2 topic pub --rate 20 /local_driving std_msgs/msg/Float32MultiArray “{data: [0.0, 0.1, 0.0]}”
 
-# Move left at 30 cm/s
-ros2 topic pub --once /local_driving std_msgs/msg/Float32MultiArray "{data: [1.5708, 30.0, 0.0]}"
+# Move left at 0.05 m/s (单次，0.5s 超时后自动停车)
+ros2 topic pub --once /local_driving std_msgs/msg/Float32MultiArray “{data: [1.5708, 0.05, 0.0]}”
 
-# Rotate clockwise at 1 rad/s (no translation)
-ros2 topic pub --once /local_driving std_msgs/msg/Float32MultiArray "{data: [0.0, 0.0, 1.0]}"
-
-# Move forward-left at 40 cm/s while rotating clockwise at 0.5 rad/s
-ros2 topic pub --once /local_driving std_msgs/msg/Float32MultiArray "{data: [0.785, 40.0, 0.5]}"
+# Rotate at 1 rad/s (no translation)
+ros2 topic pub --rate 20 /local_driving std_msgs/msg/Float32MultiArray “{data: [0.0, 0.0, 1.0]}”
 
 # Stop (zero velocity)
-ros2 topic pub --once /local_driving std_msgs/msg/Float32MultiArray "{data: [0.0, 0.0, 0.0]}"
+ros2 topic pub --once /local_driving std_msgs/msg/Float32MultiArray “{data: [0.0, 0.0, 0.0]}”
 ```
 
-`local_driving` 采用“保持最后目标”语义：上层发布一次非零速度后，`local_navigation_node` 会按 `republish_rate_hz` 持续向 `damiao_control` 刷新该目标，直到收到下一条 `local_driving`。需要停车时必须发送零速命令。
+`local_driving` 采用”保持最后目标”语义：上层发布一次非零速度后，`local_navigation_node` 会按 `republish_rate_hz` 持续向 `base/damiao_control` 刷新该目标，直到收到下一条 `local_driving` 或超时触发零速保护（默认 0.5s）。需要停车时必须发送零速命令。
 
 ## Motor Control Protocol (Low-Level)
 
-Topic: `damiao_control` (Float32MultiArray)
+Topic: `base/damiao_control` (Float32MultiArray)
 
 **Message format**:
 - VEL: `[motor_id, 3, speed]`
 - POS_VEL: `[motor_id, 2, speed, position]`
 - Disable: `[motor_id, 0, speed]`
 
-The 4th parameter is only used by POS_VEL mode:
-
 | motor_id | mode | speed | param4 | 说明 |
 |----------|------|-------|--------|------|
 | 1-4 | 0 | - | - | 停止/失能电机 |
-| 1-4 | 3 (VEL) | rad/s | - | 速度控制模式，保持到下一条速度命令或 watchdog 零速 |
+| 1-4 | 3 (VEL) | rad/s | - | 速度控制模式，持续到下一条命令 |
 | 1-4 | 2 (POS_VEL) | rad/s | position (rad) | 位置速度控制 |
 
-**VEL mode behavior:**
-- VEL 模式不再支持 `duration` 自动停止。
-- 速度会保持到下一条 VEL 速度命令、disable 命令，或 `damiao_node` 的 `command_timeout` watchdog 触发零速。
-- 正常上层控制应直接改变速度目标；停车应发送 speed `0.0`。
+安全由 `local_navigation_node` 的 `command_timeout` 保证：`/local_driving` 断联后自动向 `base/damiao_control` 发布零速。
+`damiao_node` 自身无 watchdog，收到即执行。
 
 **Examples:**
 ```bash
-# VEL mode: Motor 1, 10 rad/s
-ros2 topic pub --once /damiao_control std_msgs/msg/Float32MultiArray "{data: [1.0, 3.0, 10.0]}"
+# VEL mode: Motor 1, 10 rad/s motor shaft
+ros2 topic pub --once /base/damiao_control std_msgs/msg/Float32MultiArray "{data: [1.0, 3.0, 10.0]}"
 
 # VEL stop: Motor 1, zero speed
-ros2 topic pub --once /damiao_control std_msgs/msg/Float32MultiArray "{data: [1.0, 3.0, 0.0]}"
+ros2 topic pub --once /base/damiao_control std_msgs/msg/Float32MultiArray "{data: [1.0, 3.0, 0.0]}"
 
 # POS_VEL mode: Motor 2, speed 1 rad/s, target position 50 rad
-ros2 topic pub --once /damiao_control std_msgs/msg/Float32MultiArray "{data: [2.0, 2.0, 1.0, 50.0]}"
+ros2 topic pub --once /base/damiao_control std_msgs/msg/Float32MultiArray "{data: [2.0, 2.0, 1.0, 50.0]}"
 
-# Disable: Motor 3, stop immediately
-ros2 topic pub --once /damiao_control std_msgs/msg/Float32MultiArray "{data: [3.0, 0.0, 0.0]}"
+# Disable: Motor 3
+ros2 topic pub --once /base/damiao_control std_msgs/msg/Float32MultiArray "{data: [3.0, 0.0, 0.0]}"
 ```
 
 ## Kinematic Model
@@ -153,7 +151,8 @@ ros2 topic pub --once /damiao_control std_msgs/msg/Float32MultiArray "{data: [3.
 
 ```
 v_wheel_i = v_x · cos(θ_i) + v_y · sin(θ_i) + ω · R
-ω_motor_i = v_wheel_i / r
+ω_output_i = v_wheel_i / r
+ω_motor_i = ω_output_i × gear_ratio    ← Damiao VEL 模式接收电机轴速度
 ```
 
 | 参数 | 值 | 说明 |
@@ -161,6 +160,8 @@ v_wheel_i = v_x · cos(θ_i) + v_y · sin(θ_i) + ω · R
 | `θ_i` | 见上表 | 各电机正转推动方向 |
 | `R` | 0.299128 m | 轮心距中心距离 |
 | `r` | 0.0635 m | 轮半径（直径 12.7 cm） |
+| `gear_ratio` | 19.227 (默认) | DMH3510 减速比，可通过参数覆盖 |
+| `max_motor_speed_rad_s` | 45.0 rad/s | 电机轴最大转速限幅 |
 
 公式中不再有额外的 Y 轴或旋转方向取反。所有符号由 `cos(θ_i)` / `sin(θ_i)` 自然得出。
 
@@ -180,116 +181,35 @@ The node automatically monitors connection health and reconnects when motor powe
 
 ## Quick Start
 
-### Using Launch File (Recommended)
-The easiest way to start both nodes together:
-
 ```bash
-# Build the workspace (if not already done)
+# Build
 cd ~/robotics/Robocon2026_r2/2026R2_ws
 colcon build --packages-select base_omniwheel_r2_700
+source install/setup.bash
 
-# Source the workspace
-source ~/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
+# Terminal 1: damiao_node (motor driver, 先启动)
+ros2 run base_omniwheel_r2_700 damiao_node
 
-# Launch both nodes
-ros2 launch base_omniwheel_r2_700 base.launch.py
-```
-
-This will start:
-- `local_navigation_node` - Motion control
-- (damiao_node now runs from `damiao_ctrl` package — start it separately)
-
-### Manual Node Startup
-Alternatively, start nodes individually in separate terminals:
-
-```bash
-# Terminal 1: Start damiao_ctrl (motor driver, must start first)
-source ~/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
-ros2 run damiao_ctrl damiao_node
-
-# Terminal 2: Start local_navigation_node
-source ~/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
+# Terminal 2: local_navigation_node
 ros2 run base_omniwheel_r2_700 local_navigation_node
 ```
 
 ## Test Scripts
 
-### High-Level Navigation Test
-Script: `test_local_navigation.sh`
-- Tests `local_navigation_node` with various motion commands
-- Sequence: Forward (6s) → Left (6s) → Clockwise Rotation (6s) → Stop
-- **Prerequisites**: Both nodes must be running (use launch file or manual startup above)
+### `forward_0_1mps_5s.sh` — 底盘前进 0.1 m/s × 5s 手动测试
 
-Run:
-```bash
-# After starting nodes with launch file
-bash src/base_omniwheel_r2_700/test_local_navigation.sh
-```
+用 `gnome-terminal` 分别打开 `damiao_node`、`local_navigation_node` 和指令窗口，方便手动查看每个 node 的日志。
 
-### Low-Level VEL Mode Test
-Script: `test_damiao_vel.sh`
-- Tests motors 1-4 in VEL mode
-- Runs at 5 rad/s for 5 seconds
-- Auto-detects ROS 2 version (Jazzy/Humble)
-
-Run on host:
-```bash
-bash 2026R2_ws/src/base_omniwheel_r2_700/test_damiao_vel.sh
-```
-
-### Single Motor Test
-Script: `test_single_motor.sh`
-- Tests motor 1 only
-- Speed: 2 rad/s for 3 seconds
-- Useful for quick testing
-
-Run on host:
-```bash
-bash 2026R2_ws/src/base_omniwheel_r2_700/test_single_motor.sh
-```
-
-### Diagnostic Tools
-Scripts for debugging:
-- `diagnose_damiao.sh` - System health check
-- `debug_motor_communication.sh` - Communication debugging
-- `start_damiao_node.sh` - One-click node startup
-
-### POS_VEL Mode Test (Legacy)
-- Auto-detects ROS 2 version by checking:
-  - `/opt/ros/jazzy/setup.bash`
-  - `/opt/ros/humble/setup.bash`
-- Default test: mode 2 (pos_vel), position 50.0, speed 0.5
-
-Run inside the container or on host:
+- 打开两个 node 窗口后，主终端按 Enter 发送指令。
+- 指令窗口以 `10 Hz` 发布 `/local_driving = [0.0, 0.1, 0.0]`（0.1 m/s 前进），持续 `5 s`。
+- 5 秒后自动发布两次 `[0.0, 0.0, 0.0]` 停车。
+- 安全保护：`local_navigation_node` 默认 `command_timeout = 0.5 s`，指令窗口异常退出后自动停车。
 
 ```bash
-bash test_damiao.sh
+cd ~/robotics/Robocon2026_r2/2026R2_ws
+bash src/base_omniwheel_r2_700/forward_0_1mps_5s.sh
 ```
 
-## Docker (Jazzy)
-
-Repository root provides a Dockerfile, and this package contains the run script:
-
-- `Robocon2026_r2/Dockerfile`
-- `2026R2_ws/src/base_omniwheel_r2_700/run_r2_base_docker.sh`
-
-Build and enter container:
-
-```bash
-sudo bash /home/steven/roboticsteam/Robocon2026_r2/2026R2_ws/src/base_omniwheel_r2_700/run_r2_base_docker.sh
-```
-
-The script automatically sources ROS Jazzy and workspace setup, so you can run ROS commands immediately.
-
-Inside the container:
-
-```bash
-bash /workspace/2026R2_ws/src/base_omniwheel_r2_700/test_damiao.sh
-```
-
-Notes:
-- The run script maps `/dev/serial/by-id/...` (or `/dev/ttyACM0`) into the container.
-- If the device path changes, update the script or pass `--device` manually.
 ## Changelog
 
 ### 2026-02-02
@@ -486,3 +406,53 @@ Notes:
   ```
   - 底盘 motor 1-4 默认使用 VEL（速度模式），与原有行为一致。
   - arm motor 5-6 默认使用 POS_VEL（位置-速度模式），由 `arm_ctrl_node` 控制。
+
+### 2026-05-19 (v14 - local_driving 上游失效保护恢复)
+- **local_navigation_node 上游超时保护**：
+  - 超时触发条件：超过 `command_timeout` 秒未收到新的 `local_driving`。
+  - 默认参数：`command_timeout = 0.5 s`。
+  - 超时行为：按 `republish_rate_hz` 持续向 `damiao_control` 发布 1-4 号电机 VEL 零速命令，并输出 WARN 日志。
+  - 恢复行为：收到新的有效 `local_driving` 后输出 recovered 日志，并立即按新目标轮速发布。
+  - 禁用方式：将 `command_timeout <= 0.0`。
+- **与 v11 保持最后目标语义的关系**：
+  - v11 的“保持最后目标”仅在上层持续健康发布或 timeout 未触发时成立。
+  - 如果 `global_navigation_node` / `joystick_control_node` 崩溃或停止发布，`local_navigation_node` 不再无限刷新旧速度，而是主动归零，避免底盘乱跑。
+
+### 2026-05-20 (v15 - local_driving 0.1 m/s 手动窗口测试脚本)
+- **新增脚本**：`forward_0_1mps_5s.sh`。
+- **启动方式**：使用 `gnome-terminal` 分别打开 `damiao_ctrl/damiao_node`、`base_omniwheel_r2_700/local_navigation_node` 和 `/local_driving` 指令窗口。
+- **测试动作**：向 `/local_driving` 以 `10 Hz` 发布 `[0.0, 10.0, 0.0]` 持续 `5 s`，即底盘按机体系 +x 方向以 `0.1 m/s` 前进。
+- **停车行为**：5 秒后主动发布两次 `[0.0, 0.0, 0.0]`；若上游指令异常中断，`local_navigation_node command_timeout = 0.5 s` 仍会触发零速保护。
+
+### 2026-05-20 (v16 - 恢复底盘独立 Damiao USB-CAN driver)
+- **恢复文件**：从历史版本恢复 `base_omniwheel_r2_700/damiao_node.py` 与 `DM_CAN.py`，作为底盘 1-4 号 Damiao 电机专用 driver。
+- **当前双 USB-CAN 架构**：底盘使用 `base_omniwheel_r2_700/damiao_node`，arm 使用 `arm/arm_damiao_node`；`damiao_ctrl` package 保留但当前实车调试阶段暂不启动。
+- **底盘控制链条**：`/local_driving` → `local_navigation_node` → `/damiao_control` → `base_omniwheel_r2_700/damiao_node` → `/dev/chassis_damiao_can` → motor 1-4。
+- **超时保护**：`damiao_node` 保留 `command_timeout = 0.5 s`，若 `/damiao_control` 超时未刷新，会向底盘 1-4 号电机发送 VEL 零速。
+- **启动**：
+  ```bash
+  ros2 run base_omniwheel_r2_700 damiao_node
+  ros2 run base_omniwheel_r2_700 local_navigation_node
+  ```
+
+
+### 2026-05-20 (v17 - forward 脚本切换至当前双 USB-CAN 架构)
+
+- `damiao_node` 新增/恢复 `device_id` ROS 参数，默认 `/dev/chassis_damiao_can`。如果该 symlink 还没建立但旧 `/dev/damiao_can` 存在，节点会临时 fallback 到 `/dev/damiao_can` 并输出 WARN；两块 USB-CAN 同时使用前必须建立 `/dev/chassis_damiao_can`。也可临时使用 `ros2 run base_omniwheel_r2_700 damiao_node --ros-args -p device_id:=/dev/serial/by-id/实际设备`。
+- 根目录 `99-robocon-r2.rules` 当前会为 SN=`00000000050C` 同时创建 `/dev/damiao_can` 和 `/dev/chassis_damiao_can`。
+- `damiao_node` 会忽略 `/damiao_control` 上非底盘电机 ID（例如 motor 5/6），且不会用这些错误消息刷新底盘 watchdog。出现该 WARN 通常表示旧 `arm_ctrl_node` 或手动命令仍在向 `/damiao_control` 发布 arm 电机指令。
+- `forward_0_1mps_5s.sh` 当前只启动底盘链路：`base_omniwheel_r2_700/damiao_node`、`local_navigation_node` 和 `/local_driving` 指令窗口。
+- 脚本不启动 `damiao_ctrl`，底盘 Damiao 默认使用 `/dev/chassis_damiao_can`，只控制 motor 1-4。
+- 脚本以 10 Hz 发布 `/local_driving`，持续 5 秒；结束后主动发布两次零速。`local_navigation_node` 与 `damiao_node` 均保留 `0.5 s` watchdog 作为异常退出保护。
+
+### 2026-05-20 (v18 — 速度单位统一为 m/s + 补全 gear_ratio + damiao 去 watchdog)
+- **`/local_driving` 速度单位从 cm/s 改为 m/s**：
+  - `local_navigation_node` 直接接收 m/s，不再内部 `/100.0` 转换。
+  - `mission_executor._pub_driving_body()` 同步改为直接发 m/s，不再 `* 100.0`。
+  - 示例：前进 0.1 m/s → `{data: [0.0, 0.1, 0.0]}`（旧：`[0.0, 10.0, 0.0]`）。
+- **新增 gear_ratio**：逆运动学增加 DMH3510 减速比换算（轮端 → 电机轴），默认 `19.227`，可通过 `-p gear_ratio:=...` 覆盖。
+- **新增 max_motor_speed_rad_s**：电机轴转速限幅，默认 `45.0 rad/s`。
+- **底盘控制 topic 改为 `base/damiao_control`**：与 arm 的 `arm/damiao_control` 完全隔离。
+- **damiao_node 去掉内置 watchdog**：安全停靠统一由 `local_navigation_node` 的 `command_timeout` 负责。
+- **修复 `publish_latest_command()` 超时覆盖 bug**：超时零速不再写回 `latest_wheel_speeds`。
+- **测试脚本更新**：`forward_0_1mps_5s.sh` 速度值改为 `0.1`（m/s），topic 改为 `base/damiao_control`，去掉已删除的 `command_timeout` 参数。

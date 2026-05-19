@@ -1,5 +1,8 @@
 # Arm TODO
 
+- [x] 新增 `arm_damiao_node`，由 arm package 独占 `/dev/arm_damiao_can` 控制 motor 5-6
+- [x] 将 `arm_ctrl_node` 电机输出从 `damiao_control` 改为 `arm/damiao_control`，避免与底盘 topic 混用
+- [x] `arm.launch.py` 同时启动 `arm_damiao_node` 与 `arm_ctrl_node`
 - [ ] 确认 arm USB-CAN 设备 ID
 - [ ] 确认 arm 电机 ID 与关节编号对应关系
 - [ ] 实测各关节方向是否符合预期，校准 `joint_directions`

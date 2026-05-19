@@ -10,6 +10,7 @@ setup(
     packages=find_packages(exclude=['test']),
     install_requires=[
         'setuptools',
+        'pyserial>=3.0,<4.0',
         'numpy'
     ],
     extras_require={'test': ['pytest']},
@@ -26,6 +27,7 @@ setup(
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
+            'damiao_node = base_omniwheel_r2_700.damiao_node:main',
             'local_navigation_node = base_omniwheel_r2_700.local_navigation_node:main',
         ],
     },
