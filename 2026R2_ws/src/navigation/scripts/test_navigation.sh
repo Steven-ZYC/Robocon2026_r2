@@ -28,7 +28,7 @@ else
     exit 1
 fi
 
-# Base mechanical parameters (from base_omniwheel_r2_700/local_navigation_node.py)
+# Base mechanical parameters (from base_omniwheel_r2_600/local_navigation_node.py)
 WHEEL_BASE_RADIUS=0.327038  # meters
 WHEEL_RADIUS=0.06           # meters (12cm diameter)
 
@@ -173,7 +173,7 @@ echo "  - Navigation: $NAV_PID"
 echo ""
 echo "NOTE: This script does NOT start the base package."
 echo "To test with actual motors, run in another terminal:"
-echo "  ros2 launch base_omniwheel_r2_700 base.launch.py"
+echo "  ros2 launch base_omniwheel_r2_600 base.launch.py"
 echo ""
 echo "Monitor topics:"
 echo "  ros2 topic echo /state_odom"

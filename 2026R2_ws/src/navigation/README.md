@@ -14,10 +14,10 @@ ROS 2 Global Navigation package for 4-wheel omniwheel robots.
 ```
 [Route YAML] -> [Global Navigation Node] -> /local_driving -> [Local Navigation Node] -> [Base Controller]
                       ^                                              ^
-                /state_pose2d                               (in base_omniwheel_r2_700 package)
+                /state_pose2d                               (in base_omniwheel_r2_600 package)
 ```
 
-**Note**: The `local_navigation_node` is located in the `base_omniwheel_r2_700` package, which handles low-level motion control and motor commands.
+**Note**: The `local_navigation_node` is located in the `base_omniwheel_r2_600` package, which handles low-level motion control and motor commands.
 
 ## Speed Profiling (Cubic Ease)
 Within the `start_radius_m` and `end_radius_m` of a segment, the velocity is scaled by `alpha`:
@@ -39,7 +39,7 @@ source install/setup.bash
 ros2 launch navigation navigation.launch.py
 ```
 
-默认 mission 文件为 `routes/forward_1m.yaml`，用于底盘 +X 1m 最小链路测试。
+默认 mission 文件为 `routes/forward_5m.yaml`，用于底盘 +X 5m 最小链路测试。
 
 ## Topics
 - **Subscribed**: `/state_pose2d` (`geometry_msgs/Pose2D`)
@@ -64,10 +64,10 @@ Unit convention:
 `global_navigation_node` now consumes planar state directly from `/state_pose2d`, so there is no dependency on quaternion parsing inside this package.
 
 ## Integration with Base Package
-This package works in conjunction with the `base_omniwheel_r2_700` package:
+This package works in conjunction with the `base_omniwheel_r2_600` package:
 - **Global Navigation** (this package): High-level path planning and waypoint following
-- **Local Navigation** (in `base_omniwheel_r2_700`): Low-level motion control and inverse kinematics
-- **Motor Control** (in `base_omniwheel_r2_700`): Direct motor commands via CAN bus
+- **Local Navigation** (in `base_omniwheel_r2_600`): Low-level motion control and inverse kinematics
+- **Motor Control** (in `base_omniwheel_r2_600`): Direct motor commands via CAN bus
 
 For complete system operation, both packages must be running. See `START_GUIDE.md` for detailed setup instructions.
 
@@ -129,7 +129,7 @@ Mission 中用自然语言描述执行器状态，数值映射集中在 `actuato
 
 ```yaml
 actuators:
-  arm_yaw_motor:         # 大秒电机 5
+  arm_yaw_motor:         # 达妙电机 5
     type: motor
     motor_id: 5
     mode: pos_vel
@@ -170,6 +170,7 @@ ros2 launch navigation navigation.launch.py mission_file:=/path/to/mission.yaml
 
 | 日期 | 说明 |
 |---|---|
+| 2026-05-20 | v0.8 — `routes/forward_1m.yaml` 改为 `routes/forward_5m.yaml`，目标距离从 1m 改为 5m |
 | 2026-05-20 | v0.7 — `/local_driving` 速度单位从 cm/s 改为 m/s，`_pub_driving_body()` 不再 `* 100.0` |
 | 2026-05-20 | v0.6 — 新增 `routes/forward_1m.yaml` 底盘 +X 1m 最小测试 mission |
 | 2026-05-20 | v0.5 — Mission YAML 支持 angle_unit/yaw_unit，并由 executor 统一转换角度单位 |
@@ -205,6 +206,31 @@ vy_body = -vx_world * sin(yaw) + vy_world * cos(yaw)
 - 机体系约定为 +X 向前、+Y 向左。
 
 当前 Arduino sensor node 输出已确认满足以上约定，因此该转换公式应保留。
+
+---
+
+## v0.8 — Forward 5m 底盘测试 Mission（2026-05-20）
+
+将 `routes/forward_1m.yaml` 重命名为 `routes/forward_5m.yaml`，目标距离从 1m 改为 5m：
+
+- waypoint `wp_forward_1m` → `wp_forward_5m`，坐标 `x: 1.0` → `x: 5.0`
+- stage id `nav_forward_1m` → `nav_forward_5m`
+- `navigation.launch.py` 默认 mission 同步更新
+- `config/global_nav_params.yaml` 注释同步更新
+
+其余结构（profiles、tolerance、stage 类型）保持不变。
+
+运行方式：
+
+```bash
+ros2 launch navigation navigation.launch.py mission_file:=/home/robotics/Robocon2026_r2/2026R2_ws/src/navigation/routes/forward_5m.yaml
+```
+
+下一次 build/install 后，也可使用相对路径：
+
+```bash
+ros2 launch navigation navigation.launch.py mission_file:=routes/forward_5m.yaml
+```
 
 ---
 

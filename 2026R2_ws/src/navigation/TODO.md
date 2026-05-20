@@ -1,7 +1,7 @@
 # Navigation TODO
 
-- [x] 将 `navigation.launch.py` 默认 mission 改为存在的 `routes/forward_1m.yaml`
-- [x] 新增 `routes/forward_1m.yaml`，用于底盘沿 world/body +X 前进 1 m 的最小链路测试
+- [x] 将 `navigation.launch.py` 默认 mission 改为存在的 `routes/forward_5m.yaml`
+- [x] 新增 `routes/forward_5m.yaml`，用于底盘沿 world/body +X 前进 5 m 的最小链路测试
 - [x] 支持 mission YAML 通过 `angle_unit` / `yaw_unit` 指定 deg/rad，并由 MissionExecutor 转换为内部 rad
 - [x] 补充 Tracker CTE-P 控制与 SpeedProfiler cubic ease 设计文档（v0.4 README）
 - [x] 修复 `navigate` stage 起点未锁定导致 speed profiler `alpha=0` 自锁

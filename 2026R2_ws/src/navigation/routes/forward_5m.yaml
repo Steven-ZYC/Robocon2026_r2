@@ -59,19 +59,20 @@ profiles:
   # Profile fields often useful as documentation, but not currently read here:
   #   curve:            executor currently passes "cubic_ease" internally
   #
-  # Team speed convention for early chassis tests:
-  #   slow  = 0.15 m/s
-  #   fast  = 0.50 m/s
+  # Team speed convention for chassis tests:
+  #   slow   = 0.0005 m/s  (min usable ~0.0003 on local_driving)
+  #   medium = 0.001  m/s
+  #   fast   = 0.002  m/s
   slow:
-    speed_mps: 0.15
+    speed_mps: 0.0005
     yaw_rate_rps: 0.8
     start_radius_m: 0.20
     end_radius_m: 0.20
     min_speed_scale: 0.20
     curve: cubic_ease
 
-  normal:
-    speed_mps: 0.30
+  medium:
+    speed_mps: 0.001
     yaw_rate_rps: 1.2
     start_radius_m: 0.25
     end_radius_m: 0.25
@@ -79,7 +80,7 @@ profiles:
     curve: cubic_ease
 
   fast:
-    speed_mps: 0.50
+    speed_mps: 0.002
     yaw_rate_rps: 1.5
     start_radius_m: 0.35
     end_radius_m: 0.35

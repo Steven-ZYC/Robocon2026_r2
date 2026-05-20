@@ -43,7 +43,7 @@ ros2 run navigation global_navigation_node --ros-args \
 ```bash
 # Terminal 1: 啟動底盤節點（damiao + local_navigation）
 source ~/robotics/Robocon2026_r2/2026R2_ws/install/setup.bash
-ros2 launch base_omniwheel_r2_700 base.launch.py
+ros2 launch base_omniwheel_r2_600 base.launch.py
 ```
 
 ### 2. 啟動感測器 / 二維定位

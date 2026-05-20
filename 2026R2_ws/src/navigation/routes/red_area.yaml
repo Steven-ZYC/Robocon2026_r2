@@ -12,9 +12,9 @@ waypoints:
 
 # ===== 导航预设 =====
 profiles:
-  slow:   { speed_mps: 0.3, yaw_rate_rps: 0.8, start_radius_m: 0.2, end_radius_m: 0.2 }
-  normal: { speed_mps: 0.5, yaw_rate_rps: 1.5, start_radius_m: 0.3, end_radius_m: 0.3 }
-  fast:   { speed_mps: 0.8, yaw_rate_rps: 2.0, start_radius_m: 0.4, end_radius_m: 0.4 }
+  slow:   { speed_mps: 0.0005, yaw_rate_rps: 0.8, start_radius_m: 0.2, end_radius_m: 0.2 }
+  medium: { speed_mps: 0.001, yaw_rate_rps: 1.5, start_radius_m: 0.3, end_radius_m: 0.3 }
+  fast:   { speed_mps: 0.002, yaw_rate_rps: 2.0, start_radius_m: 0.4, end_radius_m: 0.4 }
 
 # ===== 执行器语义映射 =====
 actuators:
@@ -59,7 +59,7 @@ stages:
   - id: nav_to_rack
     type: navigate
     to: wp_rack
-    profile: normal
+    profile: medium
 
   # --- 手臂就位 (rack 初始姿态) ---
   - id: arm_at_rack
