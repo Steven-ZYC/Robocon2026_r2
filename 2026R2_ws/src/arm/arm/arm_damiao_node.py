@@ -2,7 +2,7 @@
 
 This node is the low-level driver for the arm Damiao motors only. It lets the
 robot run two USB-CAN adapters at the same time:
-- chassis Damiao node in base_omniwheel_r2_700 controls motors 1-4
+- chassis Damiao node in base_omniwheel_r2_600 controls motors 1-4
 - arm_damiao_node in this package controls motors 5-6
 
 Subscribed:
@@ -165,7 +165,7 @@ class ArmDamiaoNode(Node):
             self.motor_control = MotorControl(self.ser)
             self.motors = {}
             for motor_id in self.motor_ids:
-                motor = Motor(DM_Motor_Type.DMH3510, motor_id, 0x00)
+                motor = Motor(DM_Motor_Type.DM3519, motor_id, 0x00)
                 self.motors[motor_id] = motor
                 self.motor_control.addMotor(motor)
 

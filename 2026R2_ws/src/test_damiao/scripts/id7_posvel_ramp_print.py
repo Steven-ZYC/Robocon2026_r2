@@ -117,7 +117,7 @@ def main():
     print(f"Using serial port: {port}")
     print(f"Press Ctrl-C to stop. The script disables motor ID {args.motor_id} before exit.")
 
-    motor = Motor(DM_Motor_Type.DMH3510, args.motor_id, 0x00)
+    motor = Motor(DM_Motor_Type.DM3519, args.motor_id, 0x00)
     position = args.target_position
 
     with serial.Serial(port, BAUDRATE, timeout=SERIAL_TIMEOUT) as ser:

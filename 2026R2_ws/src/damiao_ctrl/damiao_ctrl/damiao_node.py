@@ -145,7 +145,7 @@ class MotorControllerNode(Node):
 
             self.motors = {}
             for motor_id in self.motor_ids:
-                motor = Motor(DM_Motor_Type.DMH3510, motor_id, 0x00)
+                motor = Motor(DM_Motor_Type.DM3519, motor_id, 0x00)
                 self.motors[motor_id] = motor
                 self.motor_control.addMotor(motor)
 

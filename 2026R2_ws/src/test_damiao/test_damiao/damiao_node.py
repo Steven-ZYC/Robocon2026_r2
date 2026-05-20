@@ -72,7 +72,7 @@ class MotorControllerNode(Node):
             # 4. 初始化电机 (支持多个电机 ID)
             self.motors = {}
             for motor_id in [5,6]:
-                motor = Motor(DM_Motor_Type.DMH3510, motor_id, 0x00)
+                motor = Motor(DM_Motor_Type.DM3519, motor_id, 0x00)
                 self.motors[motor_id] = motor
                 self.motor_control.addMotor(motor)
 

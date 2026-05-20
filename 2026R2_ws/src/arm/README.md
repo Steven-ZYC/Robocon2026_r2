@@ -2,11 +2,11 @@
 
 ## 用途
 
-Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 DMH3510 系列电机的多关节机械臂。
+Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 DM3519 系列电机的多关节机械臂。
 
 ## 机械 / 系统范围
 
-- 电机类型：Damiao DMH3510（或其他 DM_Motor_Type）
+- 电机类型：Damiao DM3519（或其他 DM_Motor_Type）
 - 关节数量：可通过参数配置（默认 2）
 - 通信：HDSC USB-CAN 串口
 
@@ -163,7 +163,7 @@ ros2 launch arm arm.launch.py
 | 2026-05-20 | v0.4 — arm 独立 USB-CAN Damiao 驱动，输出改为 `arm/damiao_control`，`damiao_ctrl` 暂时悬置 |
 | 2026-05-15 | v0.3 — 新增 arm/pneu_command + joint_pneu_control，支持气动控制 |
 | 2026-05-14 | v0.2 — 移除 damiao_node，发布到 damiao_control，依赖 damiao_ctrl |
-| 2026-05-14 | v0.1 — 从 base_omniwheel_r2_700 分离，创建 arm 包 |
+| 2026-05-14 | v0.1 — 从 base_omniwheel_r2_600 分离，创建 arm 包 |
 ---
 
 ## v0.4 — Arm 独立 USB-CAN Damiao 驱动（2026-05-20）

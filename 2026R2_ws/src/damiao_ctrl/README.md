@@ -1,13 +1,13 @@
-# Damiao Ctrl — 统一大秒电机控制
+# Damiao Ctrl — 统一达妙电机控制
 
 ## 用途
 
-统一的 Damiao DMH3510 电机 USB-CAN 驱动节点。一个节点独占 USB-CAN 串口设备，
+统一的 Damiao DM3519 电机 USB-CAN 驱动节点。一个节点独占 USB-CAN 串口设备，
 管理全部电机，支持**每电机独立控制模式**。
 
 ## 适用机械 / 系统范围
 
-- 电机类型：Damiao DMH3510（可通过 DM_Motor_Type 扩展）
+- 电机类型：Damiao DM3519（可通过 DM_Motor_Type 扩展）
 - 通信：HDSC USB-CAN 串口（单设备，单节点）
 - 典型应用：底盘全向轮（VEL 模式）+ 机械臂关节（POS_VEL 模式）共用此节点
 
@@ -134,4 +134,4 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 
 | 日期 | 说明 |
 |---|---|
-| 2026-05-14 | v0.1 — 从 base_omniwheel_r2_700 分离，新增 per-motor 模式支持 |
+| 2026-05-14 | v0.1 — 从 base_omniwheel_r2_600 分离，新增 per-motor 模式支持 |

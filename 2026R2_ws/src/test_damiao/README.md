@@ -4,7 +4,7 @@
 
 ### v0 复制基线（2026-05-09）
 - 新建 `test_damiao` ROS2 Python package。
-- 从 `base_omniwheel_r2_700` 复制 `damiao_node.py` 与 `DM_CAN.py`，作为后续大疆达妙电机 CANBus 反馈读取实验的基线。
+- 从 `base_omniwheel_r2_600` 复制 `damiao_node.py` 与 `DM_CAN.py`，作为后续大疆达妙电机 CANBus 反馈读取实验的基线。
 - 当前阶段只完成包骨架与文件复制，尚未实现“任意控制模式下读取 torque / position / velocity / enable 状态”等最终需求。
 
 ### v1 CAN 参数读取与反馈解析试验（2026-05-09）
@@ -28,7 +28,7 @@
 - 按当前实机测试需求，删除 `scripts` 目录中旧的 Python 原始测试脚本。
 - 新增 `scripts/id7_posvel_ramp_print.py`：
   - 直接复用 `test_damiao.DM_CAN`，不经过 ROS2 topic。
-  - 默认注册 CAN ID `6` 的 `DMH3510` 电机，可用 `--motor-id` 修改。
+  - 默认注册 CAN ID `6` 的 `DM3519` 电机，可用 `--motor-id` 修改。
   - 默认不写 `CTRL_MODE` 寄存器，假设 ID 7 已经配置为 `POS_VEL`；先发送 enable，再开始传位置速度数据。
   - 如需启动时写 `CTRL_MODE=POS_VEL`，使用 `--switch-mode`。
   - 每 `1.0 s` 发送一次位置速度命令。
@@ -66,7 +66,7 @@
 ## node 列表
 
 ### `damiao_node`
-- 来源：复制自 `base_omniwheel_r2_700/base_omniwheel_r2_700/damiao_node.py`
+- 来源：复制自 `base_omniwheel_r2_600/base_omniwheel_r2_600/damiao_node.py`
 - 职责：连接串口 CAN 设备，注册 `MOTOR_IDS` 列表中的达妙电机，并订阅控制指令 topic。
 
 #### 订阅 topic
@@ -179,7 +179,7 @@ ros2 topic pub --once /damiao_control std_msgs/msg/Float32MultiArray "{data: [7.
 
 ### 复用 base package 单电机测试脚本
 
-已从 `base_omniwheel_r2_700/test_single_motor.sh` 复制单电机 topic 测试逻辑，并新增自动启动 base 包节点：
+已从 `base_omniwheel_r2_600/test_single_motor.sh` 复制单电机 topic 测试逻辑，并新增自动启动 base 包节点：
 
 ```bash
 ./src/test_damiao/scripts/test_single_motor_with_base_node.sh
@@ -187,7 +187,7 @@ ros2 topic pub --once /damiao_control std_msgs/msg/Float32MultiArray "{data: [7.
 
 行为：
 - source ROS2 与当前 workspace。
-- 启动 `ros2 run base_omniwheel_r2_700 damiao_node`。
+- 启动 `ros2 run base_omniwheel_r2_600 damiao_node`。
 - 等待 `/damiao_control` topic 出现。
 - 发送单电机速度模式命令，默认 `motor_id=1, mode=3, speed=2.0 rad/s, duration=3.0 s`。
 - 退出时发送停止命令，并关闭脚本启动的 base `damiao_node`。

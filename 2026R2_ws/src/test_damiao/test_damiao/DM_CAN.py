@@ -326,7 +326,7 @@ class MotorControl:
         return float(uint_value) * span / float((1 << bits) - 1) + offset
 
 class DM_Motor_Type(IntEnum):
-    DMH3510 = 9 # 根据手册确认型号
+    DM3519 = 9 # 根据手册确认型号
 
 
 def sleep_time():

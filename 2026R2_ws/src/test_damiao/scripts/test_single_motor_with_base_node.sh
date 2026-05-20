@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # test_single_motor_with_base_node.sh
-# Copy of base_omniwheel_r2_700/test_single_motor.sh with one-click startup
+# Copy of base_omniwheel_r2_600/test_single_motor.sh with one-click startup
 # for the base package damiao_node.
 
 set -e
@@ -62,7 +62,7 @@ echo "=========================================="
 echo "单电机测试（自动启动 base damiao_node）"
 echo "=========================================="
 echo ""
-echo "base_omniwheel_r2_700/damiao_node 默认只初始化 1-4 号电机。"
+echo "base_omniwheel_r2_600/damiao_node 默认只初始化 1-4 号电机。"
 echo "当前测试电机 ${MOTOR_ID}，模式 ${MODE}，速度 ${SPEED} rad/s，持续 ${DURATION} 秒"
 echo ""
 

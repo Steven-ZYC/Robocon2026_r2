@@ -25,9 +25,9 @@ import time
 DEFAULT_JOINT_MOTOR_IDS = [5, 6]
 DEFAULT_JOINT_DIRECTIONS = [1.0, 1.0]
 DEFAULT_CONTROL_MODE = 2  # POS_VEL（机械臂关节默认位置-速度模式）
-DEFAULT_MAX_SPEED_RAD_S = 2.0         # 输出端最大速度 (rad/s)，DMH3510 经 19.227 减速后 ≈ 2.34
-DEFAULT_GEAR_RATIO = 19.227           # DMH3510 减速比（电机轴 → 输出端）
-DEFAULT_MAX_MOTOR_SPEED_RAD_S = 45.0  # DMH3510 电机轴最大速度 (rad/s)
+DEFAULT_MAX_SPEED_RAD_S = 2.0         # 输出端最大速度 (rad/s)，DM3519 经 19.227 减速后 ≈ 2.34
+DEFAULT_GEAR_RATIO = 19.227           # DM3519 减速比（电机轴 → 输出端）
+DEFAULT_MAX_MOTOR_SPEED_RAD_S = 45.0  # DM3519 电机轴最大速度 (rad/s)
 DEFAULT_REPUBLISH_RATE_HZ = 20.0
 DEFAULT_PNEU_NAMES = ["arm_gripper", "arm_lift", "arm_stopper"]
 DEFAULT_MOTOR_CONTROL_TOPIC = "arm/damiao_control"
