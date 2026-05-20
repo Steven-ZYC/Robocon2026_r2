@@ -36,11 +36,11 @@ tmux send-keys -t r2:nav \
 # 创建其余窗口（顺序按依赖关系排列）
 tmux new-window -t r2 -n base_damiao
 tmux send-keys -t r2:base_damiao \
-    "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 run base_omniwheel_r2_700 damiao_node" Enter
+    "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 run base_omniwheel_r2_600 damiao_node" Enter
 
 tmux new-window -t r2 -n base
 tmux send-keys -t r2:base \
-    "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 launch base_omniwheel_r2_700 base.launch.py" Enter
+    "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 launch base_omniwheel_r2_600 base.launch.py" Enter
 
 tmux new-window -t r2 -n arm
 tmux send-keys -t r2:arm \

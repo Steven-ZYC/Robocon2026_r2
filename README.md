@@ -84,7 +84,7 @@ ros2 launch damiao_ctrl damiao_ctrl.launch.py
 
 # 2. 启动各子系统
 ros2 launch arduino_sensor_driver arduino_sensor.launch.py
-ros2 launch base_omniwheel_r2_700 base.launch.py
+ros2 launch base_omniwheel_r2_600 base.launch.py
 ros2 launch arm arm.launch.py
 ros2 launch global_navigation global_navigation.launch.py
 ```
@@ -97,7 +97,7 @@ ros2 launch global_navigation global_navigation.launch.py
 
 - `damiao_ctrl` package **保留在仓库中**，暂时悬置，不删除。
 - 当前实车调试阶段 **不要启动** `ros2 launch damiao_ctrl damiao_ctrl.launch.py`。
-- 底盘 Damiao 由 `base_omniwheel_r2_700` package 内的 chassis damiao node 负责。
+- 底盘 Damiao 由 `base_omniwheel_r2_600` package 内的 chassis damiao node 负责。
 - arm Damiao 由 `arm` package 内的 arm damiao node 负责。
 - 两个 Damiao node 必须打开不同 USB-CAN 设备；一个 node 只拥有一个串口。
 
@@ -108,11 +108,11 @@ Chassis chain:
 
 /local_driving
     ↓
-base_omniwheel_r2_700/local_navigation_node
+base_omniwheel_r2_600/local_navigation_node
     ↓
 /damiao_control
     ↓
-base_omniwheel_r2_700/damiao_node
+base_omniwheel_r2_600/damiao_node
     ↓
 /dev/chassis_damiao_can
     ↓
@@ -184,10 +184,10 @@ Arduino pneumatic board
 
 ```bash
 # 1. 底盘 Damiao driver（chassis USB-CAN）
-ros2 run base_omniwheel_r2_700 damiao_node
+ros2 run base_omniwheel_r2_600 damiao_node
 
 # 2. 底盘运动学
-ros2 run base_omniwheel_r2_700 local_navigation_node
+ros2 run base_omniwheel_r2_600 local_navigation_node
 
 # 3. arm Damiao driver（arm USB-CAN）
 ros2 run arm arm_damiao_node
@@ -212,7 +212,7 @@ ros2 launch navigation navigation.launch.py
 - `2026R2_ws/mission.sh`: 使用 `gnome-terminal` 手动打开每个需要启动的 node，适合现场逐个看日志。
 - `2026R2_ws/start_all.sh`: 使用 `tmux` 打开整车会话，适合长期运行。
 - 两个脚本当前都应遵循 v4 双 USB-CAN 架构，不应启动 `damiao_ctrl`。
-- 如果只测试底盘 0.1 m/s 前进 5 秒，使用 `2026R2_ws/src/base_omniwheel_r2_700/forward_0_1mps_5s.sh`。
+- 如果只测试底盘 0.1 m/s 前进 5 秒，使用 `2026R2_ws/src/base_omniwheel_r2_600/forward_0_1mps_5s.sh`。
 
 **ROS Topics and Message Structures**
 
@@ -360,7 +360,7 @@ ls -la /dev/input/event*      # 查看是否有新 event 设备
 | `arduino_sensor_driver` | ament_python | Arduino 串口解析：IMU + 双编码器 → odometry |
 | `arduino_sensor_msgs` | ament_cmake | 自定义消息 `ArduinoSensorData` |
 | `damiao_ctrl` | ament_python | **统一** Damiao USB-CAN 电机驱动，支持每电机独立模式（底盘 VEL + arm POS_VEL） |
-| `base_omniwheel_r2_700` | ament_python | 底盘逆运动学 + 本地导航（依赖 damiao_ctrl） |
+| `base_omniwheel_r2_600` | ament_python | 底盘逆运动学 + 本地导航（依赖 damiao_ctrl） |
 | `arm` | ament_python | 机械臂关节控制（依赖 damiao_ctrl） |
 | `global_navigation` | ament_python | FSM 全局导航：`/state_pose2d` → `/local_driving` |
 | `joystick_driver` | ament_python | evdev 手柄 → `joystick_msgs/Joystick` |
@@ -438,7 +438,7 @@ ID=<pkg_id> T=<ms> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt> crc=<hex>
 
 FSM 状态：`WAIT_FOR_POSE → DRIVE_TO_GOAL → ALIGN_HEADING → RUN_ACTION → (下一航点 或 DONE)`。若 `/state_pose2d` 超时 (`pose_timeout_s`, 默认 0.25s)，进入 `LOST_POSE` 并发布零速。
 
-#### local_navigation_node (base_omniwheel_r2_700)
+#### local_navigation_node (base_omniwheel_r2_600)
 
 4 轮全向 (X 型布局) 逆运动学。
 
@@ -491,7 +491,7 @@ FSM 状态：`WAIT_FOR_POSE → DRIVE_TO_GOAL → ALIGN_HEADING → RUN_ACTION �
 
 ### v2 vs v1 关键差异
 
-1. **包结构**：不再有 `navigation` 包；底盘控制在 `base_omniwheel_r2_700`，全局导航在 `global_navigation`
+1. **包结构**：不再有 `navigation` 包；底盘控制在 `base_omniwheel_r2_600`，全局导航在 `global_navigation`
 2. **手柄话题**：`ps4` (sensor_msgs/Joy) → `joystick_input` (joystick_msgs/Joystick)
 3. **`/local_driving` 单位**：v1 的 `[deg, 0-8192, -8192-8192]` → v2 的 `[rad, cm/s, rad/s]`
 4. **`/damiao_control` 格式**：v1 的 `[motor_id, 1, speed/19.20321, 0]` → v2 的 `[motor_id, 3, speed_rad_s]`（无缩放因子，mode=3 为 VEL）

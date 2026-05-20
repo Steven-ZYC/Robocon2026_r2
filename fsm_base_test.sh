@@ -12,13 +12,13 @@ sleep 1
 # 窗口1: 底盘电机驱动 (左上)
 gnome-terminal --geometry=80x20+0+0 -- bash -c "
 source $WS/install/setup.bash
-ros2 run base_omniwheel_r2_700 damiao_node
+ros2 run base_omniwheel_r2_600 damiao_node
 "
 
 # 窗口2: 运动学反解 (右上) — 显示 /local_driving 输入
 gnome-terminal --geometry=80x20+780+0 -- bash -c "
 source $WS/install/setup.bash
-ros2 run base_omniwheel_r2_700 local_navigation_node &
+ros2 run base_omniwheel_r2_600 local_navigation_node &
 sleep 2
 ros2 topic echo /local_driving
 "

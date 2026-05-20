@@ -11,13 +11,13 @@ MISSION_FILE="${1:-$SCRIPT_DIR/src/navigation/routes/red_area.yaml}"
 # Start base and motion drivers
 # ----------------------------
 echo "Starting chassis damiao_node..."
-gnome-terminal -- bash -c "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 run base_omniwheel_r2_700 damiao_node; exec bash"
+gnome-terminal -- bash -c "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 run base_omniwheel_r2_600 damiao_node; exec bash"
 
 echo "Starting arduino_sensor_parser..."
 gnome-terminal -- bash -c "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 run arduino_sensor_driver arduino_sensor_parser; exec bash"
 
 echo "Starting local_navigation_node..."
-gnome-terminal -- bash -c "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 run base_omniwheel_r2_700 local_navigation_node; exec bash"
+gnome-terminal -- bash -c "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 run base_omniwheel_r2_600 local_navigation_node; exec bash"
 
 echo "Starting arm launch..."
 gnome-terminal -- bash -c "source /opt/ros/jazzy/setup.bash && source $SCRIPT_DIR/install/setup.bash && ros2 launch arm arm.launch.py; exec bash"

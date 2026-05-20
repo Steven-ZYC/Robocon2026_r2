@@ -10,7 +10,7 @@
 #
 # 前提:
 #   - 所有 package 已 colcon build
-#   - 硬件已连接（Arduino × 2, USB-CAN, 大秒电机）
+#   - 硬件已连接（Arduino × 2, USB-CAN, 达妙电机）
 # ============================================================
 
 set -e
@@ -59,7 +59,7 @@ sleep 2
 
 # -------- Layer 1: 运动控制 --------
 echo "[4/5] Starting Chassis + Arm Control..."
-ros2 launch base_omniwheel_r2_700 base.launch.py &
+ros2 launch base_omniwheel_r2_600 base.launch.py &
 BASE_PID=$!
 sleep 1
 

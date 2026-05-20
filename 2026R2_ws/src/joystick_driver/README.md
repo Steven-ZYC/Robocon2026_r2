@@ -93,7 +93,7 @@ ros2 run joystick_driver joystick_node
 ros2 run joystick_driver joystick_control_node
 
 # 终端 3+: 底层驱动 (与 FSM 模式相同)
-ros2 run base_omniwheel_r2_700 local_navigation_node
+ros2 run base_omniwheel_r2_600 local_navigation_node
 ros2 run damiao_ctrl damiao_node
 ros2 run arm arm_ctrl_node
 ros2 run pneumatics pneu_ctrl_node

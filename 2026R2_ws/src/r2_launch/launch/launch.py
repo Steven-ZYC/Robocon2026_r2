@@ -23,7 +23,7 @@ def generate_launch_description():
     )
 
     chassis_damiao_node = Node(
-        package='base_omniwheel_r2_700',
+        package='base_omniwheel_r2_600',
         executable='damiao_node',
         name='chassis_damiao_motor_controller',
         output='screen',
@@ -38,7 +38,7 @@ def generate_launch_description():
     )
 
     local_navigation_node = Node(
-        package='base_omniwheel_r2_700',
+        package='base_omniwheel_r2_600',
         executable='local_navigation_node',
         name='local_navigation_controller',
         output='screen',
