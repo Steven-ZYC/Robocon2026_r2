@@ -7,7 +7,7 @@ Launches:
 2. damiao_node is launched separately via damiao_ctrl package
 
 Usage:
-    ros2 launch base_omniwheel_r2_700 base.launch.py
+    ros2 launch base_omniwheel_r2_600 base.launch.py
 """
 
 from launch import LaunchDescription
@@ -17,7 +17,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
     return LaunchDescription([
         Node(
-            package='base_omniwheel_r2_700',
+            package='base_omniwheel_r2_600',
             executable='local_navigation_node',
             name='local_navigation_controller',
             output='screen',

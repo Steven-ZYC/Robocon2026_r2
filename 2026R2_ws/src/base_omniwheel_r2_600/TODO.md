@@ -1,6 +1,6 @@
-# base_omniwheel_r2_700 TODO
+# base_omniwheel_r2_600 TODO
 
-- [x] 提供直接 launch 方法：`ros2 launch base_omniwheel_r2_700 base.launch.py`
+- [x] 提供直接 launch 方法：`ros2 launch base_omniwheel_r2_600 base.launch.py`
 - [x] 修正 launch 文件注释中的旧文件名
 - [x] 修复 `DM_CAN.__uint_to_float()` 反馈换算错误
 - [x] 兼容 HDSC USB-CAN 30-byte / 33-byte 返回帧与反馈数据偏移
@@ -22,7 +22,7 @@
 - [x] 恢复 `local_navigation_node` 对上游 `local_driving` 失效的主动零速保护
 - [x] 新增 `forward_0_1mps_5s.sh`：用 gnome 窗口手动启动底盘所需 node，并以 0.1 m/s 前进 5 秒后停车
 - [x] 恢复 `damiao_node.py` 与 `DM_CAN.py`，作为底盘 1-4 号电机独立 USB-CAN driver
-- [x] 注册 `ros2 run base_omniwheel_r2_700 damiao_node` console entry
+- [x] 注册 `ros2 run base_omniwheel_r2_600 damiao_node` console entry
 - [ ] 上车实测修正后的运动学是否方向正确，必要时重新确认 MOTOR_DIRECTION
 - [ ] 上车实测确认 WHEEL_BASE_RADIUS (0.299128 m) 是否准确
 - [ ] 确认 WHEEL_RADIUS (直径 12.7cm vs 12cm) 哪个是正确的
@@ -31,4 +31,4 @@
 - [ ] 将 motor IDs、轮距、轮半径、轮角、方向和串口设备 ID 改为 launch/config 参数
 - [ ] 在 launch 文件中暴露 `command_timeout` 参数
 - [ ] 增加只启动 `damiao_node` 的低层硬件测试 launch
-- [x] 将 `forward_0_1mps_5s.sh` 切换为当前双 USB-CAN 架构，使用 `base_omniwheel_r2_700/damiao_node` 而不是 `damiao_ctrl`。
+- [x] 将 `forward_0_1mps_5s.sh` 切换为当前双 USB-CAN 架构，使用 `base_omniwheel_r2_600/damiao_node` 而不是 `damiao_ctrl`。

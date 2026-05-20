@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>base_omniwheel_r2_700</name>
+  <name>base_omniwheel_r2_600</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
   <maintainer email="yanczhang8@gmail.com">Steven Zhang</maintainer>

@@ -1,4 +1,4 @@
-# base_omniwheel_r2_700
+# base_omniwheel_r2_600
 
 ROS 2 motor control package for R2 omniwheel base.
 
@@ -38,7 +38,7 @@ High-level motion control for holonomic navigation.
         ↓
    [/dev/chassis_damiao_can]
         ↓
-   [4× DMH3510 Motors]  (ID 1-4)
+   [4× DM3519 Motors]  (ID 1-4)
 ```
 
 ## Parameters
@@ -54,7 +54,7 @@ High-level motion control for holonomic navigation.
   - Motor 3: 右前 315°
   - Motor 4: 右后 225°
 - **MOTOR_DIRECTION**: 全部 1，驱动方向由 WHEEL_ANGLES 完整定义
-- **gear_ratio**: DMH3510 减速比，默认 `19.227`（需按实际电机标签校准）
+- **gear_ratio**: DM3519 减速比，默认 `19.227`（需按实际电机标签校准）
 - **max_motor_speed_rad_s**: 电机轴最大转速限幅，默认 `45.0 rad/s`
 - **republish_rate_hz**: 持续刷新频率，默认 `20.0 Hz`
 - **command_timeout**: `local_driving` 超时后发布零速，默认 `0.5 s`（≤0 禁用）
@@ -160,7 +160,7 @@ v_wheel_i = v_x · cos(θ_i) + v_y · sin(θ_i) + ω · R
 | `θ_i` | 见上表 | 各电机正转推动方向 |
 | `R` | 0.299128 m | 轮心距中心距离 |
 | `r` | 0.0635 m | 轮半径（直径 12.7 cm） |
-| `gear_ratio` | 19.227 (默认) | DMH3510 减速比，可通过参数覆盖 |
+| `gear_ratio` | 19.227 (默认) | DM3519 减速比，可通过参数覆盖 |
 | `max_motor_speed_rad_s` | 45.0 rad/s | 电机轴最大转速限幅 |
 
 公式中不再有额外的 Y 轴或旋转方向取反。所有符号由 `cos(θ_i)` / `sin(θ_i)` 自然得出。
@@ -184,14 +184,14 @@ The node automatically monitors connection health and reconnects when motor powe
 ```bash
 # Build
 cd ~/robotics/Robocon2026_r2/2026R2_ws
-colcon build --packages-select base_omniwheel_r2_700
+colcon build --packages-select base_omniwheel_r2_600
 source install/setup.bash
 
 # Terminal 1: damiao_node (motor driver, 先启动)
-ros2 run base_omniwheel_r2_700 damiao_node
+ros2 run base_omniwheel_r2_600 damiao_node
 
 # Terminal 2: local_navigation_node
-ros2 run base_omniwheel_r2_700 local_navigation_node
+ros2 run base_omniwheel_r2_600 local_navigation_node
 ```
 
 ## Test Scripts
@@ -207,7 +207,7 @@ ros2 run base_omniwheel_r2_700 local_navigation_node
 
 ```bash
 cd ~/robotics/Robocon2026_r2/2026R2_ws
-bash src/base_omniwheel_r2_700/forward_0_1mps_5s.sh
+bash src/base_omniwheel_r2_600/forward_0_1mps_5s.sh
 ```
 
 ## Changelog
@@ -285,7 +285,7 @@ bash src/base_omniwheel_r2_700/forward_0_1mps_5s.sh
   - `source /workspace/2026R2_ws/install/setup.bash`
 
 ### 2026-05-12 (v6 - Damiao feedback and watchdog fix)
-- **直接启动方式**：保留 `ros2 launch base_omniwheel_r2_700 base.launch.py`，同时修正 launch 文件内旧注释中的文件名。
+- **直接启动方式**：保留 `ros2 launch base_omniwheel_r2_600 base.launch.py`，同时修正 launch 文件内旧注释中的文件名。
 - **DM_CAN 反馈解析修复**：
   - 修复 `__uint_to_float()` 中错误变量名，避免收到反馈后无法正确更新 `q/dq/tau`。
   - 兼容 HDSC USB-CAN 实测 30-byte legacy frame 与 33-byte shifted frame。
@@ -297,7 +297,7 @@ bash src/base_omniwheel_r2_700/forward_0_1mps_5s.sh
   - 超时行为：向 1-4 号电机各发送一次 VEL 零速命令，并输出 WARN 日志。
   - 修改方式：
     ```bash
-    ros2 launch base_omniwheel_r2_700 base.launch.py
+    ros2 launch base_omniwheel_r2_600 base.launch.py
     # 如需在 launch 中调整，可给 damiao_node 增加参数：
     # {'command_timeout': 0.8}
     ```
@@ -393,7 +393,7 @@ bash src/base_omniwheel_r2_700/forward_0_1mps_5s.sh
   - 底盘需与 `damiao_ctrl` 一起启动：
     ```bash
     ros2 launch damiao_ctrl damiao_ctrl.launch.py
-    ros2 launch base_omniwheel_r2_700 base.launch.py
+    ros2 launch base_omniwheel_r2_600 base.launch.py
     ```
   - `base.launch.py` 不再启动 damiao_node
 - **damiao_ctrl 中的模式分配**（默认）：
@@ -420,28 +420,28 @@ bash src/base_omniwheel_r2_700/forward_0_1mps_5s.sh
 
 ### 2026-05-20 (v15 - local_driving 0.1 m/s 手动窗口测试脚本)
 - **新增脚本**：`forward_0_1mps_5s.sh`。
-- **启动方式**：使用 `gnome-terminal` 分别打开 `damiao_ctrl/damiao_node`、`base_omniwheel_r2_700/local_navigation_node` 和 `/local_driving` 指令窗口。
+- **启动方式**：使用 `gnome-terminal` 分别打开 `damiao_ctrl/damiao_node`、`base_omniwheel_r2_600/local_navigation_node` 和 `/local_driving` 指令窗口。
 - **测试动作**：向 `/local_driving` 以 `10 Hz` 发布 `[0.0, 10.0, 0.0]` 持续 `5 s`，即底盘按机体系 +x 方向以 `0.1 m/s` 前进。
 - **停车行为**：5 秒后主动发布两次 `[0.0, 0.0, 0.0]`；若上游指令异常中断，`local_navigation_node command_timeout = 0.5 s` 仍会触发零速保护。
 
 ### 2026-05-20 (v16 - 恢复底盘独立 Damiao USB-CAN driver)
-- **恢复文件**：从历史版本恢复 `base_omniwheel_r2_700/damiao_node.py` 与 `DM_CAN.py`，作为底盘 1-4 号 Damiao 电机专用 driver。
-- **当前双 USB-CAN 架构**：底盘使用 `base_omniwheel_r2_700/damiao_node`，arm 使用 `arm/arm_damiao_node`；`damiao_ctrl` package 保留但当前实车调试阶段暂不启动。
-- **底盘控制链条**：`/local_driving` → `local_navigation_node` → `/damiao_control` → `base_omniwheel_r2_700/damiao_node` → `/dev/chassis_damiao_can` → motor 1-4。
+- **恢复文件**：从历史版本恢复 `base_omniwheel_r2_600/damiao_node.py` 与 `DM_CAN.py`，作为底盘 1-4 号 Damiao 电机专用 driver。
+- **当前双 USB-CAN 架构**：底盘使用 `base_omniwheel_r2_600/damiao_node`，arm 使用 `arm/arm_damiao_node`；`damiao_ctrl` package 保留但当前实车调试阶段暂不启动。
+- **底盘控制链条**：`/local_driving` → `local_navigation_node` → `/damiao_control` → `base_omniwheel_r2_600/damiao_node` → `/dev/chassis_damiao_can` → motor 1-4。
 - **超时保护**：`damiao_node` 保留 `command_timeout = 0.5 s`，若 `/damiao_control` 超时未刷新，会向底盘 1-4 号电机发送 VEL 零速。
 - **启动**：
   ```bash
-  ros2 run base_omniwheel_r2_700 damiao_node
-  ros2 run base_omniwheel_r2_700 local_navigation_node
+  ros2 run base_omniwheel_r2_600 damiao_node
+  ros2 run base_omniwheel_r2_600 local_navigation_node
   ```
 
 
 ### 2026-05-20 (v17 - forward 脚本切换至当前双 USB-CAN 架构)
 
-- `damiao_node` 新增/恢复 `device_id` ROS 参数，默认 `/dev/chassis_damiao_can`。如果该 symlink 还没建立但旧 `/dev/damiao_can` 存在，节点会临时 fallback 到 `/dev/damiao_can` 并输出 WARN；两块 USB-CAN 同时使用前必须建立 `/dev/chassis_damiao_can`。也可临时使用 `ros2 run base_omniwheel_r2_700 damiao_node --ros-args -p device_id:=/dev/serial/by-id/实际设备`。
+- `damiao_node` 新增/恢复 `device_id` ROS 参数，默认 `/dev/chassis_damiao_can`。如果该 symlink 还没建立但旧 `/dev/damiao_can` 存在，节点会临时 fallback 到 `/dev/damiao_can` 并输出 WARN；两块 USB-CAN 同时使用前必须建立 `/dev/chassis_damiao_can`。也可临时使用 `ros2 run base_omniwheel_r2_600 damiao_node --ros-args -p device_id:=/dev/serial/by-id/实际设备`。
 - 根目录 `99-robocon-r2.rules` 当前会为 SN=`00000000050C` 同时创建 `/dev/damiao_can` 和 `/dev/chassis_damiao_can`。
 - `damiao_node` 会忽略 `/damiao_control` 上非底盘电机 ID（例如 motor 5/6），且不会用这些错误消息刷新底盘 watchdog。出现该 WARN 通常表示旧 `arm_ctrl_node` 或手动命令仍在向 `/damiao_control` 发布 arm 电机指令。
-- `forward_0_1mps_5s.sh` 当前只启动底盘链路：`base_omniwheel_r2_700/damiao_node`、`local_navigation_node` 和 `/local_driving` 指令窗口。
+- `forward_0_1mps_5s.sh` 当前只启动底盘链路：`base_omniwheel_r2_600/damiao_node`、`local_navigation_node` 和 `/local_driving` 指令窗口。
 - 脚本不启动 `damiao_ctrl`，底盘 Damiao 默认使用 `/dev/chassis_damiao_can`，只控制 motor 1-4。
 - 脚本以 10 Hz 发布 `/local_driving`，持续 5 秒；结束后主动发布两次零速。`local_navigation_node` 与 `damiao_node` 均保留 `0.5 s` watchdog 作为异常退出保护。
 
@@ -450,7 +450,7 @@ bash src/base_omniwheel_r2_700/forward_0_1mps_5s.sh
   - `local_navigation_node` 直接接收 m/s，不再内部 `/100.0` 转换。
   - `mission_executor._pub_driving_body()` 同步改为直接发 m/s，不再 `* 100.0`。
   - 示例：前进 0.1 m/s → `{data: [0.0, 0.1, 0.0]}`（旧：`[0.0, 10.0, 0.0]`）。
-- **新增 gear_ratio**：逆运动学增加 DMH3510 减速比换算（轮端 → 电机轴），默认 `19.227`，可通过 `-p gear_ratio:=...` 覆盖。
+- **新增 gear_ratio**：逆运动学增加 DM3519 减速比换算（轮端 → 电机轴），默认 `19.227`，可通过 `-p gear_ratio:=...` 覆盖。
 - **新增 max_motor_speed_rad_s**：电机轴转速限幅，默认 `45.0 rad/s`。
 - **底盘控制 topic 改为 `base/damiao_control`**：与 arm 的 `arm/damiao_control` 完全隔离。
 - **damiao_node 去掉内置 watchdog**：安全停靠统一由 `local_navigation_node` 的 `command_timeout` 负责。

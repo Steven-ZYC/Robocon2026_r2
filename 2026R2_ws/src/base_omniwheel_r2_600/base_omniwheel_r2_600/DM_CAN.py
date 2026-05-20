@@ -261,4 +261,4 @@ class Control_Type(IntEnum):
     VEL = 3
 
 class DM_Motor_Type(IntEnum):
-    DMH3510 = 9 # 根据手册确认型号
+    DM3519 = 9 # 根据手册确认型号

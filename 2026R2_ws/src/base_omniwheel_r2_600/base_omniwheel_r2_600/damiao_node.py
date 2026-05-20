@@ -3,17 +3,21 @@
 Receives base/damiao_control commands from local_navigation_node and executes
 them directly.  No built-in watchdog — upstream local_navigation_node handles
 timeout and sends zero velocity when local_driving stops.
+
+Speed and acceleration are clamped per-motor at the front of control_callback
+(before any CAN frame is sent) to protect the hardware from software bugs or
+unexpected upstream speed jumps.
 """
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
-from base_omniwheel_r2_700.DM_CAN import *
+from base_omniwheel_r2_600.DM_CAN import *
 import serial
 import os
 import time
 
-# 配置参数
+# === 硬件 / 协议常量（不通过 ROS 参数暴露）===
 DEFAULT_DEVICE_ID = "/dev/chassis_damiao_can"
 LEGACY_DEVICE_ID = "/dev/damiao_can"  # 临时兼容旧 udev symlink；双 USB-CAN 时不要依赖它
 DEFAULT_CONTROL_MODE = Control_Type.VEL  # 默认使用速度模式
@@ -25,6 +29,13 @@ RECV_POLL_INTERVAL_S = 0.01
 CTRL_MODE_RID = 0x0A
 MODE_READ_TIMEOUT_S = 0.25
 MODE_VERIFY_ATTEMPTS = 2
+
+# === 安全限制默认值（保守，可通过 ROS 参数覆盖）===
+DEFAULT_MAX_SPEED_RAD_S = 12.0     # 输出端最大速度 (rad/s)，clamp 在 gear_ratio 之前
+DEFAULT_MAX_ACCEL_RAD_S2 = 15.0   # 输出端最大加速度 (rad/s²)
+DEFAULT_GEAR_RATIO = 19.227       # DM3519 减速比，输出端 → 电机轴
+# 12 rad/s × 19.227 ≈ 230 rad/s 电机轴，仍在 DM3519 能力内 (空载 ~280 rad/s)
+# 加速度 15 rad/s² 意味着从 0 到 12 rad/s 约需 0.8 秒
 
 def find_device_port(device_id):
     """Resolve an absolute /dev path or a /dev/serial/by-id substring."""
@@ -45,7 +56,7 @@ class MotorControllerNode(Node):
 
     def __init__(self):
         super().__init__("motor_controller_node")
-        
+
         # 连接状态标志
         self.is_connected = False
         self.reconnect_attempts = 0
@@ -54,13 +65,36 @@ class MotorControllerNode(Node):
         )
         self.ignored_motor_ids = set()
 
+        # 安全限制参数
+        self.max_speed_rad_s = float(
+            self.declare_parameter("max_speed_rad_s", DEFAULT_MAX_SPEED_RAD_S).value
+        )
+        self.max_accel_rad_s2 = float(
+            self.declare_parameter("max_accel_rad_s2", DEFAULT_MAX_ACCEL_RAD_S2).value
+        )
+        if self.max_accel_rad_s2 <= 0.0:
+            self.get_logger().warn("max_accel_rad_s2 <= 0, acceleration limiting disabled")
+        self.gear_ratio = float(
+            self.declare_parameter("gear_ratio", DEFAULT_GEAR_RATIO).value
+        )
+
+        # 每电机上一次指令状态（加速度平滑用，存储的是输出端速度）
+        self._last_speed = {}       # motor_id -> last commanded speed (rad/s, output side)
+        self._last_cmd_time = {}    # motor_id -> last command timestamp (seconds)
+
+        self.get_logger().info(
+            f"Safety limits: max_speed={self.max_speed_rad_s:.1f} rad/s, "
+            f"max_accel={self.max_accel_rad_s2:.1f} rad/s², "
+            f"gear_ratio={self.gear_ratio:.3f}"
+        )
+
         # 初始化硬件连接
         if not self._init_hardware():
             self.get_logger().error("Failed to initialize hardware. Will retry in background.")
 
         # 断线重连定时器
         self.reconnect_timer = self.create_timer(RECONNECT_INTERVAL, self._check_connection)
-        
+
         # 订阅控制话题
         self.subscription = self.create_subscription(
             Float32MultiArray, "base/damiao_control", self.control_callback, 10
@@ -111,7 +145,7 @@ class MotorControllerNode(Node):
             # 4. 初始化电机 (支持多个电机 ID)
             self.motors = {}
             for motor_id in [1, 2, 3, 4]:
-                motor = Motor(DM_Motor_Type.DMH3510, motor_id, 0x00)
+                motor = Motor(DM_Motor_Type.DM3519, motor_id, 0x00)
                 self.motors[motor_id] = motor
                 self.motor_control.addMotor(motor)
 
@@ -279,6 +313,33 @@ class MotorControllerNode(Node):
         )
         return bool(motor.isEnable)
 
+    def _clamp_speed(self, motor_id, target_speed):
+        """Clamp per-motor speed magnitude and acceleration ramp at the front.
+
+        This is called for every incoming motor command before any CAN frame is
+        sent.  Two protections are applied in order:
+          1. Hard speed cap — magnitude clipped to max_speed_rad_s.
+          2. Acceleration ramp — step change limited by max_accel_rad_s2.
+
+        Returns the clamped speed (float, rad/s).
+        """
+        now = time.monotonic()
+
+        # 1. 速度幅值限制
+        clamped = max(-self.max_speed_rad_s, min(self.max_speed_rad_s, target_speed))
+
+        # 2. 加速度斜坡限制
+        if self.max_accel_rad_s2 > 0.0 and motor_id in self._last_speed:
+            dt = now - self._last_cmd_time.get(motor_id, now)
+            if dt > 0.0 and dt < 1.0:  # 只对高频命令做斜坡；间隔 >1s 视为新指令
+                max_delta = self.max_accel_rad_s2 * dt
+                prev = self._last_speed[motor_id]
+                clamped = max(prev - max_delta, min(prev + max_delta, clamped))
+
+        self._last_speed[motor_id] = clamped
+        self._last_cmd_time[motor_id] = now
+        return clamped
+
     def control_callback(self, msg):
         """
         消息协议:
@@ -315,6 +376,11 @@ class MotorControllerNode(Node):
             return
 
         motor = self.motors[motor_id]
+
+        # 在所有模式分发之前：先 clamp 输出端速度/加速度，再换算到电机轴
+        speed = self._clamp_speed(motor_id, speed)
+        speed = speed * self.gear_ratio  # 输出端 → 电机轴
+
         try:
             if mode == 0:
                 self.motor_control.disable(motor)

@@ -7,7 +7,7 @@ Local Navigation Node for R2 Omniwheel Base
 - 发布各电机速度控制指令到 damiao_control
 
 机械参数:
-- 4 轮 X 型布局（达妙 DMH3510 电机）
+- 4 轮 X 型布局（达妙 DM3519 电机）
 - 轮心距中心距离: 299.128 mm = 0.299128 m
 - 电机正转推动方向（即各轮有效驱动方向）:
   1号: 左后 (135°), 2号: 左前 (45°), 3号: 右前 (315°), 4号: 右后 (225°)
@@ -40,9 +40,8 @@ MOTOR_DIRECTION = {
     4: 1,
 }
 
-# Damiao DMH3510 电机参数
-DEFAULT_GEAR_RATIO = 19.227  # 减速比（电机轴 → 输出端），需按实际电机标签校准
-DEFAULT_MAX_MOTOR_SPEED_RAD_S = 45.0  # DMH3510 电机轴最大速度 (rad/s)
+# Damiao DM3519 电机参数
+DEFAULT_MAX_MOTOR_SPEED_RAD_S = 12.0  # 输出端最大速度 (rad/s)
 
 # ROS2 控制参数
 DEFAULT_MOTOR_MODE = 3  # VEL 模式
@@ -75,9 +74,6 @@ class LocalNavigationNode(Node):
         self.command_timeout_s = float(
             self.declare_parameter("command_timeout", DEFAULT_COMMAND_TIMEOUT_S).value
         )
-        self.gear_ratio = float(
-            self.declare_parameter("gear_ratio", DEFAULT_GEAR_RATIO).value
-        )
         self.max_motor_speed_rad_s = float(
             self.declare_parameter("max_motor_speed_rad_s", DEFAULT_MAX_MOTOR_SPEED_RAD_S).value
         )
@@ -104,8 +100,7 @@ class LocalNavigationNode(Node):
         
         self.get_logger().info("Local Navigation Node initialized")
         self.get_logger().info(f"Wheel base radius: {WHEEL_BASE_RADIUS*1000:.2f} mm")
-        self.get_logger().info(f"Gear ratio: {self.gear_ratio:.3f} (motor → output)")
-        self.get_logger().info(f"Max motor speed: {self.max_motor_speed_rad_s:.1f} rad/s")
+        self.get_logger().info(f"Max output speed: {self.max_motor_speed_rad_s:.1f} rad/s (gear ratio handled by damiao_node)")
         self.get_logger().info(f"Motor control mode: {DEFAULT_MOTOR_MODE} (VEL)")
         self.get_logger().info(f"Republish rate: {self.republish_rate_hz:.1f} Hz")
         self.get_logger().info(
@@ -192,19 +187,19 @@ class LocalNavigationNode(Node):
             # ω = v / r
             wheel_angular_speed = v_wheel / WHEEL_RADIUS
 
-            # Damiao VEL 模式接收电机轴速度，需乘减速比换算
-            motor_shaft_speed = wheel_angular_speed * self.gear_ratio
+            # 输出端转速，gear_ratio 换算由 damiao_node 负责
+            output_speed = wheel_angular_speed
 
-            # 限幅保护电机
-            motor_shaft_speed = max(
+            # 限幅保护
+            output_speed = max(
                 -self.max_motor_speed_rad_s,
-                min(self.max_motor_speed_rad_s, motor_shaft_speed)
+                min(self.max_motor_speed_rad_s, output_speed)
             )
 
             # Motor wiring and mechanical installation can invert the positive
             # rotation direction.  Apply the calibrated sign before publishing
             # so the same kinematic command produces the intended chassis motion.
-            wheel_speeds[motor_id] = motor_shaft_speed * MOTOR_DIRECTION.get(motor_id, 1)
+            wheel_speeds[motor_id] = output_speed * MOTOR_DIRECTION.get(motor_id, 1)
         
         return wheel_speeds
     

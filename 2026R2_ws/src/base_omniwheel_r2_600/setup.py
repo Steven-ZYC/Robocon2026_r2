@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 from glob import glob
 import os
 
-package_name = 'base_omniwheel_r2_700'
+package_name = 'base_omniwheel_r2_600'
 
 setup(
     name=package_name,
@@ -27,8 +27,8 @@ setup(
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'damiao_node = base_omniwheel_r2_700.damiao_node:main',
-            'local_navigation_node = base_omniwheel_r2_700.local_navigation_node:main',
+            'damiao_node = base_omniwheel_r2_600.damiao_node:main',
+            'local_navigation_node = base_omniwheel_r2_600.local_navigation_node:main',
         ],
     },
 )
