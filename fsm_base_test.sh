@@ -14,25 +14,33 @@ gnome-terminal --geometry=80x20+0+0 -- bash -c "
 source $WS/install/setup.bash
 ros2 run base_omniwheel_r2_600 damiao_node
 "
+sleep 0.5
 
-# 窗口2: 运动学反解 (右上) — 显示 /local_driving 输入
-gnome-terminal --geometry=80x20+780+0 -- bash -c "
+# 窗口2: 运动学反解 (中上)
+gnome-terminal --geometry=80x20+640+0 -- bash -c "
 source $WS/install/setup.bash
-ros2 run base_omniwheel_r2_600 local_navigation_node &
-sleep 2
+ros2 run base_omniwheel_r2_600 local_navigation_node
+"
+sleep 0.5
+
+# 窗口3: /local_driving 监听 (右上)
+gnome-terminal --geometry=80x20+1280+0 -- bash -c "
+source $WS/install/setup.bash
 ros2 topic echo /local_driving
 "
+sleep 0.5
 
-# 窗口3: 传感器 (左下) — 显示 /state_pose2d 输出
+# 窗口4: 传感器 (左下) — 显示 /state_pose2d 输出
 gnome-terminal --geometry=80x20+0+420 -- bash -c "
 source $WS/install/setup.bash
 ros2 launch arduino_sensor_driver arduino_sensor.launch.py &
 sleep 3
 ros2 topic echo /state_pose2d
 "
+sleep 0.5
 
-# 窗口4: 全局导航 FSM (右下) — 显示任务状态
-gnome-terminal --geometry=80x20+780+420 -- bash -c "
+# 窗口5: 全局导航 FSM (中下) — 显示任务状态
+gnome-terminal --geometry=80x20+640+420 -- bash -c "
 source $WS/install/setup.bash
 ros2 launch navigation navigation.launch.py &
 sleep 3
