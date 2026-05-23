@@ -21,8 +21,13 @@ from .speed_profiler import SpeedProfiler
 from .utils_math import normalize_angle, get_distance
 
 
-TRACKER_K_P = 1.5
+TRACKER_K_CTE_P = 0.5
+DEFAULT_K_P_X = 0.5
+DEFAULT_K_P_Y = 0.5
+TRACKER_K_HEADING_P = 1.0
+TRACKER_K_HEADING_D = 0.0
 TRACKER_MAX_SPEED_MPS = 0.5
+DEFAULT_MAX_LATERAL_MPS = 0.005
 DEFAULT_MIN_SPEED_SCALE = 0.20
 DEFAULT_MISSION_ANGLE_UNIT = 'rad'
 SUPPORTED_MISSION_ANGLE_UNITS = {'deg', 'rad'}
@@ -280,21 +285,107 @@ class MissionExecutor:
 
         # Compute driving command
         start_pose = self._nav_from_pose
+
+        # 预计算旋转（XY 分立和 heading 共用）
+        cos_yaw = math.cos(self.current_pose['yaw'])
+        sin_yaw = math.sin(self.current_pose['yaw'])
+
+        has_xy_split = ('k_p_x' in profile or 'k_p_y' in profile)
+
+        # =================================================================
+        # XY 分立模式：纯机体 P 控制，不用路径前进层
+        # vx_body = k_p_x * ex_body, vy_body = k_p_y * ey_body
+        # 机体 X/Y 轴独立驱动，互不干扰
+        # =================================================================
+        if has_xy_split:
+            k_p_x = float(profile.get('k_p_x', DEFAULT_K_P_X))
+            k_p_y = float(profile.get('k_p_y', DEFAULT_K_P_Y))
+
+            # 世界系位置误差 → 机体系误差
+            ex_w = end_pose['x'] - self.current_pose['x']
+            ey_w = end_pose['y'] - self.current_pose['y']
+            ex_body =  ex_w * cos_yaw + ey_w * sin_yaw
+            ey_body = -ex_w * sin_yaw + ey_w * cos_yaw
+
+            # 机体 P 速度
+            vx_body = k_p_x * ex_body
+            vy_body = k_p_y * ey_body
+
+            # Alpha: 基于目标欧氏距离的 cubic ease（替代沿路径投影）
+            dist_to_target = math.sqrt(ex_w**2 + ey_w**2)
+            start_r = float(profile.get('start_radius_m', 0.0))
+            end_r = float(profile.get('end_radius_m', 0.0))
+            alpha_start = 1.0
+            alpha_end = 1.0
+            if start_r > 0 or end_r > 0:
+                dist_total = math.sqrt(
+                    (end_pose['x'] - start_pose['x'])**2 +
+                    (end_pose['y'] - start_pose['y'])**2
+                )
+                if start_r > 0 and dist_total > 0:
+                    dist_from_start = math.sqrt(
+                        (self.current_pose['x'] - start_pose['x'])**2 +
+                        (self.current_pose['y'] - start_pose['y'])**2
+                    )
+                    s = min(dist_from_start / start_r, 1.0)
+                    alpha_start = 3.0 * s**2 - 2.0 * s**3
+                if end_r > 0:
+                    s = min(dist_to_target / end_r, 1.0)
+                    alpha_end = 3.0 * s**2 - 2.0 * s**3
+            alpha = min(alpha_start, alpha_end)
+            min_scale = float(profile.get('min_speed_scale', DEFAULT_MIN_SPEED_SCALE))
+            if dist > pos_tol and min_scale > 0.0:
+                alpha = max(alpha, min(min_scale, 1.0))
+
+            # 机体分轴限幅 + alpha 缩放
+            max_body_x = float(profile.get('max_body_x_mps', DEFAULT_MAX_LATERAL_MPS))
+            max_body_y = float(profile.get('max_body_y_mps', DEFAULT_MAX_LATERAL_MPS))
+            vx_body = max(-max_body_x, min(max_body_x, vx_body)) * alpha
+            vy_body = max(-max_body_y, min(max_body_y, vy_body)) * alpha
+
+            # Heading 控制（复用 tracker 的 heading PID，忽略平移输出）
+            k_heading = float(profile.get('k_heading_p', TRACKER_K_HEADING_P))
+            k_heading_d = float(profile.get('k_heading_d', TRACKER_K_HEADING_D))
+            _, _, omega_raw, _, _ = self.tracker.compute_pid_cte(
+                self.current_pose, start_pose, end_pose,
+                {'method': 'pid_cte', 'k_cte_p': 0.0,
+                 'k_heading_p': k_heading, 'k_heading_d': k_heading_d,
+                 'speed_mps': 0.0},
+            )
+            max_omega = profile.get('yaw_rate_rps', 1.5)
+            omega = max(-max_omega, min(max_omega, omega_raw))
+
+            self._pub_driving_body(vx_body, vy_body, omega)
+            return
+
+        # =================================================================
+        # 原有 CTE 模式：路径前进速度 + 横向 CTE 修正
+        # =================================================================
         tracker_speed_mps = min(
             float(profile.get('speed_mps', TRACKER_MAX_SPEED_MPS)),
             TRACKER_MAX_SPEED_MPS,
         )
-        vx_raw, vy_raw, omega_raw = self.tracker.compute_pid_cte(
+        k_heading = float(profile.get('k_heading_p', TRACKER_K_HEADING_P))
+        k_heading_d = float(profile.get('k_heading_d', TRACKER_K_HEADING_D))
+
+        fwd_mps, lat_mps, omega_raw, u_fwd, u_lat = self.tracker.compute_pid_cte(
             self.current_pose,
             start_pose,
             end_pose,
             {
                 'method': 'pid_cte',
-                'k_p': TRACKER_K_P,
+                'k_cte_p': float(profile.get('k_cte_p', TRACKER_K_CTE_P)),
+                'k_heading_p': k_heading,
+                'k_heading_d': k_heading_d,
                 'speed_mps': tracker_speed_mps,
             },
         )
 
+        # --- 横向修正独立限幅，不参与 XY 合并压缩 ---
+        max_lat = float(profile.get('max_lateral_mps', DEFAULT_MAX_LATERAL_MPS))
+        lat_mps = max(-max_lat, min(max_lat, lat_mps))
+
+        # --- 速度曲线缩放平移分量 ---
         alpha = self.speed_profiler.compute_alpha(
             self.current_pose, start_pose, end_pose,
             {
@@ -307,26 +398,26 @@ class MissionExecutor:
         if dist > pos_tol and min_speed_scale > 0.0:
             alpha = max(alpha, min(min_speed_scale, 1.0))
 
-        vx = vx_raw * alpha
-        vy = vy_raw * alpha
-        omega = max(alpha, 0.3) * omega_raw
+        fwd_mps *= alpha
+        lat_mps *= alpha
 
-        max_speed = profile.get('speed_mps', 0.6)
-        v_mag = math.sqrt(vx ** 2 + vy ** 2)
-        if v_mag > max_speed:
-            scale = max_speed / v_mag
-            vx *= scale
-            vy *= scale
+        # --- 世界系速度：前向 + 横向分别重建，互不挤压 ---
+        vx_world = fwd_mps * u_fwd[0] + lat_mps * u_lat[0]
+        vy_world = fwd_mps * u_fwd[1] + lat_mps * u_lat[1]
 
+        # --- heading 独立限幅 ---
         max_omega = profile.get('yaw_rate_rps', 1.5)
-        omega = max(-max_omega, min(max_omega, omega))
+        omega = max(-max_omega, min(max_omega, omega_raw))
 
-        # 世界系 → 机体系旋转变换
-        # tracker 输出的是世界系速度，local_navigation_node 期望机体系
-        cos_yaw = math.cos(self.current_pose['yaw'])
-        sin_yaw = math.sin(self.current_pose['yaw'])
-        vx_body =  vx * cos_yaw + vy * sin_yaw
-        vy_body = -vx * sin_yaw + vy * cos_yaw
+        # --- 世界系 → 机体系旋转变换 ---
+        vx_body =  vx_world * cos_yaw + vy_world * sin_yaw
+        vy_body = -vx_world * sin_yaw + vy_world * cos_yaw
+
+        # --- 机体分轴限幅 ---
+        max_body_x = float(profile.get('max_body_x_mps', max_lat))
+        max_body_y = float(profile.get('max_body_y_mps', max_lat))
+        vx_body = max(-max_body_x, min(max_body_x, vx_body))
+        vy_body = max(-max_body_y, min(max_body_y, vy_body))
 
         self._pub_driving_body(vx_body, vy_body, omega)
 

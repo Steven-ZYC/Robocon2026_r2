@@ -3,11 +3,11 @@ frame_id: map
 angle_unit: deg
 
 # =============================================================================
-# Forward 5m chassis-only test mission
+# Forward 0.5m chassis-only test mission
 #
 # Active behavior:
 #   1. Assume /state_pose2d has been zeroed near x=0, y=0, theta=0 deg.
-#   2. Navigate to world/map +X = 5.0 m, Y = 0.0 m.
+#   2. Navigate to world/map +X = 0.5 m, Y = 0.0 m.
 #   3. Do not execute arm, pneumatic, conditional, or wait stages.
 #
 # Coordinate convention:
@@ -42,46 +42,64 @@ waypoints:
   wp_start:
     pose: { x: 0.0, y: 0.0, yaw: 0.0 }
 
-  wp_forward_5m:
-    pose: { x: 5.0, y: 0.0, yaw: 0.0 }
+  wp_forward_0.5m:
+    pose: { x: 0.0, y: 0.5, yaw: 0.0 }
     pos_tolerance: 0.03
     yaw_tolerance_deg: 3.0
 
 profiles:
-  # Profile fields currently read by MissionExecutor:
+  # Profile fields read by MissionExecutor / Tracker:
   #   speed_mps:        translational speed limit and tracker cruise speed (m/s)
-  #                     tracker cruise speed is capped by TRACKER_MAX_SPEED_MPS
   #   yaw_rate_rps:     angular velocity limit (rad/s)
   #   start_radius_m:   cubic-ease acceleration distance from stage start (m)
   #   end_radius_m:     cubic-ease deceleration distance before target (m)
   #   min_speed_scale:  minimum translation alpha while not arrived, 0.0-1.0
+  #   k_p_x:            body-frame forward(X) position P gain, default 0.5
+  #   k_p_y:            body-frame lateral(Y) position P gain, default 0.5
+  #   k_cte_p:          CTE lateral P gain (legacy, overridden by k_p_x/y if either set)
+  #   k_heading_p:      heading P gain, default 1.0
+  #   k_heading_d:      heading D gain (damping), default 0.0
+  #   max_lateral_mps:  lateral correction speed cap (m/s), default 0.005
+  #   max_body_x_mps:   body-frame forward speed cap (m/s), default = max_lateral_mps
+  #   max_body_y_mps:   body-frame lateral speed cap (m/s), default = max_lateral_mps
   #
-  # Profile fields often useful as documentation, but not currently read here:
-  #   curve:            executor currently passes "cubic_ease" internally
+  # Tuning order: P first → D if oscillating → I last (only if steady error)
+  # XY split mode (k_p_x / k_p_y): pure body-frame P control.
+  #   World-frame error rotated to body, then:
+  #   vx_body = k_p_x * ex_body, vy_body = k_p_y * ey_body.
+  #   Independent X/Y per-axis with cubic ease on Euclidean target distance.
   #
-  # Team speed convention for chassis tests:
-  #   slow   = 0.0005 m/s  (min usable ~0.0003 on local_driving)
-  #   medium = 0.001  m/s
-  #   fast   = 0.002  m/s
+  # Hardcoded internally:
+  #   curve:            executor always uses "cubic_ease"
+  #
+  # Team speed convention for chassis tests (scaled 5x vs original):
+  #   slow   = 0.05 m/s
+  #   medium = 0.005  m/s
+  #   fast   = 0.01   m/s
   slow:
-    speed_mps: 0.0005
-    yaw_rate_rps: 0.8
-    start_radius_m: 0.20
-    end_radius_m: 0.20
+    speed_mps: 0.05
+    yaw_rate_rps: 0.5
+    start_radius_m: 0.00
+    end_radius_m: 0.00
     min_speed_scale: 0.20
+    k_p_x: 0.5
+    k_p_y: 1.0
+    k_heading_p: 0.0
+    k_heading_d: 0.0
+    max_lateral_mps: 0.01
     curve: cubic_ease
 
   medium:
-    speed_mps: 0.001
-    yaw_rate_rps: 1.2
+    speed_mps: 0.005
+    yaw_rate_rps: 0.6
     start_radius_m: 0.25
     end_radius_m: 0.25
     min_speed_scale: 0.20
     curve: cubic_ease
 
   fast:
-    speed_mps: 0.002
-    yaw_rate_rps: 1.5
+    speed_mps: 0.01
+    yaw_rate_rps: 0.6
     start_radius_m: 0.35
     end_radius_m: 0.35
     min_speed_scale: 0.20
@@ -121,9 +139,9 @@ stages:
   #
   # This mission intentionally uses only one navigate stage. On arrival,
   # MissionExecutor publishes zero /local_driving once and then reports DONE.
-  - id: nav_forward_5m
+  - id: nav_forward_0.5m
     type: navigate
-    to: wp_forward_5m
+    to: wp_forward_0.5m
     profile: slow
 
 # Example stages for future missions; do not uncomment for this test.

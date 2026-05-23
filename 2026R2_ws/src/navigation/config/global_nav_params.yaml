@@ -1,6 +1,6 @@
 global_navigation_node:
   ros__parameters:
-    mission_file: ""                    # set via launch arg; default -> routes/forward_5m.yaml
+    mission_file: ""                    # set via launch arg; default -> routes/forward_0.5m.yaml
     control_rate_hz: 50.0
     arrived_stable_count: 5
     pose_timeout_s: 0.5
