@@ -9,8 +9,9 @@ Local Navigation Node for R2 Omniwheel Base
 机械参数:
 - 4 轮 X 型布局（达妙 DM3519 电机）
 - 轮心距中心距离: 299.128 mm = 0.299128 m
-- 电机正转推动方向（即各轮有效驱动方向）:
-  1号: 左后 (135°), 2号: 左前 (45°), 3号: 右前 (315°), 4号: 右后 (225°)
+- 电机安装位置与正转推动方向（实测确定）:
+  1号: 左前 → 135° (左后), 2号: 右前 → 45° (左前)
+  3号: 右后 → 315° (右前), 4号: 左后 → 225° (右后)
 """
 
 import rclpy
@@ -23,13 +24,12 @@ import time
 WHEEL_RADIUS_M = 0.299128  # 轮心到底盘中心距离 (m)
 WHEEL_BASE_RADIUS = WHEEL_RADIUS_M  # 别名，更清晰
 
-# 电机正转推动方向（REP 103: +x前, +y左）
-# 各轮有效驱动方向，实测确定
+# 电机正转推动方向（REP 103: +x前, +y左，实测确定）
 WHEEL_ANGLES = {
-    1: np.deg2rad(135),   # 左后
-    2: np.deg2rad(45),    # 左前
-    3: np.deg2rad(315),   # 右前
-    4: np.deg2rad(225),   # 右后
+    1: np.deg2rad(135),   # 左前, drives 135° (左后方向)
+    2: np.deg2rad(45),    # 右前, drives 45° (左前方向)
+    3: np.deg2rad(315),   # 右后, drives 315° (右前方向)
+    4: np.deg2rad(225),   # 左后, drives 225° (右后方向)
 }
 
 # 电机方向标志：驱动方向已由 WHEEL_ANGLES 完整定义，全部正向
