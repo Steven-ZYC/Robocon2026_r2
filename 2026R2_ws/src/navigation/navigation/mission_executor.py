@@ -24,10 +24,14 @@ from .utils_math import normalize_angle, get_distance
 TRACKER_K_CTE_P = 0.5
 DEFAULT_K_P_X = 0.5
 DEFAULT_K_P_Y = 0.5
+DEFAULT_K_I_X = 0.0
+DEFAULT_K_I_Y = 0.0
+DEFAULT_K_D_X = 0.0
+DEFAULT_K_D_Y = 0.0
 TRACKER_K_HEADING_P = 1.0
 TRACKER_K_HEADING_D = 0.0
 TRACKER_MAX_SPEED_MPS = 0.5
-DEFAULT_MAX_LATERAL_MPS = 0.005
+DEFAULT_MAX_LATERAL_MPS = 0.05
 DEFAULT_MIN_SPEED_SCALE = 0.20
 DEFAULT_MISSION_ANGLE_UNIT = 'rad'
 SUPPORTED_MISSION_ANGLE_UNITS = {'deg', 'rad'}
@@ -74,6 +78,13 @@ class MissionExecutor:
         self._nav_profile = {}
         self._nav_from_pose = None
         self._active_nav_stage_id = None
+
+        # XY split PID integral / derivative state
+        self._xy_error_integral_x = 0.0
+        self._xy_error_integral_y = 0.0
+        self._xy_error_prev_x = 0.0
+        self._xy_error_prev_y = 0.0
+        self._xy_pid_initialized = False
 
         # Conditional state
         self.sensor_cache = {}
@@ -293,13 +304,17 @@ class MissionExecutor:
         has_xy_split = ('k_p_x' in profile or 'k_p_y' in profile)
 
         # =================================================================
-        # XY 分立模式：纯机体 P 控制，不用路径前进层
-        # vx_body = k_p_x * ex_body, vy_body = k_p_y * ey_body
+        # XY 分立模式：机体 PID 控制，不用路径前进层
+        # vx_body = kp*e + ki*∫e + kd*de, vy_body 同理
         # 机体 X/Y 轴独立驱动，互不干扰
         # =================================================================
         if has_xy_split:
             k_p_x = float(profile.get('k_p_x', DEFAULT_K_P_X))
             k_p_y = float(profile.get('k_p_y', DEFAULT_K_P_Y))
+            k_i_x = float(profile.get('k_i_x', DEFAULT_K_I_X))
+            k_i_y = float(profile.get('k_i_y', DEFAULT_K_I_Y))
+            k_d_x = float(profile.get('k_d_x', DEFAULT_K_D_X))
+            k_d_y = float(profile.get('k_d_y', DEFAULT_K_D_Y))
 
             # 世界系位置误差 → 机体系误差
             ex_w = end_pose['x'] - self.current_pose['x']
@@ -307,9 +322,31 @@ class MissionExecutor:
             ex_body =  ex_w * cos_yaw + ey_w * sin_yaw
             ey_body = -ex_w * sin_yaw + ey_w * cos_yaw
 
-            # 机体 P 速度
-            vx_body = k_p_x * ex_body
-            vy_body = k_p_y * ey_body
+            # 首周期初始化：避免 D 项跳变
+            if not self._xy_pid_initialized:
+                self._xy_error_prev_x = ex_body
+                self._xy_error_prev_y = ey_body
+                self._xy_pid_initialized = True
+
+            # 积分累积 + 抗饱和 (anti-windup)
+            integral_max_x = float(profile.get('xy_integral_max', 0.0))
+            integral_max_y = float(profile.get('xy_integral_max', 0.0))
+            self._xy_error_integral_x += ex_body
+            self._xy_error_integral_y += ey_body
+            if integral_max_x > 0:
+                self._xy_error_integral_x = max(-integral_max_x, min(integral_max_x, self._xy_error_integral_x))
+            if integral_max_y > 0:
+                self._xy_error_integral_y = max(-integral_max_y, min(integral_max_y, self._xy_error_integral_y))
+
+            # 微分 (误差变化量，不经 dt 缩放 — dt 吸收进 kd)
+            d_x = ex_body - self._xy_error_prev_x
+            d_y = ey_body - self._xy_error_prev_y
+            self._xy_error_prev_x = ex_body
+            self._xy_error_prev_y = ey_body
+
+            # 机体 PID 速度
+            vx_body = k_p_x * ex_body + k_i_x * self._xy_error_integral_x + k_d_x * d_x
+            vy_body = k_p_y * ey_body + k_i_y * self._xy_error_integral_y + k_d_y * d_y
 
             # Alpha: 基于目标欧氏距离的 cubic ease（替代沿路径投影）
             dist_to_target = math.sqrt(ex_w**2 + ey_w**2)
@@ -437,6 +474,13 @@ class MissionExecutor:
         self._nav_target_wp = dict(end_pose)
         self._nav_profile = dict(profile)
         self.arrived_counter = 0
+
+        # 每进入新 navigate stage 时重置 XY PID 积分/微分状态
+        self._xy_error_integral_x = 0.0
+        self._xy_error_integral_y = 0.0
+        self._xy_error_prev_x = 0.0
+        self._xy_error_prev_y = 0.0
+        self._xy_pid_initialized = False
         self.logger.info(
             f"Navigate [{stage_id}] started from "
             f"({self._nav_from_pose['x']:.3f}, {self._nav_from_pose['y']:.3f}) "
