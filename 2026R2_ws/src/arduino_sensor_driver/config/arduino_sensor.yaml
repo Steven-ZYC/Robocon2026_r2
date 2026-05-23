@@ -17,6 +17,15 @@ arduino_sensor_parser:
     # TF publishing
     publish_tf: true                   # Whether to broadcast odom->base_link transform
 
+    # Encoder direction & IMU calibration
+    enc_x_sign: 1.0                   # Set to -1.0 if encoder direction is reversed
+    enc_y_sign: 1.0
+    imu_yaw_offset_deg: 0.0           # IMU yaw zero-offset in degrees
+
+    # Complementary filter: fuse accelerometer with encoder velocity
+    fusion_enabled: true               # Enable 1st-order complementary filter
+    fusion_tau: 0.5                    # Time constant (s), smaller = trust encoder more; fc = 1/(2*pi*tau)
+
     # Encoder positions relative to robot rotation center, in meters.
     # Robot frame: +X forward, +Y left.
     enc_x_pos_x_m: 0.0

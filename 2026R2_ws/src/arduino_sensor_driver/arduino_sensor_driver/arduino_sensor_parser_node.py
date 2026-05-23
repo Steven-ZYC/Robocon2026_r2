@@ -7,6 +7,7 @@ Arduino Sensor Parser Node
 - 解析带 CRC8-ATM 校验的文本协议
 - 发布原始传感器数据到 /arduino/raw_sensor_data
 - 计算并发布 Odometry 到 /state_odom
+- 一阶互补滤波器：融合 IMU 加速度计与编码器速度，改善动态位姿估计
 
 适用范围：
 - 使用 AMT103 编码器（CPR=8192）的二自由度平移平台
@@ -28,6 +29,11 @@ Arduino端坐标系转换（源头处理，ROS端无需再转换）：
 - e1 为用户X轴（横向，向右正），e2 为用户Y轴（纵向，向前正）
 - ENC第一位 输出 e2_cnt   => REP X（向前）
 - ENC第二位 输出 -e1_cnt  => REP Y（向左）
+
+互补滤波假设：
+- IMU 安装方向与机器人本体坐标系一致（X 向前，Y 向左）
+- 地面平整，加速度计 ax/ay 的直流分量主要为运动加速度
+- 低速自转时忽略科里奥利力项 (ω×v)，简化 a_body ≈ dv/dt
 
 超时保护：
 - 若 1.0 秒内未收到新数据包，发布零速度 Odometry
@@ -73,6 +79,10 @@ class ArduinoSensorParser(Node):
         self.declare_parameter("enc_y_sign", 1.0)
         self.declare_parameter("imu_yaw_offset_deg", 0.0)
 
+        # 互补滤波参数：融合加速度计与编码器速度估计
+        self.declare_parameter("fusion_enabled", True)
+        self.declare_parameter("fusion_tau", 0.5)  # 时间常数 (s)，越小越信任编码器
+
         # 读取参数
         port = self.get_parameter("serial_port").value
         baud = self.get_parameter("baud_rate").value
@@ -89,6 +99,14 @@ class ArduinoSensorParser(Node):
         self.enc_x_sign = float(self.get_parameter("enc_x_sign").value)
         self.enc_y_sign = float(self.get_parameter("enc_y_sign").value)
         self.imu_yaw_offset_deg = float(self.get_parameter("imu_yaw_offset_deg").value)
+
+        self.fusion_enabled = self.get_parameter("fusion_enabled").value
+        self.fusion_tau = self.get_parameter("fusion_tau").value
+
+        self.get_logger().info(
+            f"Complementary filter: {'enabled' if self.fusion_enabled else 'disabled'}, "
+            f"tau={self.fusion_tau:.2f}s"
+        )
 
         self.get_logger().info(f"Opening serial port: {port}")
 
@@ -124,6 +142,10 @@ class ArduinoSensorParser(Node):
         self.last_ts_ms = None
         self.linear_vx = 0.0
         self.linear_vy = 0.0
+
+        # 互补滤波状态：融合后的本体系速度 (m/s)
+        self.vx_fused = 0.0
+        self.vy_fused = 0.0
 
         # 定时器：读取串口 + 超时保护
         self.create_timer(0.01, self.serial_callback)  # 100Hz 读取
@@ -274,7 +296,8 @@ class ArduinoSensorParser(Node):
 
     def update_odometry(self, data: dict):
         """
-        根据编码器增量计算 Odometry，使用 IMU heading 作为朝向。
+        根据编码器增量计算 Odometry，使用 IMU heading 作为朝向，
+        可选启用互补滤波器融合加速度计数据改善速度/位姿估计。
 
         Arduino端已完成坐标系转换（REP 103）：
         - enc_x = forward counts（向前为正，即 REP X 方向）
@@ -284,8 +307,9 @@ class ArduinoSensorParser(Node):
         更精确的 2D odometry：
         1. 使用 IMU heading 作为 yaw
         2. 用 dtheta 补偿 encoder 安装点偏移导致的旋转假位移
-        3. 用区间中值 yaw 做 body->world 旋转
-        4. 发布平面位姿与速度
+        3. 【可选】一阶互补滤波：融合加速度计 (ax,ay) 与编码器速度
+        4. 用区间中值 yaw 做 body->world 旋转
+        5. 发布平面位姿与速度
         """
         enc_x = data["enc"]["x"]  # forward counts
         enc_y = data["enc"]["y"]  # left counts
@@ -326,6 +350,48 @@ class ArduinoSensorParser(Node):
         dx_center = dx_meas + self.enc_x_pos_y_m * dtheta
         dy_center = dy_meas - self.enc_y_pos_x_m * dtheta
 
+        # 时间差（优先用 Arduino 时间戳）
+        dt = None
+        if self.last_ts_ms is not None:
+            dt = (ts_ms - self.last_ts_ms) / 1000.0
+
+        # 编码器速度（本体系，m/s）
+        if dt is not None and 1e-4 <= dt <= 0.5:
+            vx_enc = dx_center / dt
+            vy_enc = dy_center / dt
+        else:
+            vx_enc = 0.0
+            vy_enc = 0.0
+
+        # ---- 互补滤波：加速度计融合编码器速度 ----
+        if self.fusion_enabled and dt is not None and dt > 1e-6:
+            # IMU 加速度计 body frame 测量值 (g -> m/s^2)
+            ax_body = data["imu"]["ax"] * 9.81
+            ay_body = data["imu"]["ay"] * 9.81
+
+            # 一阶互补滤波系数：alpha = tau / (tau + dt)
+            alpha = self.fusion_tau / (self.fusion_tau + dt)
+            alpha = max(0.0, min(1.0, alpha))
+
+            # v_fused = alpha*(v_prev + a*dt) + (1-alpha)*v_encoder
+            self.vx_fused = (
+                alpha * (self.vx_fused + ax_body * dt)
+                + (1.0 - alpha) * vx_enc
+            )
+            self.vy_fused = (
+                alpha * (self.vy_fused + ay_body * dt)
+                + (1.0 - alpha) * vy_enc
+            )
+
+            # 用融合速度重建本体系位移增量，用于 world-frame 积分
+            dx_center = self.vx_fused * dt
+            dy_center = self.vy_fused * dt
+            self.linear_vx = self.vx_fused
+            self.linear_vy = self.vy_fused
+        else:
+            self.linear_vx = vx_enc
+            self.linear_vy = vy_enc
+
         # 使用区间中值姿态进行积分，精度比直接用当前 yaw 更好
         yaw_mid = self.wrap_angle_rad(self.last_heading + 0.5 * dtheta)
 
@@ -336,19 +402,6 @@ class ArduinoSensorParser(Node):
         self.odom_y += dy_world
         self.odom_yaw = yaw_rad
         self.pose2d_theta_deg = heading_deg
-
-        # 时间差（优先用 Arduino 时间戳）
-        dt = None
-        if self.last_ts_ms is not None:
-            dt = (ts_ms - self.last_ts_ms) / 1000.0
-
-        # 防止时间戳回绕 / 异常
-        if dt is not None and 1e-4 <= dt <= 0.5:
-            self.linear_vx = dx_center / dt
-            self.linear_vy = dy_center / dt
-        else:
-            self.linear_vx = 0.0
-            self.linear_vy = 0.0
 
         # 更新历史状态
         self.last_enc_x = enc_x
