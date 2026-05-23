@@ -55,6 +55,11 @@ import time
 class ArduinoSensorParser(Node):
     """
     解析 Arduino 串口数据，发布原始传感器消息与 Odometry
+
+    超时保护：
+    - 串口断连后自动重连（每 2s 尝试一次）
+    - 数据超时后发布零速度 Odometry
+    - 关闭时安全停止 timer，防止 publisher context 崩溃
     """
 
     def __init__(self):
@@ -84,8 +89,8 @@ class ArduinoSensorParser(Node):
         self.declare_parameter("fusion_tau", 0.5)  # 时间常数 (s)，越小越信任编码器
 
         # 读取参数
-        port = self.get_parameter("serial_port").value
-        baud = self.get_parameter("baud_rate").value
+        self._port = self.get_parameter("serial_port").value
+        self._baud = self.get_parameter("baud_rate").value
         self.timeout_sec = self.get_parameter("timeout_sec").value
         self.encoder_cpr = self.get_parameter("encoder_cpr").value
         self.wheel_radius = self.get_parameter("wheel_radius_m").value
@@ -108,18 +113,7 @@ class ArduinoSensorParser(Node):
             f"tau={self.fusion_tau:.2f}s"
         )
 
-        self.get_logger().info(f"Opening serial port: {port}")
-
-        # 串口初始化
-        try:
-            self.serial = serial.Serial(port, baud, timeout=0.1)
-            self.serial.reset_input_buffer()  # 丢弃连接时缓冲区中可能存在的不完整行
-            self.get_logger().info(f"Opened serial port: {port} @ {baud} baud")
-        except Exception as e:
-            self.get_logger().error(f"Failed to open {port}: {e}")
-            raise
-
-        # Publisher
+        # Publisher（必须在串口之前创建，确保关闭时 publisher 生命周期 > 串口 reader）
         self.raw_pub = self.create_publisher(
             ArduinoSensorData, "/arduino/raw_sensor_data", 10
         )
@@ -129,6 +123,10 @@ class ArduinoSensorParser(Node):
         # TF broadcaster (可选)
         if self.publish_tf:
             self.tf_broadcaster = TransformBroadcaster(self)
+
+        # 串口初始化
+        self.serial = None
+        self._try_open_serial()
 
         # 状态变量
         self.last_enc_x = None
@@ -147,11 +145,54 @@ class ArduinoSensorParser(Node):
         self.vx_fused = 0.0
         self.vy_fused = 0.0
 
-        # 定时器：读取串口 + 超时保护
-        self.create_timer(0.01, self.serial_callback)  # 100Hz 读取
-        self.create_timer(0.05, self.timeout_check)  # 20Hz 超时检查
+        # 运行状态标志（用于安全关闭）
+        self._active = True
+
+        # 定时器
+        self._serial_timer = self.create_timer(0.01, self.serial_callback)  # 100Hz 读取
+        self._timeout_timer = self.create_timer(0.05, self.timeout_check)   # 20Hz 超时检查
+        self._reconnect_timer = self.create_timer(2.0, self.reconnect_check)  # 串口重连
 
         self.get_logger().info("Arduino Sensor Parser Node started")
+
+    def _try_open_serial(self):
+        """尝试打开串口。成功返回 True，失败返回 False（不抛异常）。"""
+        self.get_logger().info(f"Opening serial port: {self._port}")
+        try:
+            self.serial = serial.Serial(self._port, self._baud, timeout=0.1)
+            self.serial.reset_input_buffer()
+            self.get_logger().info(
+                f"Opened serial port: {self._port} @ {self._baud} baud"
+            )
+            return True
+        except Exception as e:
+            self.get_logger().error(f"Failed to open {self._port}: {e}")
+            self.serial = None
+            return False
+
+    def reconnect_check(self):
+        """串口重连检查：若串口已断连，定期尝试重新打开。"""
+        if not self._active:
+            return
+        if self.serial is not None and self.serial.is_open:
+            return
+        self.get_logger().info(
+            f"Attempting serial reconnection to {self._port}..."
+        )
+        self._try_open_serial()
+
+    def shutdown(self):
+        """安全关闭：停 timer、关串口、防止 publisher context 崩溃。"""
+        self._active = False
+        # 先停掉所有 timer，防止 callback 在 destroy 期间继续触发
+        self.destroy_timer(self._serial_timer)
+        self.destroy_timer(self._timeout_timer)
+        self.destroy_timer(self._reconnect_timer)
+        # 关闭串口
+        if self.serial is not None and self.serial.is_open:
+            self.serial.close()
+            self.get_logger().info("Serial port closed")
+        self.serial = None
 
     def crc8_atm(self, data: bytes) -> int:
         """
@@ -233,8 +274,13 @@ class ArduinoSensorParser(Node):
 
     def serial_callback(self):
         """
-        读取串口数据并解析
+        读取串口数据并解析。若 _active=False（正在关闭）或串口未打开，直接返回。
         """
+        if not self._active:
+            return
+        if self.serial is None or not self.serial.is_open:
+            return
+
         try:
             if self.serial.in_waiting > 0:
                 raw = self.serial.readline()
@@ -264,6 +310,11 @@ class ArduinoSensorParser(Node):
                 # 更新 Odometry
                 self.update_odometry(data)
 
+        except serial.SerialException as e:
+            self.get_logger().error(
+                f"Serial disconnected: {e}. Will attempt reconnection."
+            )
+            self._close_serial()
         except Exception as e:
             self.get_logger().error(f"Serial read error: {e}")
 
@@ -475,13 +526,26 @@ class ArduinoSensorParser(Node):
         q.w = math.cos(yaw / 2.0)
         return q
 
+    def _close_serial(self):
+        """安全关闭串口，为后续重连做准备。"""
+        if self.serial is not None:
+            try:
+                if self.serial.is_open:
+                    self.serial.close()
+            except Exception:
+                pass
+            self.serial = None
+
     def timeout_check(self):
         """
         超时保护：若超过 timeout_sec 未收到数据，发布零速度 Odometry
         """
+        if not self._active:
+            return
         if time.time() - self.last_recv_time > self.timeout_sec:
             self.get_logger().warn(
-                "Arduino data timeout! Publishing zero-velocity odometry."
+                "Arduino data timeout! Publishing zero-velocity odometry.",
+                throttle_duration_sec=2.0,
             )
             self.publish_odometry(0.0)
 
@@ -494,6 +558,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # 先停 timer + 关串口，再销毁 node，防止 publisher context 崩溃
+        node.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 

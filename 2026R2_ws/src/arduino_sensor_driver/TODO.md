@@ -1,5 +1,10 @@
 # TODO List - arduino_sensor_driver
 
+## v0.2.8 已完成 (2026-05-23)
+- [x] **串口断连自动重连**：`_try_open_serial()` 失败不再 raise，改为 `serial=None` + 定时重连
+- [x] **运行时串口异常恢复**：`serial_callback` 捕获 `SerialException` 后自动关闭串口并触发重连
+- [x] **安全关闭顺序**：`shutdown()` 先停 timer、关串口，再 `destroy_node()`，防止 publisher context 崩溃
+
 ## v0.2.4 已完成 (2026-05-13)
 - [x] 修正 `/state_pose2d.theta` 单位约定
   - 确认 Arduino raw sensor data 的 `imu_heading_deg` 为 `[-179, 179] deg`
@@ -58,8 +63,8 @@
 - [ ] **测试实际硬件**：连接真实 Arduino，验证数据解析与 Odometry 精度
 - [ ] **标定编码器轮半径**：通过实测校准 `wheel_radius_m` 参数
 - [ ] **速度计算**：在 Odometry 中加入线速度（vx, vy）估算（基于编码器增量与时间差）
-- [ ] **异常处理增强**：
-  - [ ] 串口断开自动重连
+- [x] **异常处理增强**：
+  - [x] 串口断开自动重连
   - [ ] 处理数据包乱序或丢失
   - [ ] 检测编码器计数溢出（超过 int64 范围）
 

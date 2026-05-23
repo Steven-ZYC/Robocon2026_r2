@@ -82,7 +82,7 @@ profiles:
     start_radius_m: 0.00
     end_radius_m: 0.00
     min_speed_scale: 0.20
-    k_p_x: 0.5
+    k_p_x: 10.0
     k_p_y: 1.0
     k_heading_p: 0.0
     k_heading_d: 0.0

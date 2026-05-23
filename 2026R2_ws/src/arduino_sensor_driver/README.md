@@ -2,6 +2,16 @@
 
 ## 项目进度（Changelog）
 
+### v0.2.8 (2026-05-23)
+- ✅ **串口断连自动重连**
+  - 串口初始化失败时不再 raise 终止节点，改为设置 `serial=None` 并定期重试
+  - 新增 `reconnect_check()` 定时器（每 2s），自动检测并重连断开的串口
+  - 运行时串口异常（`SerialException`）自动关闭串口并触发重连机制
+- ✅ **安全关闭顺序**
+  - 新增 `shutdown()` 方法，在 `destroy_node()` 之前：停掉所有 timer、关闭串口
+  - 新增 `_active` 标志位，所有 callback 在关闭期间直接返回，防止 `publisher's context is invalid` 崩溃
+  - 修复 Ctrl+C 或 launch 终止时，timer callback 在已销毁 context 上 publish 导致的错误
+
 ### v0.2.7 (2026-05-23)
 - ✅ **互补滤波：加速度计融合编码器速度估计**
   - 新增一阶互补滤波器，融合 IMU 加速度计 (ax, ay) 与编码器速度 (vx_enc, vy_enc)
