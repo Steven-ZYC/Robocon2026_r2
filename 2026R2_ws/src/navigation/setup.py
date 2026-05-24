@@ -15,6 +15,7 @@ setup(
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         (os.path.join('share', package_name, 'routes'), glob('routes/*.yaml')),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,7 +25,9 @@ setup(
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'global_navigation_node = navigation.global_navigation_node:main'
+            'global_navigation_node = navigation.global_navigation_node:main',
+            'plot_node = navigation.plot_node:main',
+            'mission_viz_node = navigation.mission_viz_node:main',
         ],
     },
 )
