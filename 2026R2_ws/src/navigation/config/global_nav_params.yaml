@@ -3,4 +3,4 @@ global_navigation_node:
     mission_file: ""                    # set via launch arg; default -> routes/forward_0.5m.yaml
     control_rate_hz: 50.0
     arrived_stable_count: 5
-    pose_timeout_s: 3.0
+    pose_timeout_s: 0.5                   # 收不到 /state_pose2d 超过 0.5s → 零驱动停车
