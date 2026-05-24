@@ -3,12 +3,13 @@ frame_id: map
 angle_unit: deg
 
 # =============================================================================
-# Forward 0.5m chassis-only test mission
+# Red start-area edge chassis-only test mission
 #
 # Active behavior:
-#   1. Assume /state_pose2d has been zeroed near x=0, y=0, theta=0 deg.
-#   2. Navigate to world/map +X = 0.5 m, Y = 0.0 m.
-#   3. Do not execute arm, pneumatic, conditional, or wait stages.
+#   1. Assume /state_pose2d has been zeroed near the robot start pose.
+#   2. Move first along world/map +Y and stop near the start-zone edge.
+#   3. Keep the 0.6 m chassis base outside the y=0.875~1.000 m obstacle strip.
+#   4. Do not execute arm, pneumatic, conditional, or wait stages.
 #
 # Coordinate convention:
 #   - World/map +X: forward when theta = 0
@@ -42,9 +43,11 @@ waypoints:
   wp_start:
     pose: { x: 0.0, y: 0.0, yaw: 0.0 }
 
-  wp_forward_0.5m:
-    pose: { x: 0.0, y: 0.5, yaw: 0.0 }
-    pos_tolerance: 0.03
+  wp_start_edge_y:
+    # 出发区 y 边缘为 0.8 m；障碍物从 y=0.875 m 开始。
+    # 车底/车宽按 0.6 m 估算，先用 y=0.575 m 作为保守测试目标。
+    pose: { x: 0.0, y: 0.575, yaw: 0.0 }
+    pos_tolerance: 0.01
     yaw_tolerance_deg: 3.0
 
 profiles:
@@ -56,6 +59,11 @@ profiles:
   #   min_speed_scale:  minimum translation alpha while not arrived, 0.0-1.0
   #   k_p_x:            body-frame forward(X) position P gain, default 0.5
   #   k_p_y:            body-frame lateral(Y) position P gain, default 0.5
+  #   k_i_x:            body-frame forward(X) position I gain, default 0.0
+  #   k_i_y:            body-frame lateral(Y) position I gain, default 0.0
+  #   k_d_x:            body-frame forward(X) position D gain, default 0.0
+  #   k_d_y:            body-frame lateral(Y) position D gain, default 0.0
+  #   xy_integral_max:  XY integral anti-windup clamp, default 0.0 (disabled)
   #   k_cte_p:          CTE lateral P gain (legacy, overridden by k_p_x/y if either set)
   #   k_heading_p:      heading P gain, default 1.0
   #   k_heading_d:      heading D gain (damping), default 0.0
@@ -64,33 +72,37 @@ profiles:
   #   max_body_y_mps:   body-frame lateral speed cap (m/s), default = max_lateral_mps
   #
   # Tuning order: P first → D if oscillating → I last (only if steady error)
-  # XY split mode (k_p_x / k_p_y): pure body-frame P control.
-  #   World-frame error rotated to body, then:
-  #   vx_body = k_p_x * ex_body, vy_body = k_p_y * ey_body.
-  #   Independent X/Y per-axis with cubic ease on Euclidean target distance.
+  # XY split mode (k_p_x / k_p_y): body-frame PID control.
+  #   World-frame error rotated to body, then per-axis:
+  #   vx_body = kp*e + ki*∫e + kd*de, vy_body = kp*e + ki*∫e + kd*de.
+  #   I/D gains default to 0.0 — backward-compatible pure P when unset.
+  #   xy_integral_max clamps accumulated integral (anti-windup), 0 = disabled.
   #
   # Hardcoded internally:
   #   curve:            executor always uses "cubic_ease"
   #
   # Team speed convention for chassis tests (scaled 5x vs original):
-  #   slow   = 0.05 m/s
-  #   medium = 0.005  m/s
-  #   fast   = 0.01   m/s
+  #   slow   = 0.01 m/s
+  #   medium = 0.05  m/s
+  #   fast   = 0.05  m/s
   slow:
-    speed_mps: 0.05
+    speed_mps: 0.085
     yaw_rate_rps: 0.5
-    start_radius_m: 0.00
-    end_radius_m: 0.00
+    start_radius_m: 0.20
+    end_radius_m: 0.20
     min_speed_scale: 0.20
-    k_p_x: 10.0
-    k_p_y: 1.0
-    k_heading_p: 0.0
+    k_p_x: 0.086
+    k_p_y: 0.08
+    k_d_x: 0.005
+    k_d_y: 0.01
+    k_heading_p: 0.02
     k_heading_d: 0.0
-    max_lateral_mps: 0.01
+    max_body_x_mps: 0.1
+    max_body_y_mps: 0.1
     curve: cubic_ease
 
   medium:
-    speed_mps: 0.005
+    speed_mps: 0.05
     yaw_rate_rps: 0.6
     start_radius_m: 0.25
     end_radius_m: 0.25
@@ -139,9 +151,9 @@ stages:
   #
   # This mission intentionally uses only one navigate stage. On arrival,
   # MissionExecutor publishes zero /local_driving once and then reports DONE.
-  - id: nav_forward_0.5m
+  - id: nav_start_edge_y
     type: navigate
-    to: wp_forward_0.5m
+    to: wp_start_edge_y
     profile: slow
 
 # Example stages for future missions; do not uncomment for this test.
