@@ -1,5 +1,12 @@
 # Navigation TODO
 
+- [x] 新增 plot_node 实时底盘位置可视化节点（已 deprecated，由 mission_viz_node 取代）
+- [x] 新增 mission_viz_node：RViz Marker/MarkerArray 可视化，支持场地 YAML 与红蓝镜像
+- [x] 新增 `routes/red_field.yaml` 场地几何定义
+- [x] 新增 `launch/viz.launch.py` 一键启动 viz + RViz2
+- [x] 新增 `rviz/navigation_viz.rviz` RViz 配置文件
+- [ ] 根据实际比赛场地尺寸校准 `red_field.yaml` 中的 boundary/obstacles/zones 坐标
+- [ ] 编写 `routes/blue_area.yaml` 比赛任务（蓝场，配合 mirror_y:=true 使用）
 - [x] 将 `navigation.launch.py` 默认 mission 改为存在的 `routes/forward_5m.yaml`
 - [x] 新增 `routes/forward_5m.yaml`，用于底盘沿 world/body +X 前进 5 m 的最小链路测试
 - [x] 支持 mission YAML 通过 `angle_unit` / `yaw_unit` 指定 deg/rad，并由 MissionExecutor 转换为内部 rad
@@ -7,6 +14,7 @@
 - [x] 修复 `navigate` stage 起点未锁定导致 speed profiler `alpha=0` 自锁
 - [x] 为 navigate profile 增加默认 `min_speed_scale` 起步保护
 - [x] 将 `Tracker.compute_pid_cte()` 的默认参数提到 `mission_executor.py` 顶部，并将 tracker 巡航速度封顶 `0.5 m/s`
+- [x] XY 分立模式新增 I/D 参数 `k_i_x`, `k_i_y`, `k_d_x`, `k_d_y`，含积分抗饱和，默认 0.0 向后兼容
 - [ ] 上车验证世界系到机体系速度转换在非零 yaw 下的方向是否正确
 - [ ] 与 arduino_sensor_driver 联调 /state_pose2d
 - [ ] 与 base_omniwheel 联调 /local_driving

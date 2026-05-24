@@ -166,10 +166,222 @@ ros2 launch navigation navigation.launch.py mission_file:=/path/to/mission.yaml
 
 ---
 
+---
+## v0.9 — plot_node：实时底盘位置可视化（2026-05-23）
+
+### 新增节点
+
+新增 `plot_node`，用于在开发调试时实时可视化底盘在 route 上的位置与运动轨迹。
+
+### 节点说明
+
+**文件**：`navigation/plot_node.py`
+
+**用途**：订阅 `/state_pose2d` 获取当前位姿，加载 mission YAML 中的航点路线，使用 matplotlib 窗口实时绘制：
+- 航点位置（蓝色圆点 + 名称标注）
+- 导航路线（navigate stage 航点连线）
+- 当前机器人位置（红色圆点）
+- 当前机器人朝向（红色箭头，长度 0.08m 示意）
+- 运动轨迹（浅蓝色尾迹，保留最近 1000 个点）
+
+### 接口
+
+| 方向 | Topic | 类型 | 说明 |
+|---|---|---|---|
+| Sub | `/state_pose2d` | `geometry_msgs/Pose2D` | 当前位姿，theta 单位为度 |
+
+### 参数
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `mission_file` | `""` | mission YAML 文件路径，用于加载航点与路线 |
+| `update_rate_hz` | `10.0` | 绘图刷新频率（Hz） |
+
+### 超时保护
+
+plot_node 为纯可视化节点，不向底盘或其他执行器发送任何指令，因此不涉及超时安全策略。若 `/state_pose2d` 未收到数据，图形窗口保持空白，无副作用。
+
+### 启动方式
+
+```bash
+# 单独运行（不依赖其他 navigation node）
+ros2 run navigation plot_node --ros-args -p mission_file:=src/navigation/routes/forward_0.5m.yaml
+
+# 与 navigation 同时运行时，共用同一个 mission 文件
+ros2 run navigation plot_node --ros-args -p mission_file:=src/navigation/routes/red_area.yaml
+```
+
+### 依赖
+
+- `python3-matplotlib`（已在 package.xml 中声明）
+
+### 注意事项
+
+- matplotlib 使用 TkAgg 后端，需要图形桌面环境（X11/Wayland）
+- 在 headless 环境（纯 SSH 终端）中需先配置 X11 Forwarding 或使用 `export DISPLAY=:0`
+- plot_node 不发布任何 topic，仅为只读可视化工具
+
+---
+
+## v0.10 — XY 分立模式 PID 完整化：I/D 参数（2026-05-23）
+
+### 变更内容
+
+XY 分立模式（`k_p_x` / `k_p_y` 存在时启用）原先仅为纯 P 控制：
+```text
+vx_body = k_p_x * ex_body
+vy_body = k_p_y * ey_body
+```
+
+本次新增积分（I）和微分（D）项，使每轴成为完整的 PID 控制器：
+```text
+vx_body = k_p_x * e_x + k_i_x * ∫e_x + k_d_x * de_x
+vy_body = k_p_y * e_y + k_i_y * ∫e_y + k_d_y * de_y
+```
+
+### 新增参数
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `k_i_x` | 0.0 | 机体 X 轴积分增益 |
+| `k_i_y` | 0.0 | 机体 Y 轴积分增益 |
+| `k_d_x` | 0.0 | 机体 X 轴微分增益 |
+| `k_d_y` | 0.0 | 机体 Y 轴微分增益 |
+| `xy_integral_max` | 0.0 | 积分抗饱和钳位值（0 = 不钳位） |
+
+### 向后兼容
+
+- 所有新参数默认值为 0.0，不设置时行为与旧版纯 P 控制完全一致。
+- 已有 mission YAML 无需修改即可正常运行。
+
+### 积分抗饱和 (Anti-windup)
+
+- 积分项在每周期累积：`integral += error`
+- 若 `xy_integral_max > 0`，积分值被钳位在 `[-xy_integral_max, xy_integral_max]`
+- 每进入新 navigate stage 时，积分和微分状态自动清零
+
+### 调参建议
+
+依照 YAML 注释中的调参顺序：**先 P → 震荡则加 D → 有稳态误差再补 I**。
+典型起点：保持 `k_i_*` 和 `k_d_*` 为 0，仅调 P 到临界震荡，再少量加入 D 抑制震荡。
+
+### 微分实现说明
+
+- D 项使用本周期误差与上周期误差之差（`e - prev_e`），未除以 dt
+- 这意味着 kd 的实际效果与 control_rate_hz 相关，调参时需保持控制频率不变
+- 首周期 `prev_error` 初始化为当前误差，避免 D 项跳变
+
+---
+## v0.11 — mission_viz_node：RViz Marker 可视化取代 matplotlib（2026-05-24）
+
+### 变更概要
+
+新增 `mission_viz_node`，使用 RViz Marker/MarkerArray 替代 plot_node 的 matplotlib 窗口。
+同时引入场地 YAML 定义，支持红/蓝场 Y 轴镜像切换。
+
+plot_node 保留但标记为 deprecated，入口点不变。
+
+### 新增文件
+
+| 文件 | 用途 |
+|---|---|
+| `navigation/mission_viz_node.py` | 核心可视化节点 |
+| `launch/viz.launch.py` | 一键启动 viz + RViz2 |
+| `rviz/navigation_viz.rviz` | RViz 配置文件 |
+| `routes/red_field.yaml` | 红方场地几何定义 |
+
+### mission_viz_node 接口
+
+| 方向 | Topic | 类型 | 说明 |
+|---|---|---|---|
+| Sub | `/state_pose2d` | `geometry_msgs/Pose2D` | 机器人位姿，theta 单位为度 |
+| Pub | `/navigation/viz` | `visualization_msgs/MarkerArray` | 全部可视化图元 |
+
+### 参数
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `mission_file` | `""` | 任务 YAML 路径，加载航点与路线 |
+| `field_file` | `""` | 场地 YAML 路径，加载边界/障碍物/区域 |
+| `mirror_y` | `false` | Y 轴镜像翻转（蓝场设为 true） |
+| `publish_rate_hz` | `10.0` | Marker 发布频率（Hz） |
+| `pose_timeout_s` | `2.0` | 位姿超时判定（s），超时后机器人箭头消失 |
+
+### 超时保护
+
+| 超时条件 | 行为 |
+|---|---|
+| `/state_pose2d` 超过 `pose_timeout_s` 未更新 | 机器人 ARROW Marker 停止发布，RViz 中自动消失 |
+| 位姿恢复更新后 | 自动恢复发布机器人 Marker |
+
+静态 Marker（场地边界/障碍物/区域/航点/路线）的 `lifetime` 设为 0（永久保留）。
+
+### 启动方式
+
+```bash
+# 命令行
+ros2 run navigation mission_viz_node --ros-args \
+  -p mission_file:=src/navigation/routes/forward_0.5m.yaml \
+  -p field_file:=src/navigation/routes/red_field.yaml
+
+# 一键启动（含 RViz2）
+ros2 launch navigation viz.launch.py \
+  mission_file:=routes/red_area.yaml \
+  field_file:=routes/red_field.yaml
+
+# 蓝场（Y 轴镜像）
+ros2 launch navigation viz.launch.py mirror_y:=true
+```
+
+### 场地 YAML 格式
+
+```yaml
+version: 1
+field_name: "Red Field"
+frame_id: map
+
+boundary:              # 边界多边形 LINE_STRIP
+  - [0.0, 0.0]
+  - [3.0, 0.0]
+  - [3.0, 2.0]
+  - [0.0, 2.0]
+
+obstacles:             # 障碍物 CUBE 列表
+  - name: "rack"
+    center: [1.5, 0.5]
+    size: [0.5, 0.3, 0.5]
+
+zones:                 # 功能区域 半透明 CUBE
+  - name: "start_zone"
+    center: [0.3, 0.3]
+    size: [0.6, 0.6, 0.01]
+    color: [0.0, 1.0, 0.0, 0.2]
+```
+
+### 架构说明
+
+```
+[field YAML] ──→ mission_viz_node ──→ /navigation/viz (MarkerArray)
+[mission YAML] ──→        │                          ↓
+                          │                    RViz MarkerArray display
+     /state_pose2d ───────┘
+```
+
+蓝场通过 `mirror_y: true` 参数实现 Y 轴镜像翻转，无需单独的 blue_field.yaml。
+所有 Y 坐标（场地、航点、路线、机器人位姿）在发布前自动取反。
+
+### 依赖
+
+- `visualization_msgs`（已在 package.xml 中新增声明）
+
+---
 ## 更新记录
 
 | 日期 | 说明 |
 |---|---|
+| 2026-05-24 | v0.11 — plot_node → mission_viz_node，使用 RViz Marker/MarkerArray 渲染，支持场地 YAML 与红蓝镜像 |
+| 2026-05-23 | v0.10 — XY 分立模式新增 I/D 参数 (`k_i_x`, `k_i_y`, `k_d_x`, `k_d_y`)，默认 0.0 向后兼容 |
+| 2026-05-23 | v0.9 — 新增 plot_node 实时底盘位置可视化节点 |
 | 2026-05-20 | v0.8 — `routes/forward_1m.yaml` 改为 `routes/forward_5m.yaml`，目标距离从 1m 改为 5m |
 | 2026-05-20 | v0.7 — `/local_driving` 速度单位从 cm/s 改为 m/s，`_pub_driving_body()` 不再 `* 100.0` |
 | 2026-05-20 | v0.6 — 新增 `routes/forward_1m.yaml` 底盘 +X 1m 最小测试 mission |
