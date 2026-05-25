@@ -7,7 +7,6 @@ Arduino Sensor Parser Node
 - 解析带 CRC8-ATM 校验的文本协议
 - 发布原始传感器数据到 /arduino/raw_sensor_data
 - 计算并发布 Odometry 到 /state_odom
-- 一阶互补滤波器：融合 IMU 加速度计与编码器速度，改善动态位姿估计
 
 适用范围：
 - 使用 AMT103 编码器（CPR=8192）的二自由度平移平台
@@ -30,11 +29,6 @@ Arduino端坐标系转换（源头处理，ROS端无需再转换）：
 - ENC第一位 输出 e2_cnt   => REP X（向前）
 - ENC第二位 输出 -e1_cnt  => REP Y（向左）
 
-互补滤波假设：
-- IMU 安装方向与机器人本体坐标系一致（X 向前，Y 向左）
-- 地面平整，加速度计 ax/ay 的直流分量主要为运动加速度
-- 低速自转时忽略科里奥利力项 (ω×v)，简化 a_body ≈ dv/dt
-
 超时保护：
 - 若 1.0 秒内未收到新数据包，发布零速度 Odometry
 - 超时参数可通过 `~timeout_sec` 配置（默认 1.0）
@@ -50,6 +44,7 @@ import serial
 import re
 import math
 import time
+import termios
 
 
 class ArduinoSensorParser(Node):
@@ -69,6 +64,7 @@ class ArduinoSensorParser(Node):
         self.declare_parameter("serial_port", "/dev/sensor_arduino")
         self.declare_parameter("baud_rate", 115200)
         self.declare_parameter("timeout_sec", 1.0)
+        self.declare_parameter("crc_timeout_sec", 0.5)  # CRC连续失败超时，发布错误信号
         self.declare_parameter("encoder_cpr", 8192)  # AMT103: PPR=2048, CPR=2048*4
         self.declare_parameter("wheel_radius_m", 0.029)  # 编码器轮半径（米），直径58mm
         self.declare_parameter("publish_tf", True)
@@ -83,15 +79,13 @@ class ArduinoSensorParser(Node):
         self.declare_parameter("enc_x_sign", 1.0)
         self.declare_parameter("enc_y_sign", 1.0)
         self.declare_parameter("imu_yaw_offset_deg", 0.0)
-
-        # 互补滤波参数：融合加速度计与编码器速度估计
-        self.declare_parameter("fusion_enabled", True)
-        self.declare_parameter("fusion_tau", 0.5)  # 时间常数 (s)，越小越信任编码器
+        self.declare_parameter("zero_heading_on_start", True)
 
         # 读取参数
         self._port = self.get_parameter("serial_port").value
         self._baud = self.get_parameter("baud_rate").value
         self.timeout_sec = self.get_parameter("timeout_sec").value
+        self.crc_timeout_sec = self.get_parameter("crc_timeout_sec").value
         self.encoder_cpr = self.get_parameter("encoder_cpr").value
         self.wheel_radius = self.get_parameter("wheel_radius_m").value
         self.publish_tf = self.get_parameter("publish_tf").value
@@ -104,15 +98,7 @@ class ArduinoSensorParser(Node):
         self.enc_x_sign = float(self.get_parameter("enc_x_sign").value)
         self.enc_y_sign = float(self.get_parameter("enc_y_sign").value)
         self.imu_yaw_offset_deg = float(self.get_parameter("imu_yaw_offset_deg").value)
-
-        self.fusion_enabled = self.get_parameter("fusion_enabled").value
-        self.fusion_tau = self.get_parameter("fusion_tau").value
-
-        self.get_logger().info(
-            f"Complementary filter: {'enabled' if self.fusion_enabled else 'disabled'}, "
-            f"tau={self.fusion_tau:.2f}s"
-        )
-
+        self.zero_heading_on_start = bool(self.get_parameter("zero_heading_on_start").value)
         # Publisher（必须在串口之前创建，确保关闭时 publisher 生命周期 > 串口 reader）
         self.raw_pub = self.create_publisher(
             ArduinoSensorData, "/arduino/raw_sensor_data", 10
@@ -134,33 +120,51 @@ class ArduinoSensorParser(Node):
         self.odom_x = 0.0
         self.odom_y = 0.0
         self.odom_yaw = 0.0  # /state_odom 使用的 yaw，单位 rad
-        self.pose2d_theta_deg = 0.0  # /state_pose2d.theta 直接透传 IMU heading，单位 deg
+        self.pose2d_theta_deg = 0.0  # /state_pose2d.theta 为相对启动零点的 heading，单位 deg
+        self.initial_heading_rad = None
         self.last_heading = None
         self.last_recv_time = time.time()
+        self.last_crc_valid_time = time.time()  # 上次收到 CRC-valid 数据的时间
         self.last_ts_ms = None
         self.linear_vx = 0.0
         self.linear_vy = 0.0
 
-        # 互补滤波状态：融合后的本体系速度 (m/s)
-        self.vx_fused = 0.0
-        self.vy_fused = 0.0
-
         # 运行状态标志（用于安全关闭）
         self._active = True
+
+        # 串口行缓冲区：累积原始字节，按 \n 切分完整行，避免 readline() timeout 导致截断
+        self._line_buffer = b""
+
+        # CRC 统计，每 5s 汇总打印一次成功率
+        self._stat_lines = 0
+        self._stat_crc_ok = 0
+        self._stat_crc_fail = 0
+        self._stat_nocrc = 0
+        self._stat_parse_fail = 0
 
         # 定时器
         self._serial_timer = self.create_timer(0.01, self.serial_callback)  # 100Hz 读取
         self._timeout_timer = self.create_timer(0.05, self.timeout_check)   # 20Hz 超时检查
         self._reconnect_timer = self.create_timer(2.0, self.reconnect_check)  # 串口重连
+        self._stats_timer = self.create_timer(5.0, self.stats_callback)  # CRC 统计
 
         self.get_logger().info("Arduino Sensor Parser Node started")
 
     def _try_open_serial(self):
-        """尝试打开串口。成功返回 True，失败返回 False（不抛异常）。"""
+        """尝试打开串口。成功返回 True，失败返回 False（不抛异常）。
+
+        打开后禁用 HUPCL 标志位，防止 close 时 DTR 下拉导致 Arduino 复位。
+        这样 Ctrl+C 后立刻 relaunch 节点，Arduino 数据流不会中断。
+        """
         self.get_logger().info(f"Opening serial port: {self._port}")
         try:
             self.serial = serial.Serial(self._port, self._baud, timeout=0.1)
             self.serial.reset_input_buffer()
+            self._line_buffer = b""  # 清空行缓冲区，避免残留半行数据
+            # 禁 HUPCL：关闭串口时 DTR 不下拉，Arduino 不自动复位
+            attrs = termios.tcgetattr(self.serial.fd)
+            attrs[2] &= ~termios.HUPCL
+            termios.tcsetattr(self.serial.fd, termios.TCSANOW, attrs)
             self.get_logger().info(
                 f"Opened serial port: {self._port} @ {self._baud} baud"
             )
@@ -171,11 +175,26 @@ class ArduinoSensorParser(Node):
             return False
 
     def reconnect_check(self):
-        """串口重连检查：若串口已断连，定期尝试重新打开。"""
+        """
+        串口重连检查：
+        - 若 serial 对象为 None 或已关闭，尝试重新打开
+        - 若 serial.is_open 但数据已超时（幽灵 fd），强制关闭后重连
+        """
         if not self._active:
             return
+
+        now = time.time()
         if self.serial is not None and self.serial.is_open:
-            return
+            # 数据超过 timeout_sec 未到达 → 幽灵 fd，强制关闭重连
+            if (now - self.last_recv_time) > self.timeout_sec:
+                self.get_logger().error(
+                    f'No data for {now - self.last_recv_time:.1f}s on open port — '
+                    f'forcing close and reconnecting'
+                )
+                self._close_serial()
+            else:
+                return
+
         self.get_logger().info(
             f"Attempting serial reconnection to {self._port}..."
         )
@@ -188,6 +207,7 @@ class ArduinoSensorParser(Node):
         self.destroy_timer(self._serial_timer)
         self.destroy_timer(self._timeout_timer)
         self.destroy_timer(self._reconnect_timer)
+        self.destroy_timer(self._stats_timer)
         # 关闭串口
         if self.serial is not None and self.serial.is_open:
             self.serial.close()
@@ -210,15 +230,24 @@ class ArduinoSensorParser(Node):
         return crc
 
     @staticmethod
-    def wrap_angle_rad(angle: float) -> float:
+    def wrap_angle_deg(angle: float) -> float:
         """
-        将角度包到 [-pi, pi]
+        将角度包到 [-180, 180)
         """
-        return math.atan2(math.sin(angle), math.cos(angle))
+        return (angle + 180.0) % 360.0 - 180.0
 
-    @staticmethod
-    def clamp(value: float, lo: float, hi: float) -> float:
-        return max(lo, min(hi, value))
+    def _relative_heading_rad(self, absolute_yaw_rad: float) -> float:
+        """
+        将 IMU 绝对航向角转换为节点启动后的相对航向角。
+        """
+        if self.zero_heading_on_start:
+            if self.initial_heading_rad is None:
+                self.initial_heading_rad = absolute_yaw_rad
+                self.get_logger().info(
+                    f"IMU heading zeroed at {math.degrees(absolute_yaw_rad):.2f} deg"
+                )
+            return self.wrap_angle_rad(absolute_yaw_rad - self.initial_heading_rad)
+        return self.wrap_angle_rad(absolute_yaw_rad)
 
     def parse_line(self, line: str):
         """
@@ -229,6 +258,8 @@ class ArduinoSensorParser(Node):
         match_crc = re.search(r" crc=([0-9A-Fa-f]{2})$", line)
         if not match_crc:
             self.get_logger().warn(f"No CRC found: {line}")
+            self._stat_lines += 1
+            self._stat_nocrc += 1
             return None
 
         crc_hex = match_crc.group(1)
@@ -243,6 +274,8 @@ class ArduinoSensorParser(Node):
             self.get_logger().warn(
                 f"CRC mismatch: expected {crc_expected:02X}, got {crc_actual:02X}"
             )
+            self._stat_lines += 1
+            self._stat_crc_fail += 1
 
         # 解析字段（v2 协议：无 DEG= 字段）
         match = re.match(
@@ -252,6 +285,7 @@ class ArduinoSensorParser(Node):
         )
         if not match:
             self.get_logger().warn(f"Parse failed: {line}")
+            self._stat_parse_fail += 1
             return None
 
         pkg_id = int(match.group(1))
@@ -264,6 +298,11 @@ class ArduinoSensorParser(Node):
         enc_x = int(match.group(8))
         enc_y = int(match.group(9))
 
+        # CRC 校验通过 + 解析成功 → 统计
+        if crc_valid:
+            self._stat_lines += 1
+            self._stat_crc_ok += 1
+
         return {
             "pkg_id": pkg_id,
             "ts_ms": ts_ms,
@@ -274,7 +313,11 @@ class ArduinoSensorParser(Node):
 
     def serial_callback(self):
         """
-        读取串口数据并解析。若 _active=False（正在关闭）或串口未打开，直接返回。
+        缓冲式串口读取（100Hz）：
+        - 每次读走全部可用字节，追加到 _line_buffer
+        - 按 \\n 切分出完整行逐一处理
+        - 不完整的行留在缓冲区等下次补齐
+        - 避免 readline() timeout 导致的字节消费/截断问题
         """
         if not self._active:
             return
@@ -282,41 +325,76 @@ class ArduinoSensorParser(Node):
             return
 
         try:
-            if self.serial.in_waiting > 0:
-                raw = self.serial.readline()
-                # 只处理以换行符结尾的完整行，丢弃不完整的首行
-                if not raw.endswith(b"\n"):
-                    return
-                line = raw.decode("ascii", errors="ignore").strip()
-                if not line:
-                    return
+            waiting = self.serial.in_waiting
+            if waiting > 0:
+                self._line_buffer += self.serial.read(waiting)
 
-                data = self.parse_line(line)
-                if data is None:
-                    return
+                # 切分完整行（支持 \r\n 和 \n）
+                while True:
+                    idx = self._line_buffer.find(b"\n")
+                    if idx == -1:
+                        break
 
-                self.last_recv_time = time.time()
+                    line_bytes = self._line_buffer[:idx]
+                    self._line_buffer = self._line_buffer[idx + 1:]
 
-                # 发布原始数据
-                self.publish_raw_sensor(data)
+                    # 去掉行尾 \r
+                    if line_bytes.endswith(b"\r"):
+                        line_bytes = line_bytes[:-1]
 
-                # CRC 错包不进入 odometry
-                if not data["crc_valid"]:
-                    self.get_logger().warn(
-                        f"Drop packet {data['pkg_id']} from odometry because CRC is invalid"
+                    if not line_bytes:
+                        continue
+
+                    line = line_bytes.decode("ascii", errors="ignore")
+                    self._process_line(line)
+
+                # 防止缓冲区无限增长（若连续收到无换行垃圾数据）
+                if len(self._line_buffer) > 4096:
+                    self.get_logger().error(
+                        f"Line buffer overflow ({len(self._line_buffer)} bytes), "
+                        f"discarding to prevent memory leak"
                     )
-                    return
-
-                # 更新 Odometry
-                self.update_odometry(data)
+                    self._line_buffer = b""
 
         except serial.SerialException as e:
             self.get_logger().error(
                 f"Serial disconnected: {e}. Will attempt reconnection."
             )
             self._close_serial()
+        except OSError as e:
+            self.get_logger().error(
+                f"OS error on serial (device removed?): {e}. Closing and reconnecting."
+            )
+            self._close_serial()
         except Exception as e:
-            self.get_logger().error(f"Serial read error: {e}")
+            self.get_logger().error(
+                f"Unexpected serial read error: {e}. Closing and reconnecting."
+            )
+            self._close_serial()
+
+    def _process_line(self, line: str):
+        """
+        处理一条完整的文本行：解析、CRC 校验、发布 raw data、更新 odometry。
+        """
+        data = self.parse_line(line)
+        if data is None:
+            return
+
+        now = time.time()
+        self.last_recv_time = now
+
+        # 发布原始数据（无论 CRC 是否通过，供调试）
+        self.publish_raw_sensor(data)
+
+        # CRC 错包不进入 odometry
+        if not data["crc_valid"]:
+            return
+
+        # CRC 校验通过：更新时间
+        self.last_crc_valid_time = now
+
+        # 更新 Odometry
+        self.update_odometry(data)
 
     def publish_raw_sensor(self, data: dict):
         """
@@ -347,30 +425,28 @@ class ArduinoSensorParser(Node):
 
     def update_odometry(self, data: dict):
         """
-        根据编码器增量计算 Odometry，使用 IMU heading 作为朝向，
-        可选启用互补滤波器融合加速度计数据改善速度/位姿估计。
+        根据编码器增量 + IMU heading 计算 Odometry。
 
         Arduino端已完成坐标系转换（REP 103）：
         - enc_x = forward counts（向前为正，即 REP X 方向）
         - enc_y = left counts（向左为正，即 REP Y 方向）
         ROS端直接使用，无需再做坐标转换。
 
-        更精确的 2D odometry：
+        计算步骤：
         1. 使用 IMU heading 作为 yaw
         2. 用 dtheta 补偿 encoder 安装点偏移导致的旋转假位移
-        3. 【可选】一阶互补滤波：融合加速度计 (ax,ay) 与编码器速度
-        4. 用区间中值 yaw 做 body->world 旋转
-        5. 发布平面位姿与速度
+        3. 用区间中值 yaw 做 body->world 旋转
+        4. 发布平面位姿与速度
         """
         enc_x = data["enc"]["x"]  # forward counts
         enc_y = data["enc"]["y"]  # left counts
-        heading_deg = data["imu"]["hdg"] + self.imu_yaw_offset_deg
+        absolute_heading_deg = data["imu"]["hdg"] + self.imu_yaw_offset_deg
         rate_rad_s = data["imu"]["rate"]
         ts_ms = data["ts_ms"]
 
-        # IMU heading 原始输出为 [-179, 179] deg。Odometry/TF 仍按 ROS 标准使用 rad，
-        # 但 /state_pose2d.theta 面向队内二维状态接口，按需求直接发布 deg。
-        yaw_rad = math.radians(heading_deg)
+        absolute_yaw_rad = math.radians(absolute_heading_deg)
+        yaw_rad = self._relative_heading_rad(absolute_yaw_rad)
+        heading_deg = self.wrap_angle_deg(math.degrees(yaw_rad))
 
         # 初始化
         if self.last_enc_x is None:
@@ -414,34 +490,8 @@ class ArduinoSensorParser(Node):
             vx_enc = 0.0
             vy_enc = 0.0
 
-        # ---- 互补滤波：加速度计融合编码器速度 ----
-        if self.fusion_enabled and dt is not None and dt > 1e-6:
-            # IMU 加速度计 body frame 测量值 (g -> m/s^2)
-            ax_body = data["imu"]["ax"] * 9.81
-            ay_body = data["imu"]["ay"] * 9.81
-
-            # 一阶互补滤波系数：alpha = tau / (tau + dt)
-            alpha = self.fusion_tau / (self.fusion_tau + dt)
-            alpha = max(0.0, min(1.0, alpha))
-
-            # v_fused = alpha*(v_prev + a*dt) + (1-alpha)*v_encoder
-            self.vx_fused = (
-                alpha * (self.vx_fused + ax_body * dt)
-                + (1.0 - alpha) * vx_enc
-            )
-            self.vy_fused = (
-                alpha * (self.vy_fused + ay_body * dt)
-                + (1.0 - alpha) * vy_enc
-            )
-
-            # 用融合速度重建本体系位移增量，用于 world-frame 积分
-            dx_center = self.vx_fused * dt
-            dy_center = self.vy_fused * dt
-            self.linear_vx = self.vx_fused
-            self.linear_vy = self.vy_fused
-        else:
-            self.linear_vx = vx_enc
-            self.linear_vy = vy_enc
+        self.linear_vx = vx_enc
+        self.linear_vy = vy_enc
 
         # 使用区间中值姿态进行积分，精度比直接用当前 yaw 更好
         yaw_mid = self.wrap_angle_rad(self.last_heading + 0.5 * dtheta)
@@ -536,18 +586,89 @@ class ArduinoSensorParser(Node):
                 pass
             self.serial = None
 
-    def timeout_check(self):
+    def _publish_timeout_odom(self):
         """
-        超时保护：若超过 timeout_sec 未收到数据，发布零速度 Odometry
+        超时时发布零速度 Odometry，但**不发布 /state_pose2d**。
+        下游 global_navigation 因收不到 pose 更新而触发超时 → 安全停车。
+        """
+        odom = Odometry()
+        odom.header.stamp = self.get_clock().now().to_msg()
+        odom.header.frame_id = "odom"
+        odom.child_frame_id = "base_link"
+
+        odom.pose.pose.position.x = self.odom_x
+        odom.pose.pose.position.y = self.odom_y
+        odom.pose.pose.position.z = 0.0
+        odom.pose.pose.orientation = self.yaw_to_quaternion(self.odom_yaw)
+
+        odom.twist.twist.linear.x = 0.0
+        odom.twist.twist.linear.y = 0.0
+        odom.twist.twist.linear.z = 0.0
+        odom.twist.twist.angular.z = 0.0
+
+        self.odom_pub.publish(odom)
+        # 故意不调 publish_pose2d() —— 让下游感知数据中断
+
+        if self.publish_tf:
+            self.publish_transform(odom)
+
+    def stats_callback(self):
+        """
+        每 5s 打印 CRC 校验统计（INFO 级别）。
         """
         if not self._active:
             return
-        if time.time() - self.last_recv_time > self.timeout_sec:
-            self.get_logger().warn(
-                "Arduino data timeout! Publishing zero-velocity odometry.",
-                throttle_duration_sec=2.0,
-            )
-            self.publish_odometry(0.0)
+        total = self._stat_lines
+        if total == 0:
+            return
+        ok = self._stat_crc_ok
+        fail = self._stat_crc_fail
+        nocrc = self._stat_nocrc
+        parse_fail = self._stat_parse_fail
+        rate = ok / total * 100.0 if total > 0 else 0.0
+        self.get_logger().info(
+            f"CRC stats (5s): {total} lines, "
+            f"OK={ok} ({rate:.1f}%), FAIL={fail}, NoCRC={nocrc}, ParseFail={parse_fail}"
+        )
+        # 重置计数器
+        self._stat_lines = 0
+        self._stat_crc_ok = 0
+        self._stat_crc_fail = 0
+        self._stat_nocrc = 0
+        self._stat_parse_fail = 0
+
+    def timeout_check(self):
+        """
+        超时保护（每 50ms 执行）：
+        - CRC 超时（crc_timeout_sec = 0.5s）：数据可达但 CRC 校验持续失败
+        - 串口超时（timeout_sec = 1.0s）：串口无数据可达，物理断连
+
+        任意超时触发：
+        - 发布零速度 Odometry（不发布 /state_pose2d）
+        - global_navigation 收不到 pose → pose_timeout → 零驱动停车
+        """
+        if not self._active:
+            return
+
+        now = time.time()
+        crc_timed_out = (now - self.last_crc_valid_time) > self.crc_timeout_sec
+        serial_timed_out = (now - self.last_recv_time) > self.timeout_sec
+
+        if crc_timed_out or serial_timed_out:
+            if crc_timed_out and not serial_timed_out:
+                self.get_logger().error(
+                    f'CRC timeout ({self.crc_timeout_sec}s) — '
+                    f'no valid CRC for {now - self.last_crc_valid_time:.1f}s. '
+                    f'Zero-velocity, no pose published.',
+                    throttle_duration_sec=2.0,
+                )
+            else:
+                self.get_logger().error(
+                    f'Serial timeout ({self.timeout_sec}s) — '
+                    f'no data from Arduino. Zero-velocity, no pose published.',
+                    throttle_duration_sec=2.0,
+                )
+            self._publish_timeout_odom()
 
 
 def main(args=None):

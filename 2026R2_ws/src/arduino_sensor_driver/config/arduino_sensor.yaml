@@ -8,7 +8,8 @@ arduino_sensor_parser:
     baud_rate: 115200                  # Must match Arduino Serial.begin()
     
     # Timeout protection
-    timeout_sec: 1.0                   # Publish zero-velocity odom if no data for 1 second
+    timeout_sec: 1.0                   # Publish zero-velocity odom if serial is silent for 1 second
+    crc_timeout_sec: 0.5               # Publish sensor error if no CRC-valid packet for 0.5 second
     
     # Encoder parameters (AMT103)
     encoder_cpr: 8192                  # Counts Per Revolution (PPR=2048, CPR=PPR*4)
@@ -21,10 +22,7 @@ arduino_sensor_parser:
     enc_x_sign: 1.0                   # Set to -1.0 if encoder direction is reversed
     enc_y_sign: 1.0
     imu_yaw_offset_deg: 0.0           # IMU yaw zero-offset in degrees
-
-    # Complementary filter: fuse accelerometer with encoder velocity
-    fusion_enabled: true               # Enable 1st-order complementary filter
-    fusion_tau: 0.5                    # Time constant (s), smaller = trust encoder more; fc = 1/(2*pi*tau)
+    zero_heading_on_start: true       # First valid IMU heading after node startup becomes /state_pose2d theta=0
 
     # Encoder positions relative to robot rotation center, in meters.
     # Robot frame: +X forward, +Y left.

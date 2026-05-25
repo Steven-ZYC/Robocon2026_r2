@@ -30,6 +30,12 @@ def generate_launch_description():
         description='IMU yaw offset in degrees (positive = CCW). Calibrates IMU chip misalignment relative to robot forward direction.'
     )
 
+    zero_heading_on_start_arg = DeclareLaunchArgument(
+        'zero_heading_on_start',
+        default_value='true',
+        description='Use the first valid IMU heading after node startup as yaw zero for /state_pose2d and /state_odom.'
+    )
+
     # Arduino sensor parser node
     arduino_node = Node(
         package='arduino_sensor_driver',
@@ -44,6 +50,7 @@ def generate_launch_description():
             'wheel_radius_m': 0.029,  # 29mm radius (58mm diameter encoder wheel)
             'publish_tf': LaunchConfiguration('publish_tf'),
             'imu_yaw_offset_deg': LaunchConfiguration('imu_yaw_offset_deg'),
+            'zero_heading_on_start': LaunchConfiguration('zero_heading_on_start'),
         }]
     )
 
@@ -52,5 +59,6 @@ def generate_launch_description():
         baud_rate_arg,
         publish_tf_arg,
         imu_yaw_offset_arg,
+        zero_heading_on_start_arg,
         arduino_node,
     ])

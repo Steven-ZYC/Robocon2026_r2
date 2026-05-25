@@ -2,6 +2,33 @@
 
 ## 项目进度（Changelog）
 
+### v0.2.11 (2026-05-24)
+- ✅ **修复串口读取 readline() timeout 导致数据截断（关键修复）**
+  - 根因：`readline()` 配合 `timeout=0.1s` 在 USB 串口分块传输时可能超时返回不完整行。代码虽丢弃该行，但被消费的字节不可恢复，导致后续行开头丢失（"ID=... T=..." 被吞掉），表现为 CRC mismatch + Parse failed
+  - 修复：`serial_callback()` 改为缓冲式读取：
+    - 每次 `serial.read(in_waiting)` 读走全部可用字节，追加到 `_line_buffer`
+    - 按 `\n` 切分完整行（支持 `\r\n`），不完整行留在缓冲区等下次补齐
+    - 无 timeout 依赖，与诊断脚本 `arduino_serial_test.sh` 的 `cat` + split 方式等效
+  - 新增 `_process_line()` 方法，将解析/发布/odometry 逻辑从 callback 中分离
+  - 新增 4096 字节缓冲区溢出保护
+  - 重连时自动清空 `_line_buffer`
+
+### v0.2.10 (2026-05-24)
+- ✅ **修复串口重连幽灵fd卡死问题（关键修复）**
+  - `serial_callback` 中 `except Exception`（含 OSError）现在也会调用 `_close_serial()`，不再只处理 `SerialException`
+  - `reconnect_check()` 新增数据新鲜度检测：即使 `serial.is_open=True`，若数据超时 `timeout_sec` 未到达，判定为幽灵fd并强制关闭重连
+- ✅ **修复 Ctrl+C 后 relaunch 节点不发 pose 问题（Arduino DTR 复位）**
+  - 根因：pyserial 关闭串口时 DTR 下拉 → Arduino Mega 2560 自动复位 → 2s bootloader 无数据
+  - 修复：`_try_open_serial()` 打开串口后，通过 termios 清除 HUPCL 标志位
+  - 效果：关闭串口时 DTR 不下拉，Arduino 不复位，Ctrl+C 后立刻 relaunch 数据流零中断
+
+### v0.2.9 (2026-05-23)
+- ✅ **修正互补滤波公式权重方向（关键修复）**
+  - 原公式 `v_fused = α*(v_prev + a*dt) + (1-α)*v_encoder` 权重方向反了，导致编码器几乎无影响力
+  - 正确公式 `v_fused = α*v_encoder + (1-α)*(v_prev + a*dt)`，编码器为核心参考，加速度计仅改善短时动态
+  - 静止时不再因加速度计噪声/偏置导致 Pose2D xy 漂移
+  - `fusion_tau` 注释同步更新：tau 越大越信任编码器（越低漂移、越低响应）
+
 ### v0.2.8 (2026-05-23)
 - ✅ **串口断连自动重连**
   - 串口初始化失败时不再 raise 终止节点，改为设置 `serial=None` 并定期重试
@@ -480,6 +507,30 @@ v_fused[k] = α * (v_fused[k-1] + a_imu[k] * dt) + (1-α) * v_encoder[k]
 | 地面颠簸、振动大 | 0.8 ~ 1.0s | 加速度计噪声大，多信任编码器 |
 | 完全禁用 | `fusion_enabled:=false` | 回退到纯编码器积分 |
 
+#### v0.2.9 修正：公式权重方向反转
+
+v0.2.7 的公式存在权重方向错误，已在 v0.2.9 修正。
+
+**原公式（错误）**：
+```
+v_fused = α * (v_prev + a*dt) + (1-α) * v_encoder
+```
+其中 α = τ/(τ+dt)，以 τ=0.5s, dt≈0.01s 为例，α≈0.98。这意味着 98% 权重给了加速度计积分，编码器仅占 2%。加速度计静止时的微小偏置（如 0.01g ≈ 0.1m/s²）被积分后产生持续速度漂移，编码器几乎没有机会纠正。
+
+**修正后公式（正确）**：
+```
+v_fused = α * v_encoder + (1-α) * (v_prev + a*dt)
+```
+编码器获得 α（≈98%）的高权重作为长期无漂移参考，加速度计仅获得 (1-α)（≈2%）的低权重用于改善短时动态响应。静止时编码器速度为零，融合速度迅速收敛到零，不再漂移。
+
+**频率特性**（修正后）：
+- **α → 1**（tau 大 / dt 小）：`v_fused ≈ v_encoder`，信任编码器，适合稳态
+- **α → 0**（tau 小 / dt 大）：`v_fused ≈ v_prev + a*dt`，信任加速度计，适合捕捉快速动态
+
+**参数语义变更**：
+- tau 越大 → 越信任编码器（低漂移，响应慢）
+- tau 越小 → 越信任加速度计（响应快，可能漂移）
+
 ---
 
 ### 输出设计说明
@@ -490,22 +541,21 @@ v_fused[k] = α * (v_fused[k-1] + a_imu[k] * dt) + (1-α) * v_encoder[k]
 
 ---
 
-## 超时保护逻辑
+## 超时保护与串口重连
 
-### 触发条件
-- 连续 `timeout_sec` 秒（默认 1.0s）未收到新数据包
+### 数据超时
+- **触发条件**：连续 `timeout_sec` 秒（默认 1.0s）未收到新数据包
+- **超时行为**：发布零速度 Odometry（位置不变，`linear.x/y/z = 0.0 m/s`），不发布 `/state_pose2d`
 
-### 超时行为
-1. 打印 WARNING 日志：`Arduino data timeout! Publishing zero-velocity odometry.`
-2. 发布零速度 Odometry（位置保持不变，`linear.x/y/z = 0.0 m/s`，`angular.z = 0.0 rad/s`）
-3. 不停止 node，继续等待数据恢复
+### CRC 超时
+- **触发条件**：连续 `crc_timeout_sec` 秒（默认 0.5s）未收到 CRC 校验通过的数据包
+- **超时行为**：同数据超时，发布零速度 Odometry
 
-### 参数配置
-```yaml
-arduino_sensor_parser:
-  ros__parameters:
-    timeout_sec: 2.0  # 修改为 2 秒超时
-```
+### 串口断连自动重连（v0.2.8 引入，v0.2.10 修复）
+- **定时重连**：每 2s 检查一次串口状态，若已断开则尝试重连
+- **幽灵 fd 检测**（v0.2.10）：即使 pyserial 报告 `is_open=True`，若数据超时 `timeout_sec` 仍未到达，判定为 USB 拔除后残留的幽灵文件描述符，强制关闭并重连
+- **全异常路径关闭**（v0.2.10）：`serial_callback` 中 `SerialException`、`OSError`、通用 `Exception` 三条异常路径均会关闭串口并触发重连机制
+- **重连策略**：尝试 `_try_open_serial()`，成功则恢复数据流；失败则等待下一轮重连定时器（2s 间隔）
 
 ---
 

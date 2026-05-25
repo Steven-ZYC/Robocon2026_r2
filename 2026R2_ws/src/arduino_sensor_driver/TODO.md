@@ -1,5 +1,26 @@
 # TODO List - arduino_sensor_driver
 
+## v0.2.11 已完成 (2026-05-24)
+- [x] **修复串口读取 readline() timeout 导致数据截断（关键修复）**
+  - `readline()` + `timeout=0.1s` 在 USB 串口分块传输时超时返回不完整行，字节被消费后后续行丢失前缀
+  - 改为缓冲式读取：`serial.read(in_waiting)` → `_line_buffer` → 按 `\n` 切分完整行
+  - 提取 `_process_line()` 方法，分离解析逻辑
+  - 重连时自动清空缓冲区，新增 4096 字节溢出保护
+
+## v0.2.10 已完成 (2026-05-24)
+- [x] **修复串口重连幽灵fd卡死问题（关键修复）**
+  - `serial_callback` 中所有异常路径（`SerialException`、`OSError`、`Exception`）均调用 `_close_serial()`
+  - `reconnect_check()` 增加数据新鲜度检测：`is_open=True` 但超时无数据 → 强制关闭重连
+- [x] **修复 Ctrl+C 后 relaunch 不发 pose（Arduino DTR 复位）**
+  - 串口关闭时 DTR 下拉导致 Mega 2560 自动复位 → 2s bootloader 无数据
+  - `_try_open_serial()` 打开后清除 termios HUPCL 标志位，close 时 DTR 不下拉
+
+## v0.2.9 已完成 (2026-05-23)
+- [x] **修正互补滤波公式权重方向（关键修复）**
+  - 原公式权重反了，编码器为主（高权重），加速度计为辅（低权重）
+  - 静止时不再因加速度计偏置导致 Pose2D xy 漂移
+  - 更新 `fusion_tau` 参数注释与 README 互补滤波章节
+
 ## v0.2.8 已完成 (2026-05-23)
 - [x] **串口断连自动重连**：`_try_open_serial()` 失败不再 raise，改为 `serial=None` + 定时重连
 - [x] **运行时串口异常恢复**：`serial_callback` 捕获 `SerialException` 后自动关闭串口并触发重连
@@ -65,6 +86,7 @@
 - [ ] **速度计算**：在 Odometry 中加入线速度（vx, vy）估算（基于编码器增量与时间差）
 - [x] **异常处理增强**：
   - [x] 串口断开自动重连
+  - [x] 幽灵fd检测（is_open=True 但数据超时 → 强制关闭重连）
   - [ ] 处理数据包乱序或丢失
   - [ ] 检测编码器计数溢出（超过 int64 范围）
 
