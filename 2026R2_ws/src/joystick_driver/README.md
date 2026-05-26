@@ -101,11 +101,42 @@ ros2 run pneumatics pneu_ctrl_node
 
 ---
 
+## v6 双摇杆设备绑定 (2026-05-24)
+
+项目现有两个 8BitDo Ultimate 手柄，通过颜色区分并绑定固定 symlink：
+
+| 颜色 | 型号 | VID:PID | Symlink |
+|------|------|---------|---------|
+| 白 | 8BitDo Ultimate Wireless Controller for PC (2.4GHz) | `2dc8:3106` | `/dev/input/joystick_white` |
+| 黑 | 8BitDo Ultimate 3mode Xbox | `2dc8:200f` | `/dev/input/joystick_black` |
+
+规则已写入 `99-robocon-r2.rules`（项目根目录），安装方式：
+
+```bash
+sudo cp 99-robocon-r2.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+启动时指定对应手柄：
+
+```bash
+# 白色手柄
+ros2 run joystick_driver joystick_node --ros-args -p device_path:=/dev/input/joystick_white
+
+# 黑色手柄
+ros2 run joystick_driver joystick_node --ros-args -p device_path:=/dev/input/joystick_black
+```
+
+---
+
 ## v3 设备绑定与系统集成 (2026-05-17)
 
 ### 手柄设备绑定（重要）
 
 8BitDo 接收器在系统上会创建 `/dev/input/eventN`，但 **N 值不固定**（热插拔、开机顺序都会影响）。节点已支持按名称自动发现（见 v2），但为了更可靠的设备绑定，推荐配置 udev 规则创建固定 symlink。
+
+> **v6 更新**: udev 规则已整合进项目根目录 `99-robocon-r2.rules`，白色手柄 → `joystick_white`，黑色手柄 → `joystick_black`。
 
 #### 创建 udev 规则
 
@@ -191,7 +222,7 @@ cat /dev/input/event5   # 按手柄按键应该有乱码输出
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `device_name` | string | `"8BitDo"` | 设备名关键字，用于自动匹配 (大小写不敏感) |
-| `device_path` | string | `""` | 精确路径覆盖，为空时启用自动发现 |
+| `device_path` | string | `"/dev/input/joystick_black"` | 精确路径覆盖 (默认为黑色手柄) |
 
 ### 设备发现逻辑
 
@@ -199,14 +230,16 @@ cat /dev/input/event5   # 按手柄按键应该有乱码输出
 2. 否则遍历 `/dev/input/event*`，匹配名称中包含 `device_name` 关键字的设备
 3. 未找到设备时每 2 秒打印可用设备列表并重试
 
+> **v6 更新**: 默认路径已设为 `/dev/input/joystick_black`，配合 udev 规则使用黑色手柄。
+
 ### 启动示例
 
 ```bash
-# 默认自动发现 (匹配 "8BitDo")
+# 默认使用黑色手柄 (joystick_black)
 ros2 run joystick_driver joystick_node
 
-# 精确指定路径
-ros2 run joystick_driver joystick_node --ros-args -p device_path:=/dev/input/event5
+# 切换为白色手柄
+ros2 run joystick_driver joystick_node --ros-args -p device_path:=/dev/input/joystick_white
 
 # 匹配其他品牌手柄
 ros2 run joystick_driver joystick_node --ros-args -p device_name:="Xbox"

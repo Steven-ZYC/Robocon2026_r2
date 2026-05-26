@@ -1,7 +1,7 @@
 # joystick_driver TODO
 
 ## 待完成
-- [ ] 添加 udev 规则，创建固定 symlink (如 /dev/input/8bitdo_joystick)，彻底解决设备路径变动问题
+- [x] 添加 udev 规则，创建固定 symlink (白色手柄 joystick_white / 黑色手柄 joystick_black)，彻底解决设备路径变动问题
 - [x] 摇杆校零功能 (deadzone / calibration) — deadzone 在 v4 实现，轴归一化在 v5 实现
 - [ ] 适配 8BitDo Ultimate 的 LT/RT 模拟量 (确认 ABS_Z/ABS_RZ 映射是否正确)
 

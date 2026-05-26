@@ -2,11 +2,11 @@
 """
 joystick_publisher_node: 通过 evdev 读取游戏手柄输入并发布为 joystick_msgs/Joystick 消息。
 
-适用硬件: 8BitDo Ultimate Wireless Controller for PC (2.4GHz) 及兼容手柄
+适用硬件: 8BitDo Ultimate 系列手柄
 发布 topic: joystick_input (joystick_msgs/Joystick), 20 Hz
 
-自动发现: 默认通过设备名称模糊匹配 (device_name="8BitDo") 查找设备，
-免去每次指定 /dev/input/eventN 的麻烦。
+默认设备: /dev/input/joystick_black (黑色手柄, PID=200f)
+可通过 device_path 参数切换为 joystick_white (白色手柄, PID=3106)。
 """
 
 import glob
@@ -69,8 +69,8 @@ class JoystickPublisher(Node):
         # --- 参数声明 ---
         # device_name: 用于自动发现时的设备名称关键字 (大小写不敏感)
         self.declare_parameter('device_name', '8BitDo')
-        # device_path: 精确路径覆盖 (为空时启用自动发现)
-        self.declare_parameter('device_path', '')
+        # device_path: 精确路径覆盖 (默认为黑色手柄 joystick_black)
+        self.declare_parameter('device_path', '/dev/input/joystick_black')
 
         self._device_name = self.get_parameter('device_name').get_parameter_value().string_value
         self._device_path = self.get_parameter('device_path').get_parameter_value().string_value

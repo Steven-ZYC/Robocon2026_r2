@@ -16,12 +16,16 @@ joystick_control_node: 手柄直驱控制节点
 - joystick_input (joystick_msgs/Joystick): 手柄原始输入
 
 控制映射 (默认):
-- 左摇杆:     底盘平移 — 方向 = 摇杆角度, 速度 ∝ 摇杆幅度
-- 右摇杆 rx:  底盘旋转 — 角速度 ∝ 摇杆偏移
+- 左摇杆:     底盘平移 — 方向 = 摇杆角度, 速度 ∝ 摇杆幅度^2 (幂函数曲线)
+- 右摇杆 rx:  底盘旋转 — 角速度 ∝ 摇杆偏移^2
 - l1/r1:      关节 0 正反转 (按住移动，松开停止)
 - l2/r2:      关节 1 模拟量控制 (扳机行程映射速度)
 - A/B/X:      气动切换 — A=夹爪, B=升降, X=止动 (按一次切换)
 - start:      全部归零 / 安全停止
+
+速度平滑:
+- 空间曲线: speed ∝ stick_mag ** speed_curve_power (默认 2.0, 低段细腻)
+- 时间平滑: EMA 低通滤波 (smoothing_alpha=0.6, 越小越平滑, 1=无平滑)
 """
 
 import math
@@ -41,13 +45,16 @@ STICK_RAW_HALF = 32768.0
 TRIGGER_RAW_MAX = 255.0
 
 # 默认参数
-DEFAULT_MAX_SPEED_CM_S = 60.0
-DEFAULT_MAX_OMEGA_RAD_S = 2.0
+DEFAULT_MAX_SPEED_CM_S = 8.0        # 最高平移速度 (cm/s)
+DEFAULT_MAX_OMEGA_RAD_S = 1.5       # 最高旋转角速度 (rad/s)
 DEFAULT_JOINT_SPEED_RAD_S = 3.0
-DEFAULT_STICK_DEADZONE = 0.08
+DEFAULT_STICK_DEADZONE = 0.05        # 摇杆死区 (归一化值)
 DEFAULT_TRIGGER_DEADZONE = 0.05
 DEFAULT_PUBLISH_RATE_HZ = 50.0
 DEFAULT_INPUT_TIMEOUT_S = 0.5
+DEFAULT_SPEED_CURVE_POWER = 2.0     # 速度曲线幂次 (>1 低段细腻, 1=线性)
+DEFAULT_SMOOTHING_ALPHA = 0.6       # 速度平滑系数 (0~1, 越小越平滑, 1=无平滑)
+DEFAULT_SPEED_FLOOR_CM_S = 0.01     # 过死区后最低速度 (cm/s), =0.0001 m/s
 
 
 def norm_stick(raw):
@@ -95,6 +102,19 @@ class JoystickControlNode(Node):
         self.input_timeout_s = float(
             self.declare_parameter("input_timeout_s", DEFAULT_INPUT_TIMEOUT_S).value
         )
+        self.speed_curve_power = float(
+            self.declare_parameter("speed_curve_power", DEFAULT_SPEED_CURVE_POWER).value
+        )
+        self.smoothing_alpha = float(
+            self.declare_parameter("smoothing_alpha", DEFAULT_SMOOTHING_ALPHA).value
+        )
+        self.speed_floor_cm_s = float(
+            self.declare_parameter("speed_floor_cm_s", DEFAULT_SPEED_FLOOR_CM_S).value
+        )
+
+        # ---- 平滑状态 (EMA 滤波器内部状态) ----
+        self._smooth_speed = 0.0
+        self._smooth_omega = 0.0
 
         # ---- 最新手柄状态缓存 ----
         self._latest_joy = None          # Joystick msg
@@ -128,6 +148,8 @@ class JoystickControlNode(Node):
             f"JoystickControlNode ready — "
             f"max_speed={self.max_speed_cm_s}cm/s, "
             f"max_omega={self.max_omega_rad_s}rad/s, "
+            f"curve_power={self.speed_curve_power}, "
+            f"smoothing_alpha={self.smoothing_alpha}, "
             f"timeout={self.input_timeout_s}s"
         )
 
@@ -158,6 +180,8 @@ class JoystickControlNode(Node):
                 self._joy_timeout_warned = True
             self._pub_zero_driving()
             self._pub_zero_joints()
+            self._smooth_speed = 0.0
+            self._smooth_omega = 0.0
             return
 
         joy = self._latest_joy
@@ -173,6 +197,8 @@ class JoystickControlNode(Node):
             self._pub_zero_joints()
             self._pneu_state = [0.0, 0.0, 0.0]
             self._pub_pneu()
+            self._smooth_speed = 0.0
+            self._smooth_omega = 0.0
             return
 
         # ---- 底盘: 左摇杆 → direction + speed; 右摇杆 rx → omega ----
@@ -182,11 +208,25 @@ class JoystickControlNode(Node):
 
         # 方向: atan2(-lx_norm, -ly_norm) → 推杆向前=0°, 向右=-90° (REP103 +y 为左)
         direction_rad = math.atan2(-lx_norm, -ly_norm)
-        stick_mag = math.sqrt(lx_norm ** 2 + ly_norm ** 2)
-        speed_cm_s = min(stick_mag, 1.0) * self.max_speed_cm_s
-        omega = rx_norm * self.max_omega_rad_s
+        stick_mag = min(math.sqrt(lx_norm ** 2 + ly_norm ** 2), 1.0)
 
-        self._pub_driving(direction_rad, speed_cm_s, omega)
+        # 速度曲线: magnitude ** power，摇杆小幅度更细腻
+        curved_mag = stick_mag ** self.speed_curve_power
+        omega_raw = math.copysign(abs(rx_norm) ** self.speed_curve_power, rx_norm)
+
+        raw_speed = curved_mag * self.max_speed_cm_s
+        raw_omega = omega_raw * self.max_omega_rad_s
+
+        # 速度下限: 过死区后至少输出 speed_floor_cm_s (0.0001 m/s)
+        if stick_mag > 0.0 and raw_speed < self.speed_floor_cm_s:
+            raw_speed = self.speed_floor_cm_s
+
+        # EMA 平滑滤波 (时间平滑)
+        a = self.smoothing_alpha
+        self._smooth_speed += a * (raw_speed - self._smooth_speed)
+        self._smooth_omega += a * (raw_omega - self._smooth_omega)
+
+        self._pub_driving(direction_rad, self._smooth_speed, self._smooth_omega)
 
         # ---- 关节 0: l1 / r1 按住控制 ----
         joint_0_speed = 0.0
