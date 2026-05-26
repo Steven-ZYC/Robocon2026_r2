@@ -236,6 +236,13 @@ class ArduinoSensorParser(Node):
         """
         return (angle + 180.0) % 360.0 - 180.0
 
+    @staticmethod
+    def wrap_angle_rad(angle: float) -> float:
+        """
+        将弧度角包到 [-pi, pi]，用于 IMU heading 跨 ±180° 时保持 dtheta 连续。
+        """
+        return math.atan2(math.sin(angle), math.cos(angle))
+
     def _relative_heading_rad(self, absolute_yaw_rad: float) -> float:
         """
         将 IMU 绝对航向角转换为节点启动后的相对航向角。
