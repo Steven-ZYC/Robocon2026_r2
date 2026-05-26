@@ -134,4 +134,80 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 
 | 日期 | 说明 |
 |---|---|
+| 2026-05-26 | v0.2 — 改为 chassis/arm 分组初始化，区域内整组使能，区域之间独立运行 |
 | 2026-05-14 | v0.1 — 从 base_omniwheel_r2_600 分离，新增 per-motor 模式支持 |
+
+## v0.2 — 按区域独立使能 Damiao 电机组（2026-05-26）
+
+### 设计目标
+
+`damiao_ctrl` 不再要求 1-6 号电机全部在线才能启动。节点仍然独占一个 USB-CAN 串口，但内部按区域管理电机：
+
+- `chassis`：motor 1,2,3,4，VEL 模式
+- `arm`：motor 5,6，POS_VEL 模式
+
+每个区域内部必须整组初始化成功；区域之间互不强制依赖。只接底盘 4 个达妙时，`chassis` 区域可以 active；只接 arm 2 个达妙时，`arm` 区域可以 active。
+
+### 使能规则
+
+- `chassis` 区域必须 1-4 号电机全部完成 CTRL_MODE 确认、零位设置、enable 验证后才 active。
+- `arm` 区域必须 5-6 号电机全部完成 CTRL_MODE 确认、零位设置、enable 验证后才 active。
+- 如果某一区域初始化失败，该区域命令会被忽略，另一区域仍可继续工作。
+- 若运行中某一区域有电机反馈为 disabled，下一条该区域控制命令会重新使能整组电机，而不是只补使能单个电机。
+
+### Topic
+
+| 区域 | Topic | 类型 | 说明 |
+|---|---|---|---|
+| chassis | `base/damiao_control` | `std_msgs/Float32MultiArray` | `[motor_id, mode, speed, position?]` |
+| arm | `arm/damiao_control` | `std_msgs/Float32MultiArray` | `[motor_id, mode, speed, position?]` |
+| feedback | `damiao_feedback` | `std_msgs/Float32MultiArray` | 默认发布 motor 5 状态 `[motor_id, q_rad, dq_rad_s, tau_Nm, enabled]` |
+
+### 参数
+
+| 参数 | 默认值 | 单位 | 作用 |
+|---|---|---|---|
+| `device_id` | `/dev/damiao_can` | - | HDSC USB-CAN 串口设备路径 |
+| `chassis_motor_ids` | `[1, 2, 3, 4]` | - | chassis 区域电机 ID，必须整组在线才 active |
+| `chassis_motor_modes` | `[3, 3, 3, 3]` | - | chassis 电机 CTRL_MODE，3=VEL |
+| `chassis_control_topic` | `base/damiao_control` | - | chassis 低层控制 topic |
+| `arm_motor_ids` | `[5, 6]` | - | arm 区域电机 ID，必须整组在线才 active |
+| `arm_motor_modes` | `[2, 2]` | - | arm 电机 CTRL_MODE，2=POS_VEL |
+| `arm_control_topic` | `arm/damiao_control` | - | arm 低层控制 topic |
+| `feedback_topic` | `damiao_feedback` | - | 电机状态反馈 topic |
+| `feedback_motor_id` | `5` | - | 默认发布反馈的电机 ID |
+| `command_timeout` | `0.5` | s | 分组 watchdog 超时时间 |
+
+### 超时保护
+
+`command_timeout` 默认 `0.5s`。每个区域独立计时：
+
+- `base/damiao_control` 超时：只停止 chassis 1-4 号电机。
+- `arm/damiao_control` 超时：只停止 arm 5-6 号电机。
+- 一个区域超时不会停止另一个区域。
+- VEL 电机超时后发送零速度；POS_VEL 电机超时后在当前位置保持并发送零速度。
+
+### 最小可运行示例
+
+```bash
+ros2 launch damiao_ctrl damiao_ctrl.launch.py
+```
+
+单独测试底盘：
+
+```bash
+ros2 topic pub /base/damiao_control std_msgs/Float32MultiArray "data: [1, 3, 2.0]"
+```
+
+单独测试 arm：
+
+```bash
+ros2 topic pub /arm/damiao_control std_msgs/Float32MultiArray "data: [5, 2, 1.5, 1.0]"
+```
+
+### 调试方式与常见问题
+
+- 如果只接底盘 1-4 号电机，日志中允许出现 `arm group INACTIVE`，不影响 `base/damiao_control`。
+- 如果只接 arm 5-6 号电机，日志中允许出现 `chassis group INACTIVE`，不影响 `arm/damiao_control`。
+- 如果某个区域少一个电机，该区域会整体 inactive；这是为了避免底盘或 arm 只有部分电机使能导致机构受力异常。
+- 若两个区域都 inactive，节点会按重连间隔重新尝试初始化。
