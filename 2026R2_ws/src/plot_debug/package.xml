@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>plot_debug</name>
+  <version>0.1.0</version>
+  <description>Real-time matplotlib visualisation for debugging robot state, driving commands and motor control topics.</description>
+  <maintainer email="yanczhang8@gmail.com">Steven Zhang Yancheng</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>python3-matplotlib</depend>
+  <depend>python3-numpy</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
