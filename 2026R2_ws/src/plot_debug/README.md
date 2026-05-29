@@ -1,6 +1,6 @@
 # plot_debug
 
-> 基于 matplotlib 的实时可视化调试工具包。同时订阅 `/state_pose2d`, `/local_driving`, `base/damiao_control` 三个 topic，以多窗口折线图辅助底盘运动调试。
+> 基于 matplotlib 的实时可视化调试工具包。同时订阅 `/state_pose2d`, `/global_nav/target_pose`, `/local_driving`, `base/damiao_control` 四个 topic，以多窗口折线图辅助底盘运动调试。
 
 ---
 
@@ -16,7 +16,7 @@
 
 | Node | 职责 |
 |---|---|
-| `plot_debug_node` | 订阅 3 个 topic，缓冲历史数据，在 3 个独立窗口中绘制实时折线图 |
+| `plot_debug_node` | 订阅 4 个 topic，缓冲历史数据，在单一窗口中绘制实时折线图，退出时自动保存 CSV |
 
 ---
 
@@ -26,15 +26,17 @@
 
 | Topic | 消息类型 | 数据含义 |
 |---|---|---|
-| `/state_pose2d` | `geometry_msgs/Pose2D` | 机器人位姿 x(m), y(m), theta(deg) |
+| `/state_pose2d` | `geometry_msgs/Pose2D` | 机器人实际位姿 x(m), y(m), theta(deg) |
+| `/global_nav/target_pose` | `geometry_msgs/Pose2D` | 导航目标位姿 x(m), y(m), theta(deg) |
 | `/local_driving` | `std_msgs/Float32MultiArray` | [direction_rad, speed_m/s, rotation_rad/s] |
-| `base/damiao_control` | `std_msgs/Float32MultiArray` | [m1_id, m1_mode, m1_speed, m1_pos, m2_...] 共 4 电机 × 4 字段 |
+| `base/damiao_control` | `std_msgs/Float32MultiArray` | [motor_id, mode, speed, position?] 逐电机发布 |
 
 ### 窗口布局
 
 1. **Pose2D State**：2D 轨迹图（含朝向箭头） + X/Y 时序子图
-2. **Local Driving**：方向 / 速度 / 旋转速率 三条时序曲线
-3. **Damiao Motor Control**：4 电机速度 + 4 电机位置时序（来自控制指令 `base/damiao_control`，非传感器反馈）
+2. **Target Tracking Error**：X 误差 / Y 误差 / Yaw 误差 三条时序曲线（target - actual）
+3. **Local Driving**：方向 / 速度 / 旋转速率 三条时序曲线
+4. **Damiao Motor Control**：4 电机速度 + 4 电机位置时序（来自控制指令 `base/damiao_control`，非传感器反馈）
 
 ### 启动方式
 
@@ -108,3 +110,45 @@ ros2 run plot_debug plot_debug_node --ros-args -p show_damiao:=false
 ### v1 — 初始设计
 
 > 基于 matplotlib 的实时可视化调试工具包。同时订阅 `/state_pose2d`, `/local_driving`, `base/damiao_control` 三个 topic，以多窗口折线图辅助底盘运动调试。
+
+### v3 — 导航追踪误差 + 大历史窗口 + CSV 自动保存
+
+**新增订阅：**
+- `/global_nav/target_pose`（`Pose2D`）：来自 `global_navigation_node` 的当前导航目标位姿
+
+**新增图表行：Target Tracking Error**
+- X Error = target_x - actual_x（米）
+- Y Error = target_y - actual_y（米）
+- Yaw Error = target_theta - actual_theta（度，折叠到 [-180,180]）
+- 每行含零轴虚线，便于判断收敛情况
+- 仅当 `/global_nav/target_pose` 有数据时才开始记录误差
+
+**新增 ROS2 参数：**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `show_target_error` | bool | True | 是否显示追踪误差图表行 |
+| `save_dir` | str | `./plot_debug_logs` | CSV 数据保存目录 |
+
+**参数默认值变更：**
+- `max_history`：200 → 600（60 秒历史 @ 10 Hz，便于观察更长时段的趋势）
+
+**新增 CSV 自动保存：**
+- 节点退出时（关闭 matplotlib 窗口或 Ctrl+C），自动将全部 buffer 数据写入 CSV
+- 保存目录通过 `save_dir` 参数配置，自动创建（如不存在）
+- 每个 topic 一个 CSV 文件，文件名格式：`plot_debug_YYYYMMDD_HHMMSS_<topic>.csv`
+- CSV 列说明：
+
+| CSV 文件 | 列 |
+|---|---|
+| `*_pose2d.csv` | t_s, x_m, y_m, theta_deg |
+| `*_target.csv` | t_s, x_m, y_m, theta_deg |
+| `*_error.csv` | t_s, error_x_m, error_y_m, error_theta_deg |
+| `*_driving.csv` | t_s, direction_rad, speed_mps, rotation_radps |
+| `*_damiao.csv` | t_s, m1_speed, m1_pos, m2_speed, m2_pos, m3_speed, m3_pos, m4_speed, m4_pos |
+
+**使用示例：**
+```bash
+ros2 run plot_debug plot_debug_node --ros-args -p show_damiao:=false
+ros2 run plot_debug plot_debug_node --ros-args -p max_history:=1000 -p save_dir:=~/my_logs
+```
