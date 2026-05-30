@@ -13,6 +13,7 @@ Publishes:
 - arm/joint_command (Float32MultiArray):
     Triplet format: [motor_id, pos_rad, speed_rad_s, ...] → arm_ctrl_node
 - arm/pneu_command (Float32MultiArray): arm pneumatic targets → arm_ctrl_node
+- /global_nav/target_pose (Pose2D): active navigation target for plot/debug tools
 """
 
 import math
@@ -54,12 +55,14 @@ class GlobalNavigationNode(Node):
         self.cmd_pub = self.create_publisher(Float32MultiArray, '/local_driving', 10)
         self.joint_pub = self.create_publisher(Float32MultiArray, 'arm/joint_command', 10)
         self.pneu_pub = self.create_publisher(Float32MultiArray, 'arm/pneu_command', 10)
+        self.target_pose_pub = self.create_publisher(Pose2D, '/global_nav/target_pose', 10)
         self.status_pub = self.create_publisher(String, '/global_nav/status', 10)
 
         # Wire publishers into mission executor
         self.mission.pub_driving = self.cmd_pub
         self.mission.pub_joint = self.joint_pub
         self.mission.pub_pneu = self.pneu_pub
+        self.mission.pub_target_pose = self.target_pose_pub
 
         # Subscribers
         self.pose_sub = self.create_subscription(

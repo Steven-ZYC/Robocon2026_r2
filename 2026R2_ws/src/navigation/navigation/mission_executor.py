@@ -15,6 +15,7 @@ import numpy as np
 import yaml
 
 from std_msgs.msg import Float32MultiArray
+from geometry_msgs.msg import Pose2D
 
 from .tracker import Tracker
 from .speed_profiler import SpeedProfiler
@@ -94,6 +95,7 @@ class MissionExecutor:
         self.pub_driving = None
         self.pub_joint = None   # arm/joint_command
         self.pub_pneu = None    # arm/pneu_command
+        self.pub_target_pose = None  # /global_nav/target_pose
 
         # Sensor subscriptions (set after init)
         self._sensor_subs = {}
@@ -293,6 +295,7 @@ class MissionExecutor:
             return
 
         self._begin_navigate_stage(stage, end_pose, profile)
+        self._pub_target_pose(end_pose)
 
         # Compute driving command
         start_pose = self._nav_from_pose
@@ -508,6 +511,16 @@ class MissionExecutor:
         msg = Float32MultiArray()
         msg.data = [0.0, 0.0, 0.0]
         self.pub_driving.publish(msg)
+
+    def _pub_target_pose(self, pose):
+        """Publish the active navigation target for plot/debug nodes."""
+        if self.pub_target_pose is None:
+            return
+        msg = Pose2D()
+        msg.x = float(pose.get('x', 0.0))
+        msg.y = float(pose.get('y', 0.0))
+        msg.theta = math.degrees(float(pose.get('yaw', 0.0)))
+        self.pub_target_pose.publish(msg)
 
     # ------------------------------------------------------------------
     # Stage: arm

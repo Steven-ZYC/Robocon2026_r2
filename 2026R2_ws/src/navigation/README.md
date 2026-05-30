@@ -46,6 +46,7 @@ ros2 launch navigation navigation.launch.py
   - Coordinate system: REP 103 compliant planar state (`x` = forward, `y` = left, `theta` = yaw in **degrees**)
   - Source: `arduino_sensor_driver` package simplified planar output
 - **Published**: `/local_driving` (`std_msgs/Float32MultiArray`) - `[direction_rad, speed_m_s, omega_rad_s]`
+- **Published**: `/global_nav/target_pose` (`geometry_msgs/Pose2D`) - 当前 navigate stage 的目标位姿，供 plot/debug 工具显示目标 XY
 - **Debug**: `/global_nav/status` (`std_msgs/String`)
 
 ## Coordinate System
@@ -73,7 +74,33 @@ For complete system operation, both packages must be running. See `START_GUIDE.m
 
 ---
 
-## v0.2 — Mission Executor（2026-05-15）
+## v0.11 — 发布 `/global_nav/target_pose` 供 PID XY 调试（2026-05-28）
+
+### 变更内容
+
+`global_navigation_node` 新增发布 `/global_nav/target_pose`，消息类型为 `geometry_msgs/Pose2D`。
+该 topic 表示当前 `navigate` stage 的目标 waypoint 位姿，用于 `plot_debug` 等只读调试工具绘制目标 XY 与当前 `/state_pose2d` XY 的差异。
+
+### 接口
+
+| 方向 | Topic | 类型 | 说明 |
+|---|---|---|---|
+| Pub | `/global_nav/target_pose` | `geometry_msgs/Pose2D` | 当前 navigate 目标位姿，`x/y` 单位 m，`theta` 单位 deg |
+
+### 发布时机
+
+- 仅在 `navigate` stage 正在执行且 `/state_pose2d` 未超时时发布。
+- 每次控制循环计算 `/local_driving` 前发布一次当前目标，频率与 `control_rate_hz` 一致。
+- 非导航 stage 不发布新的目标位姿，调试工具可继续显示最近一次目标或等待下一次导航目标。
+
+### 超时保护关系
+
+`/global_nav/target_pose` 是调试输出，不直接控制底盘；底盘安全仍由 `pose_timeout_s` 触发的零 `/local_driving` 保护负责。
+当 `/state_pose2d` 超时时，`global_navigation_node` 不执行 `MissionExecutor.update()`，因此不会继续刷新目标位姿。
+
+---
+
+
 
 ### 架构变更
 

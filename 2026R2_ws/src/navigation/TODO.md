@@ -15,6 +15,7 @@
 - [x] 为 navigate profile 增加默认 `min_speed_scale` 起步保护
 - [x] 将 `Tracker.compute_pid_cte()` 的默认参数提到 `mission_executor.py` 顶部，并将 tracker 巡航速度封顶 `0.5 m/s`
 - [x] XY 分立模式新增 I/D 参数 `k_i_x`, `k_i_y`, `k_d_x`, `k_d_y`，含积分抗饱和，默认 0.0 向后兼容
+- [x] 发布 `/global_nav/target_pose`，供 plot_debug 绘制 PID 目标/当前 XY 对比
 - [ ] 上车验证世界系到机体系速度转换在非零 yaw 下的方向是否正确
 - [ ] 与 arduino_sensor_driver 联调 /state_pose2d
 - [ ] 与 base_omniwheel 联调 /local_driving
