@@ -12,3 +12,6 @@
 - [ ] 支持只接底盘 4 个达妙时正常启动 chassis 控制（待实车验证）
 - [ ] 支持只接 arm 2 个达妙时正常启动 arm 控制（待实车验证）
 - [ ] 实车测试 6 个达妙全部接入时两个区域同时工作
+- [x] 增加 `gear_ratio` / `input_speed_scale`，支持低层齿轮比换算与旧 PID 兼容模式
+- [x] 移除 `input_speed_scale`，`_to_motor_speed` 直接使用 `gear_ratio` 换算（旧 PID 兼容模式已无人依赖）
+- [x] 修正 `y_test.sh` chassis 启动链路：显式选择 chassis USB-CAN，并恢复 `/base/damiao_control` 正式 topic

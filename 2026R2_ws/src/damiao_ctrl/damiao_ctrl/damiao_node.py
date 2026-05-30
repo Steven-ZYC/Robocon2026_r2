@@ -33,6 +33,7 @@ DEFAULT_CHASSIS_CONTROL_TOPIC = "base/damiao_control"
 DEFAULT_ARM_MOTOR_IDS = [5, 6]
 DEFAULT_ARM_MOTOR_MODES = [2, 2]
 DEFAULT_ARM_CONTROL_TOPIC = "arm/damiao_control"
+DAMIAO_GEAR_RATIO = 19.227
 FALLBACK_CONTROL_MODE = Control_Type.VEL
 RECONNECT_INTERVAL = 2.0
 RECONNECT_MAX_ATTEMPTS = 5
@@ -62,6 +63,9 @@ class MotorControllerNode(Node):
         )
         self.feedback_motor_id = int(
             self.declare_parameter("feedback_motor_id", DEFAULT_FEEDBACK_MOTOR_ID).value
+        )
+        self.gear_ratio = float(
+            self.declare_parameter("gear_ratio", DAMIAO_GEAR_RATIO).value
         )
 
         self.motor_groups = self._load_motor_groups()
@@ -109,7 +113,8 @@ class MotorControllerNode(Node):
 
         self.get_logger().info(
             f"Damiao grouped controller initialized: device_id={self.device_id}, "
-            f"groups={self._group_summary()}, timeout={self.command_timeout:.2f}s"
+            f"groups={self._group_summary()}, timeout={self.command_timeout:.2f}s, "
+            f"gear_ratio={self.gear_ratio:.6f}"
         )
 
     def _int_list_parameter(self, name, default):
@@ -195,6 +200,14 @@ class MotorControllerNode(Node):
                 f"falling back to {FALLBACK_CONTROL_MODE.name}."
             )
             return FALLBACK_CONTROL_MODE
+
+    def _to_motor_speed(self, output_speed):
+        """Convert upstream output-side speed to motor-shaft speed."""
+        return output_speed * self.gear_ratio
+
+    def _to_motor_position(self, output_position):
+        """Convert upstream output-side position to motor-shaft position."""
+        return output_position * self.gear_ratio
 
     def _init_hardware(self):
         """Open the USB-CAN serial device and initialize each motor group."""
@@ -442,7 +455,8 @@ class MotorControllerNode(Node):
 
         motor_id = int(msg.data[0])
         mode = int(msg.data[1])
-        speed = float(msg.data[2])
+        input_speed = float(msg.data[2])
+        motor_speed = self._to_motor_speed(input_speed)
 
         if self.motor_to_group.get(motor_id) != group_name:
             if motor_id not in self.ignored_motor_ids:
@@ -474,15 +488,21 @@ class MotorControllerNode(Node):
                     )
                     return
                 self._ensure_group_enabled(group_name)
-                position = float(msg.data[3])
-                self.motor_control.control_Pos_Vel(motor, position, speed)
+                input_position = float(msg.data[3])
+                motor_position = self._to_motor_position(input_position)
+                self.motor_control.control_Pos_Vel(motor, motor_position, motor_speed)
                 self.get_logger().debug(
-                    f"{group_name} motor {motor_id}: pos={position}, vel={speed}"
+                    f"{group_name} motor {motor_id}: "
+                    f"input_pos={input_position}, motor_pos={motor_position}, "
+                    f"input_vel={input_speed}, motor_vel={motor_speed}"
                 )
             elif mode == 3:
                 self._ensure_group_enabled(group_name)
-                self.motor_control.control_Vel(motor, speed)
-                self.get_logger().debug(f"{group_name} motor {motor_id}: vel={speed}")
+                self.motor_control.control_Vel(motor, motor_speed)
+                self.get_logger().debug(
+                    f"{group_name} motor {motor_id}: "
+                    f"input_vel={input_speed}, motor_vel={motor_speed}"
+                )
             else:
                 self.get_logger().warn(f"Unsupported Damiao mode {mode} for motor {motor_id}")
         except serial.SerialException as exc:

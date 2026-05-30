@@ -7,14 +7,28 @@
 WS=~/Robocon2026_r2/2026R2_ws
 TOOLS=$WS/tools
 SPEED_MPS=2.0
+DAMIAO_GEAR_RATIO=19.227
+CHASSIS_CAN_DEVICE="${CHASSIS_CAN_DEVICE:-/dev/chassis_damiao_can}"
 MISSION_FILE=/tmp/y_2m_2_0mps_mission.yaml
 FIELD_FILE=$WS/src/navigation/routes/red_field.yaml
 MIRROR_Y=false
+
+if [ ! -e "$CHASSIS_CAN_DEVICE" ] && [ "$CHASSIS_CAN_DEVICE" = "/dev/chassis_damiao_can" ] && [ -e "/dev/damiao_can" ]; then
+  CHASSIS_CAN_DEVICE="/dev/damiao_can"
+fi
+
 source "$WS/install/setup.bash"
 
 echo "[y_2m_2_0mps] 注意: 机器人将以最高约 ${SPEED_MPS} m/s 向机体 +Y/左侧走 2m。"
 echo "[y_2m_2_0mps] 启动前请架空或确认左侧 2.5m 空旷，并确认 /state_pose2d 接近 x=0 y=0 theta=0。"
+echo "[y_2m_2_0mps] chassis USB-CAN: $CHASSIS_CAN_DEVICE"
 echo ""
+
+if [ ! -e "$CHASSIS_CAN_DEVICE" ]; then
+  echo "[y_2m_2_0mps] WARNING: $CHASSIS_CAN_DEVICE 不存在，damiao_ctrl 窗口会启动但 chassis 组不会 active。"
+  echo "[y_2m_2_0mps] 请检查 USB-CAN 是否接入，或先安装/刷新 2026R2_ws/99-robocon-r2.rules。"
+  echo ""
+fi
 
 # ---- 清理所有残留进程 ----
 echo "[y_2m_2_0mps] 清理残留进程..."
@@ -33,20 +47,20 @@ waypoints:
   wp_y_2m:
     pose: { x: 1.0, y: 0.0, yaw: 0.0 }
     pos_tolerance: 0.01
-    yaw_tolerance_deg: 2.0
+    yaw_tolerance_deg: 1.0
 
 profiles:
   y_2m_2_0mps:
-    speed_mps: 0.8
-    yaw_rate_rps: 0.6
+    speed_mps: 0.4
+    yaw_rate_rps: 0.3
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
-    k_p_x: 0.86
-    k_p_y: 2.00
-    k_d_x: 0.03
-    k_d_y: 0.02
-    k_heading_p: 0.0
+    k_p_x: 0.044729
+    k_p_y: 0.104020
+    k_d_x: 0.001560
+    k_d_y: 0.001040
+    k_heading_p: 0.06
     k_heading_d: 0.0
     max_body_x_mps: 1.0
     max_body_y_mps: 1.0
@@ -70,12 +84,16 @@ echo ""
 gnome-terminal --geometry=100x20+0+0 -- bash -c "
 source $WS/install/setup.bash
 echo '=== 窗口1: damiao_ctrl (统一 CAN 电机驱动) ==='
-echo 'chassis control topic: /base/dummy_control'
+echo 'device_id: $CHASSIS_CAN_DEVICE'
+echo 'chassis control topic: /base/damiao_control'
+echo 'gear_ratio: $DAMIAO_GEAR_RATIO'
 echo 'Ctrl+C 退出'
 echo ''
 ros2 run damiao_ctrl damiao_node --ros-args \
-  -p chassis_control_topic:=base/dummy_control \
-  -p arm_motor_ids:=[]
+  -p device_id:=$CHASSIS_CAN_DEVICE \
+  -p chassis_control_topic:=base/damiao_control \
+  -p arm_motor_ids:=[] \
+  -p gear_ratio:=$DAMIAO_GEAR_RATIO
 "
 
 # 窗口2: 运动学反解
@@ -83,10 +101,10 @@ sleep 0.5
 gnome-terminal --geometry=100x20+800+0 -- bash -c "
 source $WS/install/setup.bash
 echo '=== 窗口2: local_navigation_node (运动学反解) ==='
-echo 'motor output remap: /base/damiao_control -> /base/dummy_control'
+echo 'motor output topic: /base/damiao_control'
 echo 'Ctrl+C 退出'
 echo ''
-ros2 run base_omniwheel_r2_600 local_navigation_node --ros-args -r /base/damiao_control:=/base/dummy_control
+ros2 run base_omniwheel_r2_600 local_navigation_node
 "
 
 # 窗口3: navigation + Arduino sensor
@@ -104,7 +122,7 @@ sleep 0.2
 gnome-terminal --geometry=100x12+0+850 -- bash -c "
 source $WS/install/setup.bash
 echo '=== 窗口4: plot_debug (matplotlib 实时可视化) ==='
-echo '2 个图形窗口: Pose2D 轨迹 | Local Driving 指令'
+echo '单一图形窗口: Pose2D 轨迹 | Target Error | Local Driving'
 echo '关闭所有绘图窗口即退出'
 echo ''
 ros2 run plot_debug plot_debug_node --ros-args -p show_damiao:=false -p save_dir:=/home/robotics/Robocon2026_r2/log_plot_debug 2>&1
@@ -147,10 +165,10 @@ ros2 topic echo /global_nav/status
 
 echo "[y_2m_3_0mps] 所有窗口已启动"
 echo ""
-echo "  窗口1: damiao_ctrl grouped damiao_node (/base/dummy_control)"
+echo "  窗口1: damiao_ctrl grouped damiao_node (/base/damiao_control)"
 echo "  窗口2: local_navigation_node"
 echo "  窗口3: navigation + Arduino sensor"
-echo "  窗口4: plot_debug (matplotlib 2窗口: Pose2D / Local Driving)"
+echo "  窗口4: plot_debug (matplotlib 单窗口多子图)"
 echo "  窗口5: /state_pose2d 监听"
 echo "  窗口6: /local_driving 监听"
 echo "  窗口7: /global_nav/status 监听"

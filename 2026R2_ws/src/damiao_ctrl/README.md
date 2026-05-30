@@ -134,6 +134,8 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 
 | 日期 | 说明 |
 |---|---|
+| 2026-05-30 | v0.4 — 移除 input_speed_scale，_to_motor_speed 直接使用 gear_ratio 换算 |
+| 2026-05-30 | v0.3 — 新增 gear_ratio / input_speed_scale，支持低层 driver 做输出端到电机轴换算，并保留旧 PID 兼容模式 |
 | 2026-05-26 | v0.2 — 改为 chassis/arm 分组初始化，区域内整组使能，区域之间独立运行 |
 | 2026-05-14 | v0.1 — 从 base_omniwheel_r2_600 分离，新增 per-motor 模式支持 |
 
@@ -211,3 +213,88 @@ ros2 topic pub /arm/damiao_control std_msgs/Float32MultiArray "data: [5, 2, 1.5,
 - 如果只接 arm 5-6 号电机，日志中允许出现 `chassis group INACTIVE`，不影响 `arm/damiao_control`。
 - 如果某个区域少一个电机，该区域会整体 inactive；这是为了避免底盘或 arm 只有部分电机使能导致机构受力异常。
 - 若两个区域都 inactive，节点会按重连间隔重新尝试初始化。
+
+
+## v0.3 — 齿轮比换算与旧 PID 兼容模式（2026-05-30）
+
+### 设计目标
+
+`damiao_ctrl/damiao_node` 增加输出端到电机轴的换算参数，让底层 driver 能负责达妙减速比换算。为了不破坏已经调好的 `y_test.sh` / PID 数值，默认参数使用 DM3519 齿轮比和旧 PID 兼容补偿：`gear_ratio = 19.227`，`input_speed_scale = 1 / gear_ratio = 0.052010194`。
+
+### 新增参数
+
+| 参数 | 默认值 | 单位 | 作用 |
+|---|---|---|---|
+| `gear_ratio` | `19.227` | - | 输出端到电机轴的齿轮比。DM3519 实车默认值 |
+| `input_speed_scale` | `0.052010194` | - | speed 输入补偿系数。默认保持旧 PID 输出不变 |
+
+换算关系：
+
+```text
+motor_speed   = input_speed * input_speed_scale * gear_ratio
+motor_position = input_position * gear_ratio
+```
+
+### y_test 兼容模式
+
+`y_test.sh` 当前启动 `damiao_ctrl/damiao_node` 时仍显式传入同一组默认兼容参数，方便实车日志确认：
+
+```bash
+-p gear_ratio:=19.227 \
+-p input_speed_scale:=0.052010194
+```
+
+因此速度通道最终为：
+
+```text
+input_speed * 0.052010194 * 19.227 ~= input_speed
+```
+
+这表示代码已经经过低层齿轮比换算路径，但最终发给电机轴的速度与旧版 `damiao_ctrl` 一致，用于保护当前已调好的 PID 参数。
+
+### 超时保护不变
+
+v0.3 不改变 watchdog 行为。`command_timeout` 默认仍为 `0.5 s`，每个 active group 独立计时；超时后 VEL 电机发零速度，POS_VEL 电机保持当前位置并发零速度。
+
+### y_test chassis 启动链路修正
+
+`y_test.sh` 现在显式使用 chassis USB-CAN 设备：默认 `/dev/chassis_damiao_can`，若该 symlink 不存在但 `/dev/damiao_can` 存在，则临时 fallback 到 `/dev/damiao_can`。
+
+正式控制链路恢复为：
+
+```text
+/local_driving -> local_navigation_node -> /base/damiao_control -> damiao_ctrl/damiao_node -> chassis motors 1-4
+```
+
+脚本不再把底盘控制 remap 到 `/base/dummy_control`，避免 chassis 组已经 active 但实际监听 topic 与 local_navigation_node 输出不一致。
+
+超时保护不变：`local_navigation_node` 默认 `0.5 s` 未收到 `/local_driving` 后发布零轮速；`damiao_ctrl/damiao_node` 默认 `0.5 s` 未收到 `/base/damiao_control` 后停止 chassis 组。
+
+
+## v0.4 — 移除 input_speed_scale（2026-05-30）
+
+### 设计目标
+
+`local_navigation_node` 发布的是输出轴目标速度，所以 `damiao_node` 需要 `gear_ratio` 换算到电机轴。但 `input_speed_scale` 的旧 PID 兼容模式已无人依赖——`y_test.sh` 早已显式设为 `1.0`，其他脚本都不传递此参数。直接移除该参数，让 `_to_motor_speed` 的换算公式简化为：
+
+```
+motor_speed = output_speed * gear_ratio
+```
+
+### 变更摘要
+
+- 删除 `DAMIAO_INPUT_SPEED_SCALE` 常量
+- 删除 `input_speed_scale` ROS 参数声明
+- `_to_motor_speed` 直接返回 `output_speed * self.gear_ratio`
+- `y_test.sh` 不再传递 `-p input_speed_scale:=1.0`
+
+### 参数变化
+
+| 参数 | 状态 |
+|---|---|
+| `input_speed_scale` | **已移除** |
+| `gear_ratio` | 不变，默认 `19.227` |
+
+### 超时保护不变
+
+v0.4 不改变 watchdog 行为。
