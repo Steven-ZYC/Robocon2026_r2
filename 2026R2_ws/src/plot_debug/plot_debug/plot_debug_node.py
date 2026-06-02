@@ -3,7 +3,7 @@
 plot_debug_node.py - 实时 matplotlib 可视化调试工具
 
 同时订阅 /state_pose2d, /global_nav/target_pose, /local_driving,
-base/damiao_control 四个 topic，以多窗口折线图实时展示数据变化，
+base/damiao_control, damiao_feedback 五个 topic，以多窗口折线图实时展示数据变化，
 辅助底盘运动调试。
 
 适用：Omniwheel 底盘 + 大淼电机的 Robocon 机器人调试场景。
@@ -12,24 +12,32 @@ base/damiao_control 四个 topic，以多窗口折线图实时展示数据变化
 import csv
 import math
 import os
+import time
 import threading
 from collections import deque
 from datetime import datetime
 
-import os
 import numpy as np
 import matplotlib
 
 # 根据运行环境自动选择 matplotlib backend
 _display = os.environ.get('DISPLAY', '')
+_have_gui_backend = False
 if _display:
-    # 有显示器：优先 TkAgg
-    try:
-        matplotlib.use('TkAgg')
-    except Exception:
-        pass
+    # 优先尝试 TkAgg，失败则回退 Agg
+    for _backend in ('TkAgg', 'Qt5Agg'):
+        try:
+            matplotlib.use(_backend)
+            _have_gui_backend = True
+            break
+        except Exception:
+            pass
+    if not _have_gui_backend:
+        print(f'[plot_debug] DISPLAY={_display} 但没有可用的 GUI 后端 (TkAgg/Qt5Agg 均失败)，'
+              '回退到 Agg headless 模式。')
+        print('[plot_debug] 请安装 python3-tk 或 python3-pyqt5。')
+        matplotlib.use('Agg')
 else:
-    # 无显示器 (headless / SSH)：使用 Agg，仅支持保存文件
     matplotlib.use('Agg')
     print('[plot_debug] 未检测到显示器 (DISPLAY 为空)，使用 Agg 后端。')
     print('[plot_debug] 节点将持续采集数据，Ctrl+C 退出时保存 CSV + PNG。')
@@ -40,13 +48,15 @@ import matplotlib.animation as animation
 
 import rclpy
 from rclpy.node import Node
-from rclpy.executors import SingleThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor, ExternalShutdownException
 from geometry_msgs.msg import Pose2D
 from std_msgs.msg import Float32MultiArray
 
 
 class PlotDebugNode(Node):
     """订阅关键调试 topic，缓冲数据，供 GUI 线程定时刷新绘图。"""
+
+    MAX_MOTORS = 6  # 支持 motor 1-6 的 feedback 缓冲区
 
     def __init__(self):
         super().__init__('plot_debug_node')
@@ -57,6 +67,7 @@ class PlotDebugNode(Node):
         self.declare_parameter('show_pose2d', True)
         self.declare_parameter('show_driving', True)
         self.declare_parameter('show_damiao', True)
+        self.declare_parameter('show_damiao_feedback', True)
         self.declare_parameter('show_target_error', True)
         self.declare_parameter('save_dir', './plot_debug_logs')
 
@@ -65,6 +76,7 @@ class PlotDebugNode(Node):
         self.show_pose2d = self.get_parameter('show_pose2d').value
         self.show_driving = self.get_parameter('show_driving').value
         self.show_damiao = self.get_parameter('show_damiao').value
+        self.show_damiao_feedback = self.get_parameter('show_damiao_feedback').value
         self.show_target_error = self.get_parameter('show_target_error').value
         self.save_dir = self.get_parameter('save_dir').value
 
@@ -114,11 +126,21 @@ class PlotDebugNode(Node):
         self._last_position = [0.0] * 4
         self._dropped_motor_msgs = 0
 
+        # Damiao feedback — motor_id 1-6, 每条消息携带一个电机的反馈
+        self._feedback_t = deque(maxlen=self.max_history)
+        self._feedback_torques = [deque(maxlen=self.max_history) for _ in range(self.MAX_MOTORS)]
+        self._last_torque = [0.0] * self.MAX_MOTORS
+        self._feedback_q = [deque(maxlen=self.max_history) for _ in range(self.MAX_MOTORS)]
+        self._last_q = [0.0] * self.MAX_MOTORS
+        self._feedback_dq = [deque(maxlen=self.max_history) for _ in range(self.MAX_MOTORS)]
+        self._last_dq = [0.0] * self.MAX_MOTORS
+
         # ---- 订阅 ----
         self.create_subscription(Pose2D, '/state_pose2d', self._pose_cb, 10)
         self.create_subscription(Pose2D, '/global_nav/target_pose', self._target_cb, 10)
         self.create_subscription(Float32MultiArray, '/local_driving', self._drive_cb, 10)
         self.create_subscription(Float32MultiArray, 'base/damiao_control', self._damiao_cb, 10)
+        self.create_subscription(Float32MultiArray, 'damiao_feedback', self._damiao_feedback_cb, 10)
 
         # ---- 创建 matplotlib 窗口 ----
         self._setup_figures()
@@ -127,6 +149,7 @@ class PlotDebugNode(Node):
             f'PlotDebugNode 初始化完成 '
             f'(max_history={self.max_history}, update_rate={self.update_rate_hz}Hz, '
             f'pose2d={self.show_pose2d}, driving={self.show_driving}, damiao={self.show_damiao}, '
+            f'damiao_feedback={self.show_damiao_feedback}, '
             f'target_error={self.show_target_error}, save_dir={self.save_dir})'
         )
 
@@ -235,15 +258,41 @@ class PlotDebugNode(Node):
                 self._damiao_speeds[i].append(self._last_speed[i])
                 self._damiao_positions[i].append(self._last_position[i])
 
+    def _damiao_feedback_cb(self, msg: Float32MultiArray):
+        """解析 damiao_feedback [motor_id, q_rad, dq_rad_s, tau_Nm, enabled]."""
+        if len(msg.data) < 5:
+            return
+
+        motor_id = int(msg.data[0])
+        if motor_id < 1 or motor_id > self.MAX_MOTORS:
+            return
+
+        idx = motor_id - 1
+        t = self._elapsed()
+        q_val = self._filter_finite(msg.data[1])
+        dq_val = self._filter_finite(msg.data[2])
+        tau_val = self._filter_finite(msg.data[3])
+
+        with self._data_lock:
+            self._feedback_t.append(t)
+            self._last_torque[idx] = tau_val
+            self._last_q[idx] = q_val
+            self._last_dq[idx] = dq_val
+            for i in range(self.MAX_MOTORS):
+                self._feedback_torques[i].append(self._last_torque[i])
+                self._feedback_q[i].append(self._last_q[i])
+                self._feedback_dq[i].append(self._last_dq[i])
+
     # ==================================================================
     # 图表创建（单一窗口，多行网格布局）
     # ==================================================================
 
-    MOTOR_COLORS = ['#e74c3c', '#2ecc71', '#3498db', '#f39c12']
+    MOTOR_COLORS = ['#e74c3c', '#2ecc71', '#3498db', '#f39c12', '#9b59b6', '#1abc9c']
 
     def _setup_figures(self):
         n_rows = sum([self.show_pose2d, self.show_target_error,
-                       self.show_driving, self.show_damiao])
+                       self.show_driving, self.show_damiao,
+                       self.show_damiao_feedback])
         if n_rows == 0:
             self.get_logger().warning('所有窗口均被禁用，无图表显示。')
             self._fig = None
@@ -418,6 +467,29 @@ class PlotDebugNode(Node):
                 va='top', fontsize=7, fontfamily='monospace',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
+            row_idx += 1
+
+        # ---- Row 5: Damiao Motor Feedback (torque) ----
+        if self.show_damiao_feedback:
+            gs_fb = gs[row_idx].subgridspec(1, 1, wspace=0.2)
+
+            self._ax_fb_tau = self._fig.add_subplot(gs_fb[0])
+            self._ax_fb_tau.set_title('Motor Torque (damiao_feedback, output-side Nm)')
+            self._ax_fb_tau.set_xlabel('Time (s)')
+            self._ax_fb_tau.set_ylabel('Torque (Nm)')
+            self._ax_fb_tau.grid(True, alpha=0.3)
+            self._ax_fb_tau.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+            self._lines_fb_tau = []
+            for i in range(6):
+                (line,) = self._ax_fb_tau.plot([], [], color=self.MOTOR_COLORS[i],
+                                               linewidth=1, label=f'M{i+1}')
+                self._lines_fb_tau.append(line)
+            self._ax_fb_tau.legend(loc='upper right', fontsize=7)
+            self._text_fb_tau = self._ax_fb_tau.text(
+                0.02, 0.98, '', transform=self._ax_fb_tau.transAxes,
+                va='top', fontsize=7, fontfamily='monospace',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
         self._fig.tight_layout()
 
     # ==================================================================
@@ -562,7 +634,47 @@ class PlotDebugNode(Node):
                 self._text_mp.set_text(pos_text)
                 artists.extend([self._text_ms, self._text_mp])
 
+        # ---- Damiao Feedback Torque ----
+        if self.show_damiao_feedback:
+            with self._data_lock:
+                if not self._feedback_t:
+                    fb_t = None
+                    tau_snapshots = [None] * 6
+                else:
+                    fb_t = list(self._feedback_t)
+                    tau_snapshots = [list(self._feedback_torques[i]) for i in range(6)]
+
+            if fb_t:
+                for i in range(6):
+                    self._lines_fb_tau[i].set_data(fb_t, tau_snapshots[i])
+                    artists.append(self._lines_fb_tau[i])
+                self._ax_fb_tau.relim()
+                self._ax_fb_tau.autoscale_view()
+
+                tau_text = ' | '.join(
+                    [f'M{i+1}={self._feedback_torques[i][-1]:.2f}' for i in range(6)
+                     if self._feedback_torques[i]])
+                if tau_text:
+                    self._text_fb_tau.set_text(tau_text)
+                    artists.append(self._text_fb_tau)
+
         return artists
+
+    # ==================================================================
+    # 日志工具
+    # ==================================================================
+
+    def _log_info_safe(self, message):
+        if rclpy.ok():
+            self.get_logger().info(message)
+        else:
+            print(f'[plot_debug] {message}')
+
+    def _log_warn_safe(self, message):
+        if rclpy.ok():
+            self.get_logger().warning(message)
+        else:
+            print(f'[plot_debug] WARNING: {message}')
 
     # ==================================================================
     # 数据保存（退出时调用，将全部 buffer 写入 CSV）
@@ -635,12 +747,32 @@ class PlotDebugNode(Node):
                                     self._damiao_speeds[3][i], self._damiao_positions[3][i]])
                 files_written.append(path)
 
+            # Damiao feedback
+            if self._feedback_t:
+                path = f'{prefix}_damiao_feedback.csv'
+                with open(path, 'w', newline='') as f:
+                    w = csv.writer(f)
+                    header = ['t_s']
+                    for i in range(1, 7):
+                        header.extend([f'm{i}_q_rad', f'm{i}_dq_rad_s', f'm{i}_tau_Nm'])
+                    w.writerow(header)
+                    for j in range(len(self._feedback_t)):
+                        row = [self._feedback_t[j]]
+                        for i in range(6):
+                            row.extend([
+                                self._feedback_q[i][j] if j < len(self._feedback_q[i]) else 0.0,
+                                self._feedback_dq[i][j] if j < len(self._feedback_dq[i]) else 0.0,
+                                self._feedback_torques[i][j] if j < len(self._feedback_torques[i]) else 0.0,
+                            ])
+                        w.writerow(row)
+                files_written.append(path)
+
         if files_written:
-            self.get_logger().info(f'数据已保存至 {self.save_dir}/: {len(files_written)} 个 CSV 文件')
+            self._log_info_safe(f'数据已保存至 {self.save_dir}/: {len(files_written)} 个 CSV 文件')
             for p in files_written:
-                self.get_logger().info(f'  {p}')
+                self._log_info_safe(f'  {p}')
         else:
-            self.get_logger().warning('无数据可保存（所有 buffer 为空）')
+            self._log_warn_safe('无数据可保存（所有 buffer 为空）')
 
 
 # ======================================================================
@@ -659,39 +791,47 @@ def main(args=None):
 
     executor = SingleThreadedExecutor()
     executor.add_node(node)
-    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+
+    def spin_executor():
+        try:
+            executor.spin()
+        except ExternalShutdownException:
+            pass
+
+    spin_thread = threading.Thread(target=spin_executor, daemon=True)
     spin_thread.start()
 
-    interval_ms = max(1, int(1000.0 / node.update_rate_hz))
-    ani = animation.FuncAnimation(
-        node._fig, node._update_all, interval=interval_ms, cache_frame_data=False)
-
-    have_display = bool(os.environ.get('DISPLAY', ''))
+    if _have_gui_backend:
+        interval_ms = max(1, int(1000.0 / node.update_rate_hz))
+        ani = animation.FuncAnimation(
+            node._fig, node._update_all, interval=interval_ms, cache_frame_data=False)
     try:
-        if have_display:
+        if _have_gui_backend:
             plt.show()
         else:
             node.get_logger().info(
                 'Headless 模式：节点持续运行并采集数据，Ctrl+C 退出并保存 CSV + PNG snapshot')
             while rclpy.ok():
-                try:
-                    rclpy.spin_once(node, timeout_sec=0.1)
-                except KeyboardInterrupt:
-                    break
+                time.sleep(0.1)
     except KeyboardInterrupt:
         pass
     finally:
-        if have_display:
+        if _have_gui_backend and ani is not None:
             ani.event_source.stop()
         else:
-            # 保存当前图表截图
+            # Headless 模式没有 GUI event loop，退出前主动刷新一次图表再保存截图。
+            node._update_all(None)
+            os.makedirs(node.save_dir, exist_ok=True)
             snapshot_path = os.path.join(node.save_dir, 'snapshot.png')
             node._fig.savefig(snapshot_path, dpi=100)
-            node.get_logger().info(f'Snapshot 已保存: {snapshot_path}')
+            node._log_info_safe(f'Snapshot 已保存: {snapshot_path}')
         executor.shutdown()
+        if spin_thread.is_alive():
+            spin_thread.join(timeout=1.0)
         node.save_data()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
         plt.close(node._fig)
 
 

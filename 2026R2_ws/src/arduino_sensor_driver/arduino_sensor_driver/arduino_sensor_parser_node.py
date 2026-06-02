@@ -13,8 +13,13 @@ Arduino Sensor Parser Node
 - 使用 LPBUS 协议 IMU（输出航向角与角速度）
 - Arduino 通过 Serial 输出格式化文本行
 
-协议格式：
-ID=<pkg_id> T=<ms> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt> crc=<hex>
+协议格式（v3，<> 帧边界 + *XX CRC）：
+<ID=<pkg_id> T=<ms> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt>,*<crc_hex>>
+
+帧结构：
+- '<' 帧头，'>' 帧尾，用于解决串口上下帧粘连问题
+- CRC8-ATM 校验值位于 '*XX' 中，XX 为 hex 格式
+- CRC 计算仅覆盖 '*' 之前的有效载荷（payload）
 
 注意：Arduino 第二版代码已移除 DEG= 字段，仅保留 ENC= 原始计数值。
 
@@ -50,6 +55,8 @@ import termios
 class ArduinoSensorParser(Node):
     """
     解析 Arduino 串口数据，发布原始传感器消息与 Odometry
+
+    协议（v3）：以 '<' '>' 为帧边界，CRC 以 '*XX' 格式位于帧尾 '>' 之前。
 
     超时保护：
     - 串口断连后自动重连（每 2s 尝试一次）
@@ -132,7 +139,8 @@ class ArduinoSensorParser(Node):
         # 运行状态标志（用于安全关闭）
         self._active = True
 
-        # 串口行缓冲区：累积原始字节，按 \n 切分完整行，避免 readline() timeout 导致截断
+        # 串口帧缓冲区：累积原始字节，以 '<' '>' 为帧边界切分完整帧
+        # 解决串口上下帧粘连问题——即使两帧在同一块数据中到达也能正确拆分
         self._line_buffer = b""
 
         # CRC 统计，每 5s 汇总打印一次成功率
@@ -160,7 +168,7 @@ class ArduinoSensorParser(Node):
         try:
             self.serial = serial.Serial(self._port, self._baud, timeout=0.1)
             self.serial.reset_input_buffer()
-            self._line_buffer = b""  # 清空行缓冲区，避免残留半行数据
+            self._line_buffer = b""  # 清空帧缓冲区，避免残留半帧数据
             # 禁 HUPCL：关闭串口时 DTR 不下拉，Arduino 不自动复位
             attrs = termios.tcgetattr(self.serial.fd)
             attrs[2] &= ~termios.HUPCL
@@ -256,27 +264,45 @@ class ArduinoSensorParser(Node):
             return self.wrap_angle_rad(absolute_yaw_rad - self.initial_heading_rad)
         return self.wrap_angle_rad(absolute_yaw_rad)
 
-    def parse_line(self, line: str):
+    def parse_frame(self, frame: str):
         """
-        解析一行 Arduino 数据，格式（v2，无 DEG= 字段）：
-        ID=4836 T=48400 IMU=-0.11,0.02,-0.985,-0.073,-0.077 ENC=68,31039 crc=D8
+        解析一帧 Arduino 数据（v3 协议，'<>' 帧边界 + '*XX' CRC）。
+
+        输入 frame 为 '<' 与 '>' 之间的内容，例如：
+        ID=4836 T=48400 IMU=-0.11,0.02,-0.985,-0.073,-0.077 ENC=68,31039,*D8
+
+        返回值：dict（字段同旧版 parse_line），解析失败或 CRC 错时仍返回数据
+                但 crc_valid=False。
         """
-        # 提取 crc 部分
-        match_crc = re.search(r" crc=([0-9A-Fa-f]{2})$", line)
-        if not match_crc:
-            self.get_logger().warn(f"No CRC found: {line}")
+        # 找到 '*' 分隔符（CRC 标记）
+        star_idx = frame.rfind(',*')
+        if star_idx == -1:
+            self.get_logger().warn(f"No CRC marker ',*' in frame: {frame}")
             self._stat_lines += 1
             self._stat_nocrc += 1
             return None
 
-        crc_hex = match_crc.group(1)
-        crc_expected = int(crc_hex, 16)
+        crc_hex = frame[star_idx + 2:]  # ',*' 之后是 CRC hex
+        payload = frame[:star_idx]       # ',*' 之前是有效载荷
 
-        # 去除 crc 部分，计算实际 CRC
-        line_without_crc = line[: match_crc.start()]
-        crc_actual = self.crc8_atm(line_without_crc.encode("ascii"))
+        if len(crc_hex) != 2:
+            self.get_logger().warn(f"Bad CRC hex length: '{crc_hex}' in frame: {frame}")
+            self._stat_lines += 1
+            self._stat_nocrc += 1
+            return None
 
+        try:
+            crc_expected = int(crc_hex, 16)
+        except ValueError:
+            self.get_logger().warn(f"Invalid CRC hex: '{crc_hex}'")
+            self._stat_lines += 1
+            self._stat_nocrc += 1
+            return None
+
+        # CRC 只计算 payload 部分（不含 '<' '>' 和 ',*XX'）
+        crc_actual = self.crc8_atm(payload.encode("ascii"))
         crc_valid = crc_actual == crc_expected
+
         if not crc_valid:
             self.get_logger().warn(
                 f"CRC mismatch: expected {crc_expected:02X}, got {crc_actual:02X}"
@@ -284,14 +310,14 @@ class ArduinoSensorParser(Node):
             self._stat_lines += 1
             self._stat_crc_fail += 1
 
-        # 解析字段（v2 协议：无 DEG= 字段）
+        # 解析 payload 字段
         match = re.match(
             r"ID=(\d+) T=(\d+) IMU=([\d\.\-]+),([\d\.\-]+),([\d\.\-]+),([\d\.\-]+),([\d\.\-]+) "
             r"ENC=([\-\d]+),([\-\d]+)",
-            line_without_crc,
+            payload,
         )
         if not match:
-            self.get_logger().warn(f"Parse failed: {line}")
+            self.get_logger().warn(f"Parse failed: {frame}")
             self._stat_parse_fail += 1
             return None
 
@@ -305,7 +331,6 @@ class ArduinoSensorParser(Node):
         enc_x = int(match.group(8))
         enc_y = int(match.group(9))
 
-        # CRC 校验通过 + 解析成功 → 统计
         if crc_valid:
             self._stat_lines += 1
             self._stat_crc_ok += 1
@@ -320,11 +345,12 @@ class ArduinoSensorParser(Node):
 
     def serial_callback(self):
         """
-        缓冲式串口读取（100Hz）：
-        - 每次读走全部可用字节，追加到 _line_buffer
-        - 按 \\n 切分出完整行逐一处理
-        - 不完整的行留在缓冲区等下次补齐
-        - 避免 readline() timeout 导致的字节消费/截断问题
+        帧缓冲式串口读取（100Hz）：
+
+        以 '<' '>' 为帧边界提取完整帧，解决串口上下帧粘连问题：
+        - 两帧同批到达（粘连）：<...><...> → 正确拆分为两帧
+        - 单帧跨批到达（截断）：<... 在下一次 read 补齐 ...> → 等待帧尾
+        - 垃圾字节在 '<' 之前或 '>' 之后 → 自动丢弃
         """
         if not self._active:
             return
@@ -336,32 +362,50 @@ class ArduinoSensorParser(Node):
             if waiting > 0:
                 self._line_buffer += self.serial.read(waiting)
 
-                # 切分完整行（支持 \r\n 和 \n）
+                # 以 '<' '>' 为帧边界循环提取完整帧
                 while True:
-                    idx = self._line_buffer.find(b"\n")
-                    if idx == -1:
+                    # 查找帧头 '<'
+                    start = self._line_buffer.find(b'<')
+                    if start == -1:
+                        # 无帧头，丢弃全部缓冲区（都是垃圾）
+                        if len(self._line_buffer) > 0:
+                            self.get_logger().warn(
+                                f'Discarding {len(self._line_buffer)} bytes without frame start'
+                            )
+                        self._line_buffer = b''
                         break
 
-                    line_bytes = self._line_buffer[:idx]
-                    self._line_buffer = self._line_buffer[idx + 1:]
+                    # 丢弃 '<' 之前的垃圾字节
+                    if start > 0:
+                        self._line_buffer = self._line_buffer[start:]
 
-                    # 去掉行尾 \r
-                    if line_bytes.endswith(b"\r"):
-                        line_bytes = line_bytes[:-1]
+                    # 查找帧尾 '>'
+                    end = self._line_buffer.find(b'>')
+                    if end == -1:
+                        # 帧未完成，保留在缓冲区等待更多数据
+                        break
 
-                    if not line_bytes:
+                    # 提取帧内容（不含 '<' 和 '>'）
+                    frame_bytes = self._line_buffer[1:end]
+                    # 从缓冲区移除已处理的帧（含 '>'）
+                    self._line_buffer = self._line_buffer[end + 1:]
+
+                    if not frame_bytes:
                         continue
 
-                    line = line_bytes.decode("ascii", errors="ignore")
-                    self._process_line(line)
+                    try:
+                        frame = frame_bytes.decode('ascii', errors='ignore')
+                        self._process_frame(frame)
+                    except Exception as e:
+                        self.get_logger().warn(f'Frame decode error: {e}')
 
-                # 防止缓冲区无限增长（若连续收到无换行垃圾数据）
+                # 防止缓冲区无限增长（若迟迟收不到 '>'）
                 if len(self._line_buffer) > 4096:
                     self.get_logger().error(
-                        f"Line buffer overflow ({len(self._line_buffer)} bytes), "
-                        f"discarding to prevent memory leak"
+                        f'Frame buffer overflow ({len(self._line_buffer)} bytes), '
+                        f'no closing ">" received — discarding'
                     )
-                    self._line_buffer = b""
+                    self._line_buffer = b''
 
         except serial.SerialException as e:
             self.get_logger().error(
@@ -379,11 +423,11 @@ class ArduinoSensorParser(Node):
             )
             self._close_serial()
 
-    def _process_line(self, line: str):
+    def _process_frame(self, frame: str):
         """
-        处理一条完整的文本行：解析、CRC 校验、发布 raw data、更新 odometry。
+        处理一帧完整的 Arduino 数据（已去除 '<' '>' 边界符）。
         """
-        data = self.parse_line(line)
+        data = self.parse_frame(frame)
         if data is None:
             return
 
@@ -634,7 +678,7 @@ class ArduinoSensorParser(Node):
         parse_fail = self._stat_parse_fail
         rate = ok / total * 100.0 if total > 0 else 0.0
         self.get_logger().info(
-            f"CRC stats (5s): {total} lines, "
+            f"CRC stats (5s): {total} frames, "
             f"OK={ok} ({rate:.1f}%), FAIL={fail}, NoCRC={nocrc}, ParseFail={parse_fail}"
         )
         # 重置计数器

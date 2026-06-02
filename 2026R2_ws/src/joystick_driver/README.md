@@ -2,6 +2,31 @@
 
 Joystick input driver for ROS 2. 通过 evdev 读取游戏手柄输入并发布为自定义消息。
 
+> **⚠️ 当前状态：备用 package（2026-06-03）**
+> 
+> 本 package 中的 `joystick_control_node` 为**备用上层控制节点**，不参与主链路运行。
+> 主链路使用 `navigation/global_navigation_node`（FSM 模式）自动执行 mission YAML。
+> `joystick_control_node` 仅保留用于：
+> - 手动调试底盘/手臂/气动
+> - FSM 模式出现问题时的手动接管测试
+> - 新队员熟悉控制映射
+> 
+> `joystick_node`（手柄输入驱动）当前也不在 `r2_launch` 中启动，仅在需要手动控制时单独运行。
+
+---
+
+## 更新记录
+
+| 日期 | 说明 |
+|---|---|
+| 2026-06-03 | 明确本 package 为备用上层控制节点，主链路由 `navigation/global_navigation_node` (FSM) 负责 |
+| 2026-05-24 | v6 双摇杆设备绑定（白/黑手柄 udev symlink） |
+| 2026-05-18 | v5 摇杆中位修复（STICK_RAW_CENTER 32768→0） |
+| 2026-05-17 | v4 joystick_control_node 手柄直驱控制节点 |
+| 2026-05-17 | v3 设备绑定与系统集成 |
+| 2026-05-17 | v2 自动设备发现 |
+| early 2026 | v1 初始设计 |
+
 ---
 
 ## v5 摇杆中位修复 (2026-05-18)
@@ -38,8 +63,8 @@ Joystick input driver for ROS 2. 通过 evdev 读取游戏手柄输入并发布�
 | Topic | 类型 | 格式 | 说明 |
 |---|---|---|---|
 | `/local_driving` | `Float32MultiArray` | `[direction_rad, speed_cm/s, rotation_rad/s]` | 底盘运动指令 |
-| `arm/joint_command` | `Float32MultiArray` | `[joint_0_speed, joint_1_speed]` | 关节速度指令 (rad/s) |
-| `arm/pneu_command` | `Float32MultiArray` | `[gripper, lift, stopper]` | 气动状态 (0.0/1.0) |
+| `arm/joint_navigation` | `Float32MultiArray` | `[joint_0_speed, joint_1_speed]` | 关节速度指令 (rad/s) |
+| `arm/pneu_navigation` | `Float32MultiArray` | `[gripper, lift, stopper]` | 气动状态 (0.0/1.0) |
 
 #### 控制映射 (默认)
 
@@ -67,7 +92,7 @@ Joystick input driver for ROS 2. 通过 evdev 读取游戏手柄输入并发布�
 #### 超时保护
 
 - 判定条件: 超过 `input_timeout_s` 秒未收到 `joystick_input` 消息
-- 超时行为: `/local_driving` 和 `arm/joint_command` 发布零值，气动保持最后状态
+- 超时行为: `/local_driving` 和 `arm/joint_navigation` 发布零值，气动保持最后状态
 - 手柄恢复后自动恢复正常控制
 
 #### 启动示例

@@ -65,12 +65,12 @@ Unit convention:
 `global_navigation_node` now consumes planar state directly from `/state_pose2d`, so there is no dependency on quaternion parsing inside this package.
 
 ## Integration with Base Package
-This package works in conjunction with the `base_omniwheel_r2_600` package:
+This package works in conjunction with other packages:
 - **Global Navigation** (this package): High-level path planning and waypoint following
 - **Local Navigation** (in `base_omniwheel_r2_600`): Low-level motion control and inverse kinematics
-- **Motor Control** (in `base_omniwheel_r2_600`): Direct motor commands via CAN bus
+- **Motor Control** (in `damiao_ctrl`): Unified Damiao motor driver via USB-CAN
 
-For complete system operation, both packages must be running. See `START_GUIDE.md` for detailed setup instructions.
+For complete system operation, all packages must be running. See `r2_launch` for the full launch configuration.
 
 ---
 
@@ -111,8 +111,8 @@ For complete system operation, both packages must be running. See `START_GUIDE.m
 ```
 [Mission YAML] → Global Navigation Node (MissionExecutor)
                     ├── /local_driving    → local_navigation_node → damiao_control → damiao_ctrl → Motor 1-4
-                    ├── arm/joint_command → arm_ctrl_node → damiao_control → damiao_ctrl → Motor 5-6
-                    └── arm/pneu_command  → arm_ctrl_node → joint_pneu_control → pneumatics → Arduino
+                    ├── arm/joint_navigation → arm_ctrl_node → damiao_control → damiao_ctrl → Motor 5-6
+                    └── arm/pneu_navigation  → arm_ctrl_node → arm/pneu_ctrl → pneumatics → Arduino
                           ↑
                     /state_pose2d  (arduino_sensor_driver)
                     /arduino/raw_sensor_data  (conditional evaluation)
@@ -187,8 +187,8 @@ ros2 launch navigation navigation.launch.py mission_file:=/path/to/mission.yaml
 | Sub | `/state_pose2d` | `Pose2D` |
 | Sub | `/arduino/raw_sensor_data` | `ArduinoSensorData` |
 | Pub | `/local_driving` | `Float32MultiArray` |
-| Pub | `arm/joint_command` | `Float32MultiArray` |
-| Pub | `arm/pneu_command` | `Float32MultiArray` |
+| Pub | `arm/joint_navigation` | `Float32MultiArray` |
+| Pub | `arm/pneu_navigation` | `Float32MultiArray` |
 | Pub | `/global_nav/status` | `String` |
 
 ---

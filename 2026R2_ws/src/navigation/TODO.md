@@ -9,6 +9,7 @@
 - [ ] 编写 `routes/blue_area.yaml` 比赛任务（蓝场，配合 mirror_y:=true 使用）
 - [x] 将 `navigation.launch.py` 默认 mission 改为存在的 `routes/forward_5m.yaml`
 - [x] 新增 `routes/forward_5m.yaml`，用于底盘沿 world/body +X 前进 5 m 的最小链路测试
+- [x] 修正 README 中 Integration 节对 motor control package 的过时引用（base_omniwheel → damiao_ctrl）(2026-06-03)
 - [x] 支持 mission YAML 通过 `angle_unit` / `yaw_unit` 指定 deg/rad，并由 MissionExecutor 转换为内部 rad
 - [x] 补充 Tracker CTE-P 控制与 SpeedProfiler cubic ease 设计文档（v0.4 README）
 - [x] 修复 `navigate` stage 起点未锁定导致 speed profiler `alpha=0` 自锁
@@ -20,7 +21,7 @@
 - [ ] 与 arduino_sensor_driver 联调 /state_pose2d
 - [ ] 与 base_omniwheel 联调 /local_driving
 - [ ] 与 arm 联调 damiao_control (Motor 5-6)
-- [ ] 与 pneumatics 联调 joint_pneu_control
+- [ ] 与 pneumatics 联调 arm/pneu_ctrl
 - [ ] 实测各 waypoint 坐标，校准正式 mission YAML
 - [ ] 实测各执行器语义值（motor positions, pneu states）
 - [ ] 添加更多 conditional 传感器条件支持（enc_x_counts 到达阈值等）

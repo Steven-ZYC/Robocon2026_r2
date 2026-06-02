@@ -93,8 +93,8 @@ class MissionExecutor:
 
         # Publishers (set after init by global_navigation_node)
         self.pub_driving = None
-        self.pub_joint = None   # arm/joint_command
-        self.pub_pneu = None    # arm/pneu_command
+        self.pub_joint = None   # arm/joint_navigation
+        self.pub_pneu = None    # arm/pneu_navigation
         self.pub_target_pose = None  # /global_nav/target_pose
 
         # Sensor subscriptions (set after init)
@@ -527,9 +527,9 @@ class MissionExecutor:
     # ------------------------------------------------------------------
 
     def _execute_arm(self, stage):
-        """Translate semantic arm commands → arm/joint_command + arm/pneu_command.
+        """Translate semantic arm commands → arm/joint_navigation + arm/pneu_navigation.
 
-        arm/joint_command uses triplet format:
+        arm/joint_navigation uses triplet format:
           [motor_id, position_rad, speed_rad_s, ...]
 
         motor_id comes directly from the actuator definition in YAML.
@@ -567,7 +567,7 @@ class MissionExecutor:
         self._pub_pneu_cmd(pneu_targets)
 
     def _pub_joint_cmd(self, targets):
-        """Publish joint triplets to arm/joint_command.
+        """Publish joint triplets to arm/joint_navigation.
 
         targets format: [motor_id, pos_rad, speed_rad_s, ...]
         """
@@ -578,7 +578,7 @@ class MissionExecutor:
         self.pub_joint.publish(msg)
 
     def _pub_pneu_cmd(self, targets):
-        """Publish pneumatic target array to arm/pneu_command."""
+        """Publish pneumatic target array to arm/pneu_navigation."""
         if self.pub_pneu is None:
             return
         msg = Float32MultiArray()

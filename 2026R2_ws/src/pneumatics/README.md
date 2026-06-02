@@ -14,7 +14,7 @@ Arduino 驱动的机械臂气动阀控制包。通过串口控制电磁阀，实
 
 | Node | 可执行文件 | 职责 |
 |---|---|---|
-| pneu_ctrl_node | `pneu_ctrl_node` | 订阅 `joint_pneu_control`，通过串口发送气动阀状态至 Arduino |
+| pneu_ctrl_node | `pneu_ctrl_node` | 订阅 `arm/pneu_ctrl`，通过串口发送气动阀状态至 Arduino |
 
 ---
 
@@ -24,9 +24,9 @@ Arduino 驱动的机械臂气动阀控制包。通过串口控制电磁阀，实
 
 | 方向 | Topic | 类型 |
 |---|---|---|
-| Sub | `joint_pneu_control` | `std_msgs/Float32MultiArray` |
+| Sub | `arm/pneu_ctrl` | `std_msgs/Float32MultiArray` |
 
-`joint_pneu_control` 格式：`[gripper, lift, stopper]`
+`arm/pneu_ctrl` 格式：`[gripper, lift, stopper]`
 - 值域：0.0（关闭）/ 1.0（开启），内部 clamp 到 0/1
 
 #### 串口协议
@@ -54,7 +54,7 @@ Arduino 驱动的机械臂气动阀控制包。通过串口控制电磁阀，实
 
 #### 超时保护
 
-若 `joint_pneu_control` 在 `timeout_sec`（默认 1.0s）内无新指令，所有气动阀自动置 0（安全状态）。
+若 `arm/pneu_ctrl` 在 `timeout_sec`（默认 1.0s）内无新指令，所有气动阀自动置 0（安全状态）。
 
 ## 启动方式
 
@@ -71,13 +71,13 @@ ros2 launch pneumatics pneumatics.launch.py serial_port:=/dev/ttyUSB0
 
 ```bash
 # 查看气动状态
-ros2 topic echo joint_pneu_control
+ros2 topic echo arm/pneu_ctrl
 
 # 手动开启夹爪 + 止动
-ros2 topic pub joint_pneu_control std_msgs/Float32MultiArray "data: [1.0, 0.0, 1.0]"
+ros2 topic pub arm/pneu_ctrl std_msgs/Float32MultiArray "data: [1.0, 0.0, 1.0]"
 
 # 全部关闭
-ros2 topic pub joint_pneu_control std_msgs/Float32MultiArray "data: [0.0, 0.0, 0.0]"
+ros2 topic pub arm/pneu_ctrl std_msgs/Float32MultiArray "data: [0.0, 0.0, 0.0]"
 ```
 
 ---
@@ -133,7 +133,7 @@ Arduino 会返回的典型信息：
 本节点实现**双层超时保护**：
 
 1. **ROS2 侧**（pneu_ctrl_node）：
-   - 触发条件：`joint_pneu_control` 在 `timeout_sec`（默认 1.0s）内无新指令
+   - 触发条件：`arm/pneu_ctrl` 在 `timeout_sec`（默认 1.0s）内无新指令
    - 行为：自动发送 `[0,0,0]` 全部关闭，输出 WARN 日志
    - 可通过 `timeout_sec` 参数调整
 
@@ -149,7 +149,7 @@ Arduino 会返回的典型信息：
 原因：气动阀是开关量（0/1），不需要周期刷新。周期重发 + Arduino `printStatus()` 在 9600 baud 下造成串口阻塞，导致继电器抽搐。
 
 发送规则：
-- `joint_pneu_control` 新指令到达且与上一次不同 → 立即发送
+- `arm/pneu_ctrl` 新指令到达且与上一次不同 → 立即发送
 - timeout 触发（1s 内无新指令）→ 发送 `[0,0,0]` 一次，之后去重不再重复发送
 - 相同指令不重复发送（去重）
 

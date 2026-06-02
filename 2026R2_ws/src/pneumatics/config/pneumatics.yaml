@@ -11,5 +11,5 @@ pneu_ctrl:
     timeout_sec: 1.0                    # Set all valves to 0 if no command received
     publish_rate_hz: 20.0               # Watchdog refresh rate
 
-    # Actuator names (order must match joint_pneu_control data array)
+    # Actuator names (order must match arm/pneu_ctrl data array)
     pneu_names: ["arm_gripper", "arm_lift", "arm_stopper"]

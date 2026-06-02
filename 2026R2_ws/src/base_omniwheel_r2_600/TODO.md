@@ -31,4 +31,6 @@
 - [ ] 将 motor IDs、轮距、轮半径、轮角、方向和串口设备 ID 改为 launch/config 参数
 - [ ] 在 launch 文件中暴露 `command_timeout` 参数
 - [ ] 增加只启动 `damiao_node` 的低层硬件测试 launch
-- [x] 将 `forward_0_1mps_5s.sh` 切换为当前双 USB-CAN 架构，使用 `base_omniwheel_r2_600/damiao_node` 而不是 `damiao_ctrl`。
+- [x] 将 `forward_0_1mps_5s.sh` 切换为当前双 USB-CAN 架构，使用 `base_omniwheel_r2_600/damiao_node` 而不是 `damiao_ctrl`。（历史状态，现主链路已回到 damiao_ctrl）
+- [x] 明确 `base_omniwheel_r2_600/damiao_node` 仅作为备用调试节点，主链路由 `damiao_ctrl/damiao_node` 控制 1-6 号达妙。
+- [x] 更新 Quick Start 和测试脚本文档，不再引用本包 damiao_node 作为主链路 (2026-06-03)

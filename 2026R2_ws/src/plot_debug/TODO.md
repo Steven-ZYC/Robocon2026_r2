@@ -20,3 +20,6 @@
 - [ ] 增加数据录制回放模式（从 rosbag 读取而非实时订阅）
 - [ ] Figure 窗口自动排列（避免重叠）
 - [ ] CSV 加载回放模式（读取之前保存的 CSV 重新绘图）
+
+- [x] v4：修复 headless 模式重复 spin 导致 plot_debug 可能无法正确启动
+- [x] v4：headless 退出保存截图前自动创建 save_dir 并刷新图表

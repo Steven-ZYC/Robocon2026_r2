@@ -6,10 +6,11 @@ initialized successfully, while different groups may run independently.
 
 Subscribes:
 - base/damiao_control (Float32MultiArray): chassis [motor_id, mode, speed, position?]
-- arm/damiao_control (Float32MultiArray): arm [motor_id, mode, speed, position?]
+- arm/damiao_ctrl (Float32MultiArray): arm [motor_id, mode, speed, position?]
 
 Publishes:
-- damiao_feedback (Float32MultiArray): [motor_id, q_rad, dq_rad_s, tau_Nm, enabled]
+- damiao_feedback (Float32MultiArray): after command recv(),
+  [motor_id, output_q_rad, output_dq_rad_s, output_tau_Nm, enabled]
 """
 
 import os
@@ -26,13 +27,12 @@ from damiao_ctrl.DM_CAN import Control_Type, DM_Motor_Type, Motor, MotorControl
 DEFAULT_DEVICE_ID = "/dev/damiao_can"
 DEFAULT_COMMAND_TIMEOUT = 0.5
 DEFAULT_FEEDBACK_TOPIC = "damiao_feedback"
-DEFAULT_FEEDBACK_MOTOR_ID = 5
 DEFAULT_CHASSIS_MOTOR_IDS = [1, 2, 3, 4]
 DEFAULT_CHASSIS_MOTOR_MODES = [3, 3, 3, 3]
 DEFAULT_CHASSIS_CONTROL_TOPIC = "base/damiao_control"
 DEFAULT_ARM_MOTOR_IDS = [5, 6]
 DEFAULT_ARM_MOTOR_MODES = [2, 2]
-DEFAULT_ARM_CONTROL_TOPIC = "arm/damiao_control"
+DEFAULT_ARM_CONTROL_TOPIC = "arm/damiao_ctrl"
 DAMIAO_GEAR_RATIO = 19.227
 FALLBACK_CONTROL_MODE = Control_Type.VEL
 RECONNECT_INTERVAL = 2.0
@@ -40,7 +40,6 @@ RECONNECT_MAX_ATTEMPTS = 5
 SERIAL_OPEN_SETTLE_S = 1.0
 ENABLE_FEEDBACK_TIMEOUT_S = 0.25
 RECV_POLL_INTERVAL_S = 0.01
-FEEDBACK_PUBLISH_HZ = 50.0
 CTRL_MODE_RID = 0x0A
 MODE_READ_TIMEOUT_S = 0.25
 MODE_VERIFY_ATTEMPTS = 2
@@ -60,9 +59,6 @@ class MotorControllerNode(Node):
         )
         self.feedback_topic = str(
             self.declare_parameter("feedback_topic", DEFAULT_FEEDBACK_TOPIC).value
-        )
-        self.feedback_motor_id = int(
-            self.declare_parameter("feedback_motor_id", DEFAULT_FEEDBACK_MOTOR_ID).value
         )
         self.gear_ratio = float(
             self.declare_parameter("gear_ratio", DAMIAO_GEAR_RATIO).value
@@ -106,9 +102,6 @@ class MotorControllerNode(Node):
 
         self.feedback_pub = self.create_publisher(
             Float32MultiArray, self.feedback_topic, 10
-        )
-        self.feedback_timer = self.create_timer(
-            1.0 / FEEDBACK_PUBLISH_HZ, self._feedback_loop
         )
 
         self.get_logger().info(
@@ -481,6 +474,7 @@ class MotorControllerNode(Node):
                 self.get_logger().info(
                     f"{group_name} group disabled by command for motor {motor_id}"
                 )
+                self._publish_motor_feedback(motor_id)
             elif mode == 2:
                 if len(msg.data) < 4:
                     self.get_logger().warn(
@@ -491,6 +485,7 @@ class MotorControllerNode(Node):
                 input_position = float(msg.data[3])
                 motor_position = self._to_motor_position(input_position)
                 self.motor_control.control_Pos_Vel(motor, motor_position, motor_speed)
+                self._publish_motor_feedback(motor_id)
                 self.get_logger().debug(
                     f"{group_name} motor {motor_id}: "
                     f"input_pos={input_position}, motor_pos={motor_position}, "
@@ -499,6 +494,7 @@ class MotorControllerNode(Node):
             elif mode == 3:
                 self._ensure_group_enabled(group_name)
                 self.motor_control.control_Vel(motor, motor_speed)
+                self._publish_motor_feedback(motor_id)
                 self.get_logger().debug(
                     f"{group_name} motor {motor_id}: "
                     f"input_vel={input_speed}, motor_vel={motor_speed}"
@@ -585,29 +581,17 @@ class MotorControllerNode(Node):
                 f"{self.command_timeout:.2f}s; stopped {group_name} group."
             )
 
-    def _feedback_loop(self):
-        """Drain CAN feedback and publish the configured feedback motor state."""
-        if not self.is_connected:
-            return
-        try:
-            self.motor_control.recv()
-        except Exception:
-            return
-
-        motor = self.motors.get(self.feedback_motor_id)
+    def _publish_motor_feedback(self, motor_id):
+        """Publish gear-ratio-converted output-side state after a command recv()."""
+        motor = self.motors.get(motor_id)
         if motor is None:
             return
-
-        group_name = self.motor_to_group.get(self.feedback_motor_id)
-        if group_name not in self.active_groups:
-            return
-
         msg = Float32MultiArray()
         msg.data = [
-            float(self.feedback_motor_id),
-            float(motor.state_q),
-            float(motor.state_dq),
-            float(motor.state_tau),
+            float(motor_id),
+            float(motor.state_q / self.gear_ratio),
+            float(motor.state_dq / self.gear_ratio),
+            float(motor.state_tau * self.gear_ratio),
             1.0 if motor.isEnable else 0.0,
         ]
         self.feedback_pub.publish(msg)

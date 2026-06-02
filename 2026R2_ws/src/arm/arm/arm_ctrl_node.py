@@ -5,16 +5,16 @@ performs control logic computation, and publishes to the corresponding
 low-level control topics.
 
 Subscribes:
-- arm/joint_command (Float32MultiArray):
+- arm/joint_navigation (Float32MultiArray):
     Triplet format: [motor_id, position_rad, speed_rad_s, ...]
     motor_id is matched against joint_motor_ids param for routing.
-- arm/pneu_command (Float32MultiArray): [gripper, lift, stopper]  (0.0/1.0)
+- arm/pneu_navigation (Float32MultiArray): [gripper, lift, stopper]  (0.0/1.0)
 
 Publishes:
-- arm/damiao_control (Float32MultiArray):
+- arm/damiao_ctrl (Float32MultiArray):
     POS_VEL (mode 2): [motor_id, 2, speed, position]
     VEL (mode 3):     [motor_id, 3, speed]
-- joint_pneu_control (Float32MultiArray): [gripper, lift, stopper] (0.0/1.0)
+- arm/pneu_ctrl (Float32MultiArray): [gripper, lift, stopper] (0.0/1.0)
 """
 
 import rclpy
@@ -24,13 +24,14 @@ import time
 
 DEFAULT_JOINT_MOTOR_IDS = [5, 6]
 DEFAULT_JOINT_DIRECTIONS = [1.0, 1.0]
+DEFAULT_JOINT_LIMIT_RAD = 1.57952   # ±90.5 deg → rad，输出端关节位置上下限
 DEFAULT_CONTROL_MODE = 2  # POS_VEL（机械臂关节默认位置-速度模式）
-DEFAULT_MAX_SPEED_RAD_S = 2.0         # 输出端最大速度 (rad/s)，DM3519 经 19.227 减速后 ≈ 2.34
-DEFAULT_GEAR_RATIO = 19.227           # DM3519 减速比（电机轴 → 输出端）
-DEFAULT_MAX_MOTOR_SPEED_RAD_S = 45.0  # DM3519 电机轴最大速度 (rad/s)
+DEFAULT_MAX_SPEED_RAD_S = 1.3         # 输出端最大速度 (rad/s)
+DEFAULT_GEAR_RATIO = 1.0              # 主链路由 damiao_ctrl 统一做真实齿轮比换算
+DEFAULT_MAX_MOTOR_SPEED_RAD_S = 1.3 / 19.227  # 电机轴硬限速 1.3 rad/s，gear_ratio=1.0 时输出端等效 ≈0.0676
 DEFAULT_REPUBLISH_RATE_HZ = 20.0
 DEFAULT_PNEU_NAMES = ["arm_gripper", "arm_lift", "arm_stopper"]
-DEFAULT_MOTOR_CONTROL_TOPIC = "arm/damiao_control"
+DEFAULT_MOTOR_CONTROL_TOPIC = "arm/damiao_ctrl"
 
 
 class ArmCtrlNode(Node):
@@ -58,6 +59,9 @@ class ArmCtrlNode(Node):
         )
         self.max_motor_speed_rad_s = float(
             self.declare_parameter("max_motor_speed_rad_s", DEFAULT_MAX_MOTOR_SPEED_RAD_S).value
+        )
+        self.joint_limit_rad = float(
+            self.declare_parameter("joint_limit_rad", DEFAULT_JOINT_LIMIT_RAD).value
         )
 
         joint_motor_ids_param = self.declare_parameter(
@@ -99,13 +103,13 @@ class ArmCtrlNode(Node):
         # ---- Subscriptions ----
         self.joint_sub = self.create_subscription(
             Float32MultiArray,
-            "arm/joint_command",
+            "arm/joint_navigation",
             self.joint_command_callback,
             10,
         )
         self.pneu_sub = self.create_subscription(
             Float32MultiArray,
-            "arm/pneu_command",
+            "arm/pneu_navigation",
             self.pneu_command_callback,
             10,
         )
@@ -118,7 +122,7 @@ class ArmCtrlNode(Node):
         )
         self.pneu_publisher = self.create_publisher(
             Float32MultiArray,
-            "joint_pneu_control",
+            "arm/pneu_ctrl",
             10,
         )
 
@@ -132,6 +136,7 @@ class ArmCtrlNode(Node):
             f"Arm Ctrl Node initialized: {self.num_joints} joints "
             f"(motor_ids={self.joint_motor_ids}, mode={self.control_mode}, topic={self.motor_control_topic}), "
             f"gear_ratio={self.gear_ratio}, "
+            f"joint_limit=±{self.joint_limit_rad:.4f} rad, "
             f"max_output_speed={self.max_speed_rad_s} rad/s, "
             f"max_motor_speed={self.max_motor_speed_rad_s} rad/s, "
             f"{self.num_pneu} pneumatics ({self.pneu_names})"
@@ -146,7 +151,7 @@ class ArmCtrlNode(Node):
 
         Each triplet carries its own motor_id, so the caller (FSM or joystick)
         decides which motor to address. motor_id is validated against
-        joint_motor_ids before forwarding to arm/damiao_control.
+        joint_motor_ids before forwarding to arm/damiao_ctrl.
         """
         if len(msg.data) < 3:
             self.get_logger().warn(
@@ -164,7 +169,7 @@ class ArmCtrlNode(Node):
         self.publish_joint_commands(msg.data)
 
     def publish_joint_commands(self, triplets):
-        """Convert joint triplets to per-motor arm/damiao_control messages.
+        """Convert joint triplets to per-motor arm/damiao_ctrl messages.
 
         triplets format: [motor_id, position_rad, speed_rad_s, ...]
 
@@ -198,6 +203,7 @@ class ArmCtrlNode(Node):
 
             # Apply direction to position; speed magnitude clamp in output space
             position = position * direction
+            position = max(-self.joint_limit_rad, min(self.joint_limit_rad, position))
             speed = abs(speed)
             speed = min(self.max_speed_rad_s, speed)
 
@@ -245,7 +251,7 @@ class ArmCtrlNode(Node):
         self.publish_pneu_commands(targets)
 
     def publish_pneu_commands(self, targets):
-        """Publish pneumatic states to joint_pneu_control."""
+        """Publish pneumatic states to arm/pneu_ctrl."""
         msg = Float32MultiArray()
         msg.data = targets
         self.pneu_publisher.publish(msg)

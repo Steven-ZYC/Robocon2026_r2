@@ -8,6 +8,7 @@ WS=~/Robocon2026_r2/2026R2_ws
 TOOLS=$WS/tools
 SPEED_MPS=2.0
 DAMIAO_GEAR_RATIO=19.227
+DISPLAY_VAL="${DISPLAY:-:0}"
 CHASSIS_CAN_DEVICE="${CHASSIS_CAN_DEVICE:-/dev/chassis_damiao_can}"
 MISSION_FILE=/tmp/y_2m_2_0mps_mission.yaml
 FIELD_FILE=$WS/src/navigation/routes/red_field.yaml
@@ -45,7 +46,7 @@ angle_unit: deg
 # Assumption: /state_pose2d has been zeroed near x=0, y=0, theta=0 before launch.
 waypoints:
   wp_y_2m:
-    pose: { x: 1.0, y: 0.0, yaw: 0.0 }
+    pose: { x: 1.0, y: 1.0, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
@@ -123,9 +124,11 @@ gnome-terminal --geometry=100x12+0+850 -- bash -c "
 source $WS/install/setup.bash
 echo '=== 窗口4: plot_debug (matplotlib 实时可视化) ==='
 echo '单一图形窗口: Pose2D 轨迹 | Target Error | Local Driving'
+echo 'DISPLAY: $DISPLAY_VAL'
 echo '关闭所有绘图窗口即退出'
 echo ''
-ros2 run plot_debug plot_debug_node --ros-args -p show_damiao:=false -p save_dir:=/home/robotics/Robocon2026_r2/log_plot_debug 2>&1
+export DISPLAY="$DISPLAY_VAL"
+ros2 run plot_debug plot_debug_node --ros-args -p show_damiao:=false -p show_damiao_feedback:=false -p save_dir:=/home/robotics/Robocon2026_r2/log_plot_debug 2>&1
 echo ''
 echo '=== plot_debug 已退出 ==='
 read -p '按 Enter 关闭此窗口...'

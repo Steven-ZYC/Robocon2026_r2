@@ -152,3 +152,13 @@ ros2 run plot_debug plot_debug_node --ros-args -p show_damiao:=false
 ros2 run plot_debug plot_debug_node --ros-args -p show_damiao:=false
 ros2 run plot_debug plot_debug_node --ros-args -p max_history:=1000 -p save_dir:=~/my_logs
 ```
+
+### v4 — 修复 headless 启动循环与截图保存（2026-05-30）
+
+**Bug 修复：**
+- Headless 模式下不再对同一个 node 同时使用 executor 线程和 `rclpy.spin_once(node)`，避免 plot_debug 启动后因 executor 冲突异常退出。
+- Headless 模式退出保存 PNG 前会先主动刷新一次图表，并自动创建 `save_dir`，避免目录不存在导致截图保存失败。
+
+**启动行为：**
+- 有 `DISPLAY`：使用 matplotlib GUI 窗口实时刷新，关闭窗口后保存 CSV。
+- 无 `DISPLAY`：使用 Agg 后端持续采集数据，Ctrl+C 退出后保存 CSV 与 `snapshot.png`。

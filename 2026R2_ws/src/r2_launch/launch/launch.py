@@ -22,12 +22,24 @@ def generate_launch_description():
         description='Path to mission YAML file'
     )
 
-    chassis_damiao_node = Node(
-        package='base_omniwheel_r2_600',
+    damiao_ctrl_node = Node(
+        package='damiao_ctrl',
         executable='damiao_node',
-        name='chassis_damiao_motor_controller',
+        name='damiao_motor_controller',
         output='screen',
         emulate_tty=True,
+        parameters=[{
+            'device_id': '/dev/damiao_can',
+            'chassis_motor_ids': [1, 2, 3, 4],
+            'chassis_motor_modes': [3, 3, 3, 3],
+            'chassis_control_topic': 'base/damiao_control',
+            'arm_motor_ids': [5, 6],
+            'arm_motor_modes': [2, 2],
+            'arm_control_topic': 'arm/damiao_ctrl',
+            'feedback_topic': 'damiao_feedback',
+            'gear_ratio': 19.227,
+            'command_timeout': 0.5,
+        }],
     )
 
     arduino_sensor_node = Node(
@@ -56,23 +68,6 @@ def generate_launch_description():
         ],
     )
 
-    arm_damiao_node = Node(
-        package='arm',
-        executable='arm_damiao_node',
-        name='arm_damiao_motor_controller',
-        output='screen',
-        emulate_tty=True,
-        parameters=[{
-            'device_id': '/dev/arm_damiao_can',
-            'motor_ids': [5, 6],
-            'motor_modes': [2, 2],
-            'control_topic': 'arm/damiao_control',
-            'feedback_topic': '/damiao_feedback',
-            'feedback_motor_id': 5,
-            'command_timeout': 0.5,
-        }],
-    )
-
     arm_ctrl_node = Node(
         package='arm',
         executable='arm_ctrl_node',
@@ -83,10 +78,10 @@ def generate_launch_description():
             'joint_motor_ids': [5, 6],
             'joint_directions': [1.0, 1.0],
             'control_mode': 2,
-            'motor_control_topic': 'arm/damiao_control',
+            'motor_control_topic': 'arm/damiao_ctrl',
             'max_speed_rad_s': 2.0,
-            'gear_ratio': 19.227,
-            'max_motor_speed_rad_s': 45.0,
+            'gear_ratio': 1.0,
+            'max_motor_speed_rad_s': 0.0676,
             'republish_rate_hz': 20.0,
         }],
     )
@@ -100,11 +95,10 @@ def generate_launch_description():
 
     return LaunchDescription([
         mission_file_arg,
-        chassis_damiao_node,
+        damiao_ctrl_node,
         arduino_sensor_node,
         local_navigation_node,
         global_navigation_node,
-        arm_damiao_node,
         arm_ctrl_node,
         pneu_ctrl_node,
     ])

@@ -10,9 +10,9 @@ Subscribes:
 
 Publishes:
 - /local_driving (Float32MultiArray): chassis motion → local_navigation_node
-- arm/joint_command (Float32MultiArray):
+- arm/joint_navigation (Float32MultiArray):
     Triplet format: [motor_id, pos_rad, speed_rad_s, ...] → arm_ctrl_node
-- arm/pneu_command (Float32MultiArray): arm pneumatic targets → arm_ctrl_node
+- arm/pneu_navigation (Float32MultiArray): arm pneumatic targets → arm_ctrl_node
 - /global_nav/target_pose (Pose2D): active navigation target for plot/debug tools
 """
 
@@ -53,8 +53,8 @@ class GlobalNavigationNode(Node):
 
         # Publishers
         self.cmd_pub = self.create_publisher(Float32MultiArray, '/local_driving', 10)
-        self.joint_pub = self.create_publisher(Float32MultiArray, 'arm/joint_command', 10)
-        self.pneu_pub = self.create_publisher(Float32MultiArray, 'arm/pneu_command', 10)
+        self.joint_pub = self.create_publisher(Float32MultiArray, 'arm/joint_navigation', 10)
+        self.pneu_pub = self.create_publisher(Float32MultiArray, 'arm/pneu_navigation', 10)
         self.target_pose_pub = self.create_publisher(Pose2D, '/global_nav/target_pose', 10)
         self.status_pub = self.create_publisher(String, '/global_nav/status', 10)
 

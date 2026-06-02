@@ -76,7 +76,7 @@ gnome-terminal --title="forward_0_1mps_5s" -- bash -c "
     echo 'Forward command: direction=0 rad, speed=0.01 m/s, rotation=0 rad/s'
     echo 'Current chain: /local_driving -> local_navigation_node -> base/damiao_control -> chassis damiao_node.'
     echo 'Publishing at 10 Hz for 5 seconds to keep local_navigation_node watchdog fresh.'
-    timeout 5s ros2 topic pub --rate 10 /local_driving std_msgs/msg/Float32MultiArray '{data: [0.0, 0.01, 0.0]}' || true
+    timeout 5s ros2 topic pub --rate 10 /local_driving std_msgs/msg/Float32MultiArray '{data: [0.785, 1, 0.0]}' || true
     echo ''
     echo 'Sending stop command...'
     ros2 topic pub --once /local_driving std_msgs/msg/Float32MultiArray '{data: [0.0, 0.0, 0.0]}'

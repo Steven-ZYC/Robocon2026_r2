@@ -6,7 +6,7 @@ robot run two USB-CAN adapters at the same time:
 - arm_damiao_node in this package controls motors 5-6
 
 Subscribed:
-- arm/damiao_control (Float32MultiArray): [motor_id, mode, speed, position?]
+- arm/damiao_ctrl (Float32MultiArray): [motor_id, mode, speed, position?]
 
 Published:
 - damiao_feedback (Float32MultiArray): [motor_id, q_rad, dq_rad_s, tau_Nm, enabled]
@@ -26,7 +26,7 @@ from arm.DM_CAN import Control_Type, DM_Motor_Type, Motor, MotorControl
 DEFAULT_DEVICE_ID = "/dev/arm_damiao_can"
 DEFAULT_MOTOR_IDS = [5, 6]
 DEFAULT_MOTOR_MODES = [2, 2]  # POS_VEL for arm joints
-DEFAULT_CONTROL_TOPIC = "arm/damiao_control"
+DEFAULT_CONTROL_TOPIC = "arm/damiao_ctrl"
 DEFAULT_FEEDBACK_TOPIC = "damiao_feedback"
 DEFAULT_FEEDBACK_MOTOR_ID = 5
 FALLBACK_CONTROL_MODE = Control_Type.POS_VEL
@@ -353,7 +353,7 @@ class ArmDamiaoNode(Node):
             self.motor_control.control_Vel(motor, 0.0)
 
     def _check_command_timeout(self):
-        """Hold/stop arm motors once if arm/damiao_control stops refreshing."""
+        """Hold/stop arm motors once if arm/damiao_ctrl stops refreshing."""
         if (
             not self.is_connected
             or self.last_control_time is None

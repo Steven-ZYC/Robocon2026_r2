@@ -17,7 +17,7 @@ Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 
 
 | Node | 可执行文件 | 职责 |
 |---|---|---|
-| arm_ctrl_node | `arm_ctrl_node` | 关节级控制器，订阅 `arm/joint_command` 和 `arm/pneu_command`，发布 `damiao_control` |
+| arm_ctrl_node | `arm_ctrl_node` | 关节级控制器，订阅 `arm/joint_navigation` 和 `arm/pneu_navigation`，发布 `damiao_control` |
 
 ---
 
@@ -27,18 +27,18 @@ Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 
 
 | 方向 | Topic | 类型 |
 |---|---|---|
-| Sub | `arm/joint_command` | `std_msgs/Float32MultiArray` |
-| Sub | `arm/pneu_command` | `std_msgs/Float32MultiArray` |
+| Sub | `arm/joint_navigation` | `std_msgs/Float32MultiArray` |
+| Sub | `arm/pneu_navigation` | `std_msgs/Float32MultiArray` |
 | Pub | `damiao_control` | `std_msgs/Float32MultiArray` |
-| Pub | `joint_pneu_control` | `std_msgs/Float32MultiArray` |
+| Pub | `arm/pneu_ctrl` | `std_msgs/Float32MultiArray` |
 
-`arm/joint_command` 格式：`[joint_1_target, joint_2_target, ...]`
+`arm/joint_navigation` 格式：`[joint_1_target, joint_2_target, ...]`
 - VEL 模式（mode=3）：target 为角速度 (rad/s)
 - POS_VEL 模式（mode=2）：target 为位置 (rad)
 
-`arm/pneu_command` 格式：`[gripper, lift, stopper]`
+`arm/pneu_navigation` 格式：`[gripper, lift, stopper]`
 - 值域 0.0（关闭）/ 1.0（开启），arm_ctrl_node 会 clamp 到 0/1
-- 通过 `joint_pneu_control` 转发至 pneumatics 包
+- 通过 `arm/pneu_ctrl` 转发至 pneumatics 包
 
 #### 参数
 
@@ -70,16 +70,16 @@ ros2 run arm arm_ctrl_node --ros-args -p joint_motor_ids:="[5,6]"
 ros2 topic echo damiao_control
 
 # 发送关节速度指令 (VEL 模式，关节 5 和 6 各 1.0 rad/s)
-ros2 topic pub arm/joint_command std_msgs/Float32MultiArray "data: [1.0, 1.0]"
+ros2 topic pub arm/joint_navigation std_msgs/Float32MultiArray "data: [1.0, 1.0]"
 
 # 发送失能指令
 ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [5, 0, 0.0]"
 
 # 发送气动指令（开启夹爪和止动，关闭升降）
-ros2 topic pub arm/pneu_command std_msgs/Float32MultiArray "data: [1.0, 0.0, 1.0]"
+ros2 topic pub arm/pneu_navigation std_msgs/Float32MultiArray "data: [1.0, 0.0, 1.0]"
 
 # 查看气动状态
-ros2 topic echo joint_pneu_control
+ros2 topic echo arm/pneu_ctrl
 ```
 
 ---
@@ -89,12 +89,12 @@ ros2 topic echo joint_pneu_control
 ### 架构变更
 
 - `DM_CAN.py` 和 `damiao_node.py` 已从本包移除，电机控制统一由 `damiao_ctrl` 包负责。
-- `arm_ctrl_node` 现在直接发布到 `damiao_control`（而非 `arm/damiao_control`），与底盘 `local_navigation_node` 共用同一 topic。
+- `arm_ctrl_node` 现在直接发布到 `damiao_control`（而非 `arm/damiao_ctrl`），与底盘 `local_navigation_node` 共用同一 topic。
 
 ### 数据流（v0.2）
 
 ```
-arm/joint_command ([joint1, joint2, ...])
+arm/joint_navigation ([joint1, joint2, ...])
         ↓
 arm_ctrl_node (关节方向/限速, mode=2 POS_VEL)
         ↓
@@ -122,9 +122,9 @@ ros2 launch arm arm.launch.py
 
 ### 架构变更
 
-- `arm_ctrl_node` 新增 `arm/pneu_command` 订阅和 `joint_pneu_control` 发布
-- 气动指令由 FSM/global_navigation 发布到 `arm/pneu_command`，arm_ctrl_node 透传至 `joint_pneu_control`
-- `joint_pneu_control` 格式：`[gripper, lift, stopper]`（0.0/1.0）
+- `arm_ctrl_node` 新增 `arm/pneu_navigation` 订阅和 `arm/pneu_ctrl` 发布
+- 气动指令由 FSM/global_navigation 发布到 `arm/pneu_navigation`，arm_ctrl_node 透传至 `arm/pneu_ctrl`
+- `arm/pneu_ctrl` 格式：`[gripper, lift, stopper]`（0.0/1.0）
 - 新增 `pneu_names` 参数，默认 `["arm_gripper", "arm_lift", "arm_stopper"]`
 - 20Hz watchdog 同时覆盖 motor 和 pneu 指令刷新
 
@@ -132,13 +132,13 @@ ros2 launch arm arm.launch.py
 
 ```
 FSM / global_navigation
-    ├── arm/joint_command ([j1, j2])
+    ├── arm/joint_navigation ([j1, j2])
     │        ↓
     │   arm_ctrl_node
     │        ├──→ damiao_control → damiao_ctrl → Motor 5, 6
-    │        └──→ joint_pneu_control   → pneumatics   → Arduino → 气动阀
+    │        └──→ arm/pneu_ctrl   → pneumatics   → Arduino → 气动阀
     │
-    └── arm/pneu_command ([gripper, lift, stopper])
+    └── arm/pneu_navigation ([gripper, lift, stopper])
 ```
 
 ### 启动方式（v0.3）
@@ -160,8 +160,10 @@ ros2 launch arm arm.launch.py
 
 | 日期 | 说明 |
 |---|---|
-| 2026-05-20 | v0.4 — arm 独立 USB-CAN Damiao 驱动，输出改为 `arm/damiao_control`，`damiao_ctrl` 暂时悬置 |
-| 2026-05-15 | v0.3 — 新增 arm/pneu_command + joint_pneu_control，支持气动控制 |
+| 2026-06-01 | v0.6 — `arm.launch.py` 默认只启动 `arm_ctrl_node`；`arm_damiao_node` 保留为备用，主链路由 `damiao_ctrl` 驱动达妙 |
+| 2026-06-01 | v0.5 — 新增根目录 `arm_damiao_test.sh`，通过统一 `damiao_ctrl` 测试 arm motor 5 的 45deg 往返动作 |
+| 2026-05-20 | v0.4 — arm 独立 USB-CAN Damiao 驱动，输出改为 `arm/damiao_ctrl`，`damiao_ctrl` 暂时悬置 |
+| 2026-05-15 | v0.3 — 新增 arm/pneu_navigation + arm/pneu_ctrl，支持气动控制 |
 | 2026-05-14 | v0.2 — 移除 damiao_node，发布到 damiao_control，依赖 damiao_ctrl |
 | 2026-05-14 | v0.1 — 从 base_omniwheel_r2_600 分离，创建 arm 包 |
 ---
@@ -175,16 +177,16 @@ ros2 launch arm arm.launch.py
 | Node | 可执行文件 | 职责 |
 |---|---|---|
 | arm_damiao_motor_controller | `arm_damiao_node` | 独占 arm USB-CAN，控制 arm Damiao motor 5-6 |
-| arm_ctrl_node | `arm_ctrl_node` | 订阅 FSM/joystick 的 arm 指令，转换为 `arm/damiao_control`；同时转发气动指令 |
+| arm_ctrl_node | `arm_ctrl_node` | 订阅 FSM/joystick 的 arm 指令，转换为 `arm/damiao_ctrl`；同时转发气动指令 |
 
 ### 当前 arm 控制链条
 
 ```text
-arm/joint_command
+arm/joint_navigation
     ↓
 arm_ctrl_node
     ↓
-arm/damiao_control
+arm/damiao_ctrl
     ↓
 arm_damiao_node
     ↓
@@ -196,14 +198,14 @@ Damiao motors 5-6 (POS_VEL)
 气动链条不变：
 
 ```text
-arm/pneu_command → arm_ctrl_node → joint_pneu_control → pneumatics/pneu_ctrl_node
+arm/pneu_navigation → arm_ctrl_node → arm/pneu_ctrl → pneumatics/pneu_ctrl_node
 ```
 
 ### arm_damiao_node 接口
 
 | 方向 | Topic | 类型 | 说明 |
 |---|---|---|---|
-| Sub | `arm/damiao_control` | `std_msgs/Float32MultiArray` | `[motor_id, mode, speed, position?]` |
+| Sub | `arm/damiao_ctrl` | `std_msgs/Float32MultiArray` | `[motor_id, mode, speed, position?]` |
 | Pub | `/damiao_feedback` | `std_msgs/Float32MultiArray` | `[motor_id, q_rad, dq_rad_s, tau_Nm, enabled]`，默认发布 motor 5 |
 
 参数：
@@ -213,12 +215,12 @@ arm/pneu_command → arm_ctrl_node → joint_pneu_control → pneumatics/pneu_ct
 | `device_id` | `/dev/arm_damiao_can` | - | arm USB-CAN 设备路径 |
 | `motor_ids` | `[5, 6]` | - | arm Damiao 电机 ID |
 | `motor_modes` | `[2, 2]` | - | arm 默认 POS_VEL |
-| `control_topic` | `arm/damiao_control` | - | arm 低层电机控制 topic |
+| `control_topic` | `arm/damiao_ctrl` | - | arm 低层电机控制 topic |
 | `feedback_topic` | `/damiao_feedback` | - | FSM torque condition 使用的反馈 topic |
 | `feedback_motor_id` | `5` | - | 默认发布反馈的 motor ID |
-| `command_timeout` | `0.5` | s | 超时未收到 `arm/damiao_control` 后保持/停止 arm 电机 |
+| `command_timeout` | `0.5` | s | 超时未收到 `arm/damiao_ctrl` 后保持/停止 arm 电机 |
 
-超时保护：若 `arm/damiao_control` 超过 `command_timeout` 没有刷新，`arm_damiao_node` 会对 POS_VEL 电机发送当前位置 hold + 零速度，避免上层崩溃后 arm 继续动作。
+超时保护：若 `arm/damiao_ctrl` 超过 `command_timeout` 没有刷新，`arm_damiao_node` 会对 POS_VEL 电机发送当前位置 hold + 零速度，避免上层崩溃后 arm 继续动作。
 
 ### 启动
 
@@ -226,9 +228,44 @@ arm/pneu_command → arm_ctrl_node → joint_pneu_control → pneumatics/pneu_ct
 ros2 launch arm arm.launch.py
 ```
 
-该 launch 会同时启动：
+当前 `arm.launch.py` 默认只启动 `arm_ctrl_node`。达妙电机 5/6 的真实 USB-CAN 底层驱动由 `damiao_ctrl/damiao_node` 统一负责；`arm_damiao_node` 保留在包内作为备用单独调试节点。
+
+### 使用统一 damiao_ctrl 的 arm 45deg 测试
+
+根目录脚本：
+
+```bash
+./arm_damiao_test.sh
+```
+
+默认行为：
+
+```text
+arm/joint_navigation → arm_ctrl_node → arm/damiao_ctrl → damiao_ctrl/damiao_node → /dev/damiao_can → motor 5
+```
+
+动作序列：
+
+```text
+0deg → 等待 3s → +45deg → 等待 3s → 0deg
+```
+
+可通过环境变量调整：
+
+```bash
+ARM_MOTOR_ID=5 TARGET_DEG=45 SPEED_RAD_S=0.8 INTERVAL_S=3 DAMIAO_CAN_DEVICE=/dev/damiao_can ./arm_damiao_test.sh
+```
+
+注意：该测试链路使用 `damiao_ctrl` 统一驱动，`arm_ctrl_node` 在脚本中设 `gear_ratio:=1.0`，避免与 `damiao_ctrl/damiao_node` 重复做齿轮比换算。
+
+该 launch 会启动：
+
+```bash
+ros2 run arm arm_ctrl_node --ros-args -p gear_ratio:=1.0 -p republish_rate_hz:=50.0
+```
+
+备用单独调试 arm USB-CAN 时，才手动运行：
 
 ```bash
 ros2 run arm arm_damiao_node
-ros2 run arm arm_ctrl_node
 ```

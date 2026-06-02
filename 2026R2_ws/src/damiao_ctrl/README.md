@@ -134,6 +134,9 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-01 | v0.7 — `r2_launch` 主链路统一使用 `damiao_ctrl/damiao_node`，一个 USB-CAN 控制 chassis 1-4 与 arm 5-6 |
+| 2026-05-31 | v0.6 — topic 重命名：navigation → *_navigation，ctrl → *_ctrl；arm_ctrl_node → arm/damiao_ctrl + arm/pneu_ctrl |
+| 2026-05-31 | v0.5 — feedback 改为命令触发：每次发送控制指令并 recv() 后立即发布，发布值经 gear_ratio 换算为输出端 q/dq/tau |
 | 2026-05-30 | v0.4 — 移除 input_speed_scale，_to_motor_speed 直接使用 gear_ratio 换算 |
 | 2026-05-30 | v0.3 — 新增 gear_ratio / input_speed_scale，支持低层 driver 做输出端到电机轴换算，并保留旧 PID 兼容模式 |
 | 2026-05-26 | v0.2 — 改为 chassis/arm 分组初始化，区域内整组使能，区域之间独立运行 |
@@ -162,7 +165,7 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 | 区域 | Topic | 类型 | 说明 |
 |---|---|---|---|
 | chassis | `base/damiao_control` | `std_msgs/Float32MultiArray` | `[motor_id, mode, speed, position?]` |
-| arm | `arm/damiao_control` | `std_msgs/Float32MultiArray` | `[motor_id, mode, speed, position?]` |
+| arm | `arm/damiao_ctrl` | `std_msgs/Float32MultiArray` | `[motor_id, mode, speed, position?]` |
 | feedback | `damiao_feedback` | `std_msgs/Float32MultiArray` | 默认发布 motor 5 状态 `[motor_id, q_rad, dq_rad_s, tau_Nm, enabled]` |
 
 ### 参数
@@ -175,7 +178,7 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 | `chassis_control_topic` | `base/damiao_control` | - | chassis 低层控制 topic |
 | `arm_motor_ids` | `[5, 6]` | - | arm 区域电机 ID，必须整组在线才 active |
 | `arm_motor_modes` | `[2, 2]` | - | arm 电机 CTRL_MODE，2=POS_VEL |
-| `arm_control_topic` | `arm/damiao_control` | - | arm 低层控制 topic |
+| `arm_control_topic` | `arm/damiao_ctrl` | - | arm 低层控制 topic |
 | `feedback_topic` | `damiao_feedback` | - | 电机状态反馈 topic |
 | `feedback_motor_id` | `5` | - | 默认发布反馈的电机 ID |
 | `command_timeout` | `0.5` | s | 分组 watchdog 超时时间 |
@@ -185,7 +188,7 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 `command_timeout` 默认 `0.5s`。每个区域独立计时：
 
 - `base/damiao_control` 超时：只停止 chassis 1-4 号电机。
-- `arm/damiao_control` 超时：只停止 arm 5-6 号电机。
+- `arm/damiao_ctrl` 超时：只停止 arm 5-6 号电机。
 - 一个区域超时不会停止另一个区域。
 - VEL 电机超时后发送零速度；POS_VEL 电机超时后在当前位置保持并发送零速度。
 
@@ -204,13 +207,13 @@ ros2 topic pub /base/damiao_control std_msgs/Float32MultiArray "data: [1, 3, 2.0
 单独测试 arm：
 
 ```bash
-ros2 topic pub /arm/damiao_control std_msgs/Float32MultiArray "data: [5, 2, 1.5, 1.0]"
+ros2 topic pub /arm/damiao_ctrl std_msgs/Float32MultiArray "data: [5, 2, 1.5, 1.0]"
 ```
 
 ### 调试方式与常见问题
 
 - 如果只接底盘 1-4 号电机，日志中允许出现 `arm group INACTIVE`，不影响 `base/damiao_control`。
-- 如果只接 arm 5-6 号电机，日志中允许出现 `chassis group INACTIVE`，不影响 `arm/damiao_control`。
+- 如果只接 arm 5-6 号电机，日志中允许出现 `chassis group INACTIVE`，不影响 `arm/damiao_ctrl`。
 - 如果某个区域少一个电机，该区域会整体 inactive；这是为了避免底盘或 arm 只有部分电机使能导致机构受力异常。
 - 若两个区域都 inactive，节点会按重连间隔重新尝试初始化。
 
@@ -298,3 +301,77 @@ motor_speed = output_speed * gear_ratio
 ### 超时保护不变
 
 v0.4 不改变 watchdog 行为。
+
+
+## v0.5 — 命令触发 feedback，发布输出端转换值（2026-05-31）
+
+### 设计目标
+
+删除每 20ms 定时 cached feedback 发布机制。改为每次发送 Damiao 控制指令并 `recv()` 读取 ESC 回复后，立即发布该电机的 feedback。
+
+同时，发布的 `q`/`dq`/`tau` 全部经过 `gear_ratio` 换算为输出端（机构端）数据。
+
+### 变更摘要
+
+- 删除 `FEEDBACK_PUBLISH_HZ` 常量与 `feedback_timer`
+- 删除 `feedback_motor_id` 参数（不再固定发布某一电机）
+- 删除 `_feedback_loop()` 方法
+- 新增 `_publish_motor_feedback(motor_id)` 方法，在 `control_callback` 的 mode 0/2/3 执行后调用
+- 发布值换算：
+  - `output_q = motor.state_q / gear_ratio`
+  - `output_dq = motor.state_dq / gear_ratio`
+  - `output_tau = motor.state_tau * gear_ratio`
+
+### 参数变化
+
+| 参数 | 状态 |
+|---|---|
+| `feedback_motor_id` | **已移除** |
+| `feedback_topic` | 不变，默认 `damiao_feedback` |
+| `gear_ratio` | 不变，默认 `19.227`（用于 feedback 换算） |
+
+### feedback 发布时机
+
+`damiao_feedback` 仅在以下时机发布，为被控制电机的状态：
+
+- mode=0: 失能后发布
+- mode=2 (POS_VEL): 发送位置速度指令并 recv() 后发布
+- mode=3 (VEL): 发送速度指令并 recv() 后发布
+
+### 超时保护不变
+
+v0.5 不改变 watchdog 行为。
+
+
+## v0.7 — 统一 Damiao 底层驱动主链路（2026-06-01）
+
+### 设计目标
+
+`damiao_ctrl` 是主链路中**唯一的达妙底层驱动节点**。一个 `/dev/damiao_can` 同时控制 chassis motor 1-4（VEL）与 arm motor 5-6（POS_VEL）。
+
+`base_omniwheel_r2_600/damiao_node` 与 `arm/arm_damiao_node` 保留在各 package 内作为备用调试节点，但 `r2_launch` 和 `arm.launch.py` 默认不再启动它们。
+
+### 主链路
+
+```text
+/local_driving → local_navigation_node → base/damiao_control
+arm/joint_navigation → arm_ctrl_node → arm/damiao_ctrl
+                                          ↓
+                                   damiao_ctrl/damiao_node
+                                          ↓
+                                   /dev/damiao_can
+                                          ↓
+                            chassis 1-4 (VEL) + arm 5-6 (POS_VEL)
+```
+
+### gear_ratio 分工
+
+| 节点 | gear_ratio | 说明 |
+|---|---|---|
+| `damiao_ctrl/damiao_node` | `19.227` | 统一负责输出端 → 电机轴换算 |
+| `arm_ctrl_node` | `1.0` | 不做换算，直接透传输出端值 |
+| `local_navigation_node` | - | 发输出端速度，标注 "gear_ratio handled by damiao_node" |
+
+### 超时保护不变
+
+v0.7 不改变 watchdog 行为。`damiao_ctrl/damiao_node` 仍对 chassis/arm 各自独立计时，默认 `0.5 s`。

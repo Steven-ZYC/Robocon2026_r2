@@ -4,7 +4,7 @@ Connects to an Arduino via serial to control pneumatic solenoid valves
 for the robotic arm (gripper, lift, stopper).
 
 Subscribes:
-- joint_pneu_control (Float32MultiArray): [gripper, lift, stopper] (0.0/1.0)
+- arm/pneu_ctrl (Float32MultiArray): [gripper, lift, stopper] (0.0/1.0)
 
 Serial protocol (text, one line per command):
   [1,0,0]\\n
@@ -29,7 +29,7 @@ DEFAULT_PNEU_NAMES = ["arm_gripper", "arm_lift", "arm_stopper"]
 class PneuCtrlNode(Node):
     """Arduino-backed pneumatic valve controller.
 
-    Receives valve states from joint_pneu_control (published by arm_ctrl_node)
+    Receives valve states from arm/pneu_ctrl (published by arm_ctrl_node)
     and forwards them to the Arduino over serial in list format [1,0,0].
     Reads and logs Arduino serial responses."""
 
@@ -75,7 +75,7 @@ class PneuCtrlNode(Node):
         # ---- Subscriber ----
         self.pneu_sub = self.create_subscription(
             Float32MultiArray,
-            "joint_pneu_control",
+            "arm/pneu_ctrl",
             self.pneu_command_callback,
             10,
         )
