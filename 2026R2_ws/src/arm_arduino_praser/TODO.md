@@ -8,6 +8,7 @@
 - [x] 串口断连自动重连（1Hz 检测）
 - [x] 接收缓冲区溢出保护（>512 bytes 自动清空）
 - [x] 确定 arm Arduino 设备 ID（SN=857343234303518001A1，udev symlink `/dev/arm_arduino`）
+- [x] pneu topic 改为 Int8MultiArray (arm/pneu_command, arm/pneu_ack)，替换 Float32MultiArray (2026-06-03)
 
 ## 待完成
 

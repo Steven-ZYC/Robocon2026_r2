@@ -17,7 +17,7 @@ Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 
 
 | Node | 可执行文件 | 职责 |
 |---|---|---|
-| arm_ctrl_node | `arm_ctrl_node` | 关节级控制器，订阅 `arm/joint_navigation` 和 `arm/pneu_navigation`，发布 `damiao_control` |
+| arm_ctrl_node | `arm_ctrl_node` | 关节级控制器，订阅 `arm/joint_navigation` 和 `arm/pneu_navigation`，发布 `arm/damiao_ctrl` 和 `arm/pneu_command` |
 
 ---
 
@@ -28,17 +28,17 @@ Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 
 | 方向 | Topic | 类型 |
 |---|---|---|
 | Sub | `arm/joint_navigation` | `std_msgs/Float32MultiArray` |
-| Sub | `arm/pneu_navigation` | `std_msgs/Float32MultiArray` |
+| Sub | `arm/pneu_navigation` | `std_msgs/Int8MultiArray` |
 | Pub | `damiao_control` | `std_msgs/Float32MultiArray` |
-| Pub | `arm/pneu_ctrl` | `std_msgs/Float32MultiArray` |
+| Pub | `arm/pneu_command` | `std_msgs/Int8MultiArray` |
 
 `arm/joint_navigation` 格式：`[joint_1_target, joint_2_target, ...]`
 - VEL 模式（mode=3）：target 为角速度 (rad/s)
 - POS_VEL 模式（mode=2）：target 为位置 (rad)
 
-`arm/pneu_navigation` 格式：`[gripper, lift, stopper]`
-- 值域 0.0（关闭）/ 1.0（开启），arm_ctrl_node 会 clamp 到 0/1
-- 通过 `arm/pneu_ctrl` 转发至 pneumatics 包
+`arm/pneu_navigation` 格式：`[stopper, lift, gripper]`
+- 值域 0（关闭）/ 1（开启），arm_ctrl_node 会 clamp 到 0/1
+- 通过 `arm/pneu_command` 转发至 arm_arduino_praser（arm_arduino_node）
 
 #### 参数
 
@@ -49,7 +49,7 @@ Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 
 | `control_mode` | `3` | 3=VEL, 2=POS_VEL |
 | `max_speed_rad_s` | `6.0` | 单关节最大速度限制 (rad/s) |
 | `republish_rate_hz` | `20.0` | 持续刷新速率，维持 watchdog |
-| `pneu_names` | `["arm_gripper", "arm_lift", "arm_stopper"]` | 气动执行器名称列表 |
+| `pneu_names` | `["arm_stopper", "arm_lift", "arm_gripper"]` | 气动执行器名称列表 |
 
 ## 启动方式
 
@@ -67,19 +67,19 @@ ros2 run arm arm_ctrl_node --ros-args -p joint_motor_ids:="[5,6]"
 
 ```bash
 # 查看 arm 控制状态
-ros2 topic echo damiao_control
+ros2 topic echo arm/damiao_ctrl
 
 # 发送关节速度指令 (VEL 模式，关节 5 和 6 各 1.0 rad/s)
 ros2 topic pub arm/joint_navigation std_msgs/Float32MultiArray "data: [1.0, 1.0]"
 
 # 发送失能指令
-ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [5, 0, 0.0]"
+ros2 topic pub arm/damiao_ctrl std_msgs/Float32MultiArray "data: [5, 0, 0.0]"
 
 # 发送气动指令（开启夹爪和止动，关闭升降）
-ros2 topic pub arm/pneu_navigation std_msgs/Float32MultiArray "data: [1.0, 0.0, 1.0]"
+ros2 topic pub arm/pneu_navigation std_msgs/Int8MultiArray "data: [1, 0, 1]"
 
 # 查看气动状态
-ros2 topic echo arm/pneu_ctrl
+ros2 topic echo arm/pneu_command
 ```
 
 ---
@@ -160,6 +160,8 @@ ros2 launch arm arm.launch.py
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-03 | v0.8 — pneu topic 改为 Int8MultiArray (arm/pneu_navigation, arm/pneu_command)，替换 Float32MultiArray |
+| 2026-06-03 | v0.7 — pneu 发布 topic 改为 `arm/pneu_command`（对接 arm_arduino_praser），pneu 顺序统一为 `[stopper, lift, gripper]`；`pneu_names` 默认值同步更新 |
 | 2026-06-01 | v0.6 — `arm.launch.py` 默认只启动 `arm_ctrl_node`；`arm_damiao_node` 保留为备用，主链路由 `damiao_ctrl` 驱动达妙 |
 | 2026-06-01 | v0.5 — 新增根目录 `arm_damiao_test.sh`，通过统一 `damiao_ctrl` 测试 arm motor 5 的 45deg 往返动作 |
 | 2026-05-20 | v0.4 — arm 独立 USB-CAN Damiao 驱动，输出改为 `arm/damiao_ctrl`，`damiao_ctrl` 暂时悬置 |

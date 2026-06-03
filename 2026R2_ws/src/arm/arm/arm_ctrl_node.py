@@ -8,18 +8,19 @@ Subscribes:
 - arm/joint_navigation (Float32MultiArray):
     Triplet format: [motor_id, position_rad, speed_rad_s, ...]
     motor_id is matched against joint_motor_ids param for routing.
-- arm/pneu_navigation (Float32MultiArray): [gripper, lift, stopper]  (0.0/1.0)
+- arm/pneu_navigation (Int8MultiArray): [stopper, lift, gripper]  (0/1)
 
 Publishes:
 - arm/damiao_ctrl (Float32MultiArray):
     POS_VEL (mode 2): [motor_id, 2, speed, position]
     VEL (mode 3):     [motor_id, 3, speed]
-- arm/pneu_ctrl (Float32MultiArray): [gripper, lift, stopper] (0.0/1.0)
+- arm/pneu_command (Int8MultiArray): [stopper, lift, gripper] (0/1) — consumed by arm_arduino_node
 """
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Int8MultiArray
 import time
 
 DEFAULT_JOINT_MOTOR_IDS = [5, 6]
@@ -30,7 +31,7 @@ DEFAULT_MAX_SPEED_RAD_S = 1.3         # 输出端最大速度 (rad/s)
 DEFAULT_GEAR_RATIO = 1.0              # 主链路由 damiao_ctrl 统一做真实齿轮比换算
 DEFAULT_MAX_MOTOR_SPEED_RAD_S = 1.3 / 19.227  # 电机轴硬限速 1.3 rad/s，gear_ratio=1.0 时输出端等效 ≈0.0676
 DEFAULT_REPUBLISH_RATE_HZ = 20.0
-DEFAULT_PNEU_NAMES = ["arm_gripper", "arm_lift", "arm_stopper"]
+DEFAULT_PNEU_NAMES = ["arm_stopper", "arm_lift", "arm_gripper"]
 DEFAULT_MOTOR_CONTROL_TOPIC = "arm/damiao_ctrl"
 
 
@@ -108,7 +109,7 @@ class ArmCtrlNode(Node):
             10,
         )
         self.pneu_sub = self.create_subscription(
-            Float32MultiArray,
+            Int8MultiArray,
             "arm/pneu_navigation",
             self.pneu_command_callback,
             10,
@@ -121,8 +122,8 @@ class ArmCtrlNode(Node):
             10,
         )
         self.pneu_publisher = self.create_publisher(
-            Float32MultiArray,
-            "arm/pneu_ctrl",
+            Int8MultiArray,
+            "arm/pneu_command",
             10,
         )
 
@@ -245,14 +246,14 @@ class ArmCtrlNode(Node):
             )
             return
 
-        # Clamp each value to 0.0 or 1.0 for safety
-        targets = [1.0 if float(msg.data[i]) > 0.5 else 0.0 for i in range(self.num_pneu)]
+        # Clamp each value to 0 or 1 for safety
+        targets = [1 if int(msg.data[i]) > 0 else 0 for i in range(self.num_pneu)]
         self.latest_pneu_targets = targets
         self.publish_pneu_commands(targets)
 
     def publish_pneu_commands(self, targets):
-        """Publish pneumatic states to arm/pneu_ctrl."""
-        msg = Float32MultiArray()
+        """Publish pneumatic states to arm/pneu_command."""
+        msg = Int8MultiArray()
         msg.data = targets
         self.pneu_publisher.publish(msg)
 

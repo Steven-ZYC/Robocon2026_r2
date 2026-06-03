@@ -18,15 +18,16 @@ Example payload:
 ROS 2 interface
 ---------------
 Subscribe:
-    arm/pneu_command    std_msgs/msg/Float32MultiArray
+    arm/pneu_command    std_msgs/msg/Int8MultiArray
                          data: [arm_stopper, arm_lift, arm_gripper]
 
 Publish:
-    arm/pneu_ack        std_msgs/msg/Float32MultiArray
+    arm/pneu_ack        std_msgs/msg/Int8MultiArray
     arm/ir_status       std_msgs/msg/Bool
     arm/pneu_raw_frame  std_msgs/msg/String
 """
 
+import os
 import re
 import time
 from typing import Iterable, List, Optional
@@ -35,7 +36,7 @@ import rclpy
 from rclpy.node import Node
 
 from std_msgs.msg import Bool
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Int8MultiArray
 from std_msgs.msg import String
 
 import serial
@@ -51,12 +52,27 @@ ERR_RE = re.compile(r"^ERR,(.+)$")
 BOOT_RE = re.compile(r"^BOOT,ready$")
 
 
+def find_device_port(device_id: str) -> Optional[str]:
+    """Resolve a device path or search /dev/serial/by-id/ by substring."""
+    if device_id.startswith("/dev/"):
+        return device_id if os.path.exists(device_id) else None
+
+    by_id_dir = "/dev/serial/by-id/"
+    try:
+        for entry in os.listdir(by_id_dir):
+            if device_id in entry:
+                return os.path.realpath(os.path.join(by_id_dir, entry))
+    except FileNotFoundError:
+        return None
+    return None
+
+
 class ArmArduinoNode(Node):
     def __init__(self) -> None:
         super().__init__("arm_arduino_interface")
 
         # Serial parameters. INO baud rate is 115200.
-        self.declare_parameter("port", "/dev/ttyUSB0")
+        self.declare_parameter("port", "/dev/arm_arduino")
         self.declare_parameter("baud_rate", 115200)
         self.declare_parameter("arduino_reset_wait_s", 2.0)
 
@@ -73,7 +89,7 @@ class ArmArduinoNode(Node):
         self.declare_parameter("read_rate_hz", 100.0)
 
         # Match the original INO default: all pneumatics OFF.
-        self.declare_parameter("default_pneu", [0.0, 0.0, 0.0])
+        self.declare_parameter("default_pneu", [0, 0, 0])
 
         self.port = str(self.get_parameter("port").value)
         self.baud_rate = int(self.get_parameter("baud_rate").value)
@@ -90,7 +106,7 @@ class ArmArduinoNode(Node):
         read_rate_hz = float(self.get_parameter("read_rate_hz").value)
 
         default_pneu = self.get_parameter("default_pneu").value
-        default_bits = self.float_array_to_bits(default_pneu, warn=False)
+        default_bits = self.int8_array_to_bits(default_pneu, warn=False)
         if default_bits is None:
             default_bits = [0, 0, 0]
         self.current_cmd = default_bits
@@ -99,7 +115,7 @@ class ArmArduinoNode(Node):
         self.rx_buffer = bytearray()
 
         self.pneu_ack_pub = self.create_publisher(
-            Float32MultiArray,
+            Int8MultiArray,
             pneu_ack_topic,
             10,
         )
@@ -107,7 +123,7 @@ class ArmArduinoNode(Node):
         self.raw_frame_pub = self.create_publisher(String, raw_frame_topic, 10)
 
         self.command_sub = self.create_subscription(
-            Float32MultiArray,
+            Int8MultiArray,
             command_topic,
             self.on_pneu_command,
             10,
@@ -137,9 +153,21 @@ class ArmArduinoNode(Node):
         if self.serial_port is not None and self.serial_port.is_open:
             return
 
+        actual_port = find_device_port(self.port)
+        if actual_port is None:
+            self.get_logger().warn(
+                f"Device {self.port} not found. "
+                "Set -p port:=/dev/xxx or install udev rule for /dev/arm_arduino"
+            )
+            return
+
+        self.get_logger().info(
+            f"Opening {actual_port} for {self.port} @ {self.baud_rate}"
+        )
+
         try:
             self.serial_port = serial.Serial(
-                port=self.port,
+                port=actual_port,
                 baudrate=self.baud_rate,
                 timeout=0,
                 write_timeout=0.05,
@@ -152,27 +180,27 @@ class ArmArduinoNode(Node):
                 time.sleep(self.arduino_reset_wait_s)
 
             self.get_logger().info(
-                f"Opened serial port {self.port} @ {self.baud_rate}"
+                f"Opened serial port {actual_port} @ {self.baud_rate}"
             )
 
         except SerialException as exc:
             self.serial_port = None
-            self.get_logger().warn(f"Could not open serial port {self.port}: {exc}")
+            self.get_logger().warn(f"Could not open serial port {actual_port}: {exc}")
 
     def reconnect_if_needed(self) -> None:
         if self.serial_port is None or not self.serial_port.is_open:
             self.open_serial()
 
-    def on_pneu_command(self, msg: Float32MultiArray) -> None:
-        bits = self.float_array_to_bits(msg.data, warn=True)
+    def on_pneu_command(self, msg: Int8MultiArray) -> None:
+        bits = self.int8_array_to_bits(msg.data, warn=True)
         if bits is None:
             return
 
         self.current_cmd = bits
 
-    def float_array_to_bits(
+    def int8_array_to_bits(
         self,
-        data: Iterable[float],
+        data: Iterable[int],
         warn: bool = True,
     ) -> Optional[List[int]]:
         values = list(data)
@@ -194,15 +222,15 @@ class ArmArduinoNode(Node):
         bits: List[int] = []
 
         for index in range(NUM_PNEU):
-            value = float(values[index])
+            value = int(values[index])
 
-            if warn and value not in (0.0, 1.0):
+            if warn and value not in (0, 1):
                 self.get_logger().warn(
                     f"{DEFAULT_PNEU_NAMES[index]} command is {value}, "
-                    "expected 0.0 or 1.0. Converting with >= 0.5 rule."
+                    "expected 0 or 1. Clamping to 0/1."
                 )
 
-            bits.append(1 if value >= 0.5 else 0)
+            bits.append(1 if value > 0 else 0)
 
         return bits
 
@@ -269,8 +297,8 @@ class ArmArduinoNode(Node):
             ]
             ir_bit = int(state_match.group(5))
 
-            pneu_msg = Float32MultiArray()
-            pneu_msg.data = [float(bit) for bit in pneu_bits]
+            pneu_msg = Int8MultiArray()
+            pneu_msg.data = pneu_bits
             self.pneu_ack_pub.publish(pneu_msg)
 
             ir_msg = Bool()

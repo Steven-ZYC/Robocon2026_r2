@@ -10,7 +10,7 @@ joystick_control_node: 手柄直驱控制节点
 - arm/joint_navigation (Float32MultiArray):
     Triplet format: [motor_id, pos_rad, speed_rad_s, ...]
     手柄速度值同时用作 position（实现 POS_VEL 下的连续运动）和 speed。
-- arm/pneu_navigation (Float32MultiArray): [gripper, lift, stopper]  0.0/1.0
+- arm/pneu_command (Int8MultiArray): [stopper, lift, gripper]  0/1
 
 订阅:
 - joystick_input (joystick_msgs/Joystick): 手柄原始输入
@@ -34,6 +34,7 @@ import time
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Int8MultiArray
 from joystick_msgs.msg import Joystick
 
 
@@ -122,7 +123,7 @@ class JoystickControlNode(Node):
         self._joy_timeout_warned = False
 
         # 气动切换状态 (toggle on button press)
-        self._pneu_state = [0.0, 0.0, 0.0]   # [gripper, lift, stopper]
+        self._pneu_state = [0, 0, 0]   # [stopper, lift, gripper]
         self._prev_buttons = {"a": False, "b": False, "x": False}
 
         # ---- 订阅 ----
@@ -138,7 +139,7 @@ class JoystickControlNode(Node):
             Float32MultiArray, "arm/joint_navigation", 10
         )
         self.pneu_pub = self.create_publisher(
-            Float32MultiArray, "arm/pneu_navigation", 10
+            Int8MultiArray, "arm/pneu_command", 10
         )
 
         # ---- 定时控制循环 ----
@@ -195,7 +196,7 @@ class JoystickControlNode(Node):
         if joy.start:
             self._pub_zero_driving()
             self._pub_zero_joints()
-            self._pneu_state = [0.0, 0.0, 0.0]
+            self._pneu_state = [0, 0, 0]
             self._pub_pneu()
             self._smooth_speed = 0.0
             self._smooth_omega = 0.0
@@ -285,21 +286,21 @@ class JoystickControlNode(Node):
     # ------------------------------------------------------------------
 
     def _pub_pneu(self):
-        msg = Float32MultiArray()
+        msg = Int8MultiArray()
         msg.data = list(self._pneu_state)
         self.pneu_pub.publish(msg)
 
     def _update_pneu_toggles(self, joy):
         """检测 A/B/X 按钮上升沿，翻转对应气动状态。"""
-        mapping = {"a": 0, "b": 1, "x": 2}
+        mapping = {"a": 2, "b": 1, "x": 0}
         for btn, idx in mapping.items():
             cur = getattr(joy, btn, False)
             prev = self._prev_buttons.get(btn, False)
             if cur and not prev:
                 # 上升沿: 翻转状态
-                self._pneu_state[idx] = 1.0 if self._pneu_state[idx] < 0.5 else 0.0
+                self._pneu_state[idx] = 1 if self._pneu_state[idx] < 1 else 0
                 self.get_logger().info(
-                    f"Pneu[{idx}] toggled → {self._pneu_state[idx]:.0f}"
+                    f"Pneu[{idx}] toggled → {self._pneu_state[idx]}"
                 )
             self._prev_buttons[btn] = cur
         self._pub_pneu()

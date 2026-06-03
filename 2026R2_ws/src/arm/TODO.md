@@ -5,6 +5,7 @@
 - [x] `arm.launch.py` 历史上同时启动 `arm_damiao_node` 与 `arm_ctrl_node`（已由统一 `damiao_ctrl` 主链路取代）
 - [x] `arm.launch.py` 当前只启动 `arm_ctrl_node`，`arm_damiao_node` 保留为备用调试节点
 - [x] 文档明确 arm_damiao_node 为备用节点，主链路使用 damiao_ctrl/damiao_node (2026-06-03)
+- [x] pneu topic 改为 Int8MultiArray (arm/pneu_navigation, arm/pneu_command)，替换 Float32MultiArray (2026-06-03)
 - [ ] 确认 arm USB-CAN 设备 ID
 - [ ] 确认 arm 电机 ID 与关节编号对应关系
 - [ ] 实测各关节方向是否符合预期，校准 `joint_directions`

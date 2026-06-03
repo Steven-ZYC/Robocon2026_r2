@@ -14,7 +14,7 @@ Launch package for R2 robot. Starts all core nodes for FSM-mode operation.
 | 2 | arduino_sensor_parser | arduino_sensor_driver | IMU + encoder sensor data |
 | 3 | local_navigation_node | base_omniwheel_r2_600 | Inverse kinematics, publishes `base/damiao_control` |
 | 4 | global_navigation_node | navigation | Mission executor (FSM mode) |
-| 5 | arm_ctrl_node | arm | Arm joint controller, publishes `arm/damiao_ctrl` and `arm/pneu_ctrl` |
+| 5 | arm_ctrl_node | arm | Arm joint controller, publishes `arm/damiao_ctrl` and `arm/pneu_command` |
 | 6 | pneu_ctrl_node | pneumatics | Pneumatic valve serial driver |
 
 ### Usage
