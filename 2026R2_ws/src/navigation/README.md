@@ -112,7 +112,7 @@ For complete system operation, all packages must be running. See `r2_launch` for
 [Mission YAML] → Global Navigation Node (MissionExecutor)
                     ├── /local_driving    → local_navigation_node → damiao_control → damiao_ctrl → Motor 1-4
                     ├── arm/joint_navigation → arm_ctrl_node → damiao_control → damiao_ctrl → Motor 5-6
-                    └── arm/pneu_navigation  → arm_ctrl_node → arm/pneu_ctrl → pneumatics → Arduino
+                    └── arm/pneu_navigation  → arm_ctrl_node → arm/pneu_ctrl → arm_arduino_node → Arduino
                           ↑
                     /state_pose2d  (arduino_sensor_driver)
                     /arduino/raw_sensor_data  (conditional evaluation)

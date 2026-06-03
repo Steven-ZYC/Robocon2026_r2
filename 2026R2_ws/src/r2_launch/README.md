@@ -14,8 +14,8 @@ Launch package for R2 robot. Starts all core nodes for FSM-mode operation.
 | 2 | arduino_sensor_parser | arduino_sensor_driver | IMU + encoder sensor data |
 | 3 | local_navigation_node | base_omniwheel_r2_600 | Inverse kinematics, publishes `base/damiao_control` |
 | 4 | global_navigation_node | navigation | Mission executor (FSM mode) |
-| 5 | arm_ctrl_node | arm | Arm joint controller, publishes `arm/damiao_ctrl` and `arm/pneu_command` |
-| 6 | pneu_ctrl_node | pneumatics | Pneumatic valve serial driver |
+| 5 | arm_ctrl_node | arm | Arm joint controller, publishes `arm/damiao_ctrl` and `arm/pneu_ctrl` |
+| 6 | arm_arduino_node | arm_arduino_praser | Pneumatic valve + IR sensor serial bridge to Arduino Mega |
 
 ### Usage
 
@@ -38,7 +38,7 @@ ros2 run joystick_driver joystick_control_node &
 
 arm 链路为：`arm/joint_navigation → arm_ctrl_node → arm/damiao_ctrl → damiao_ctrl/damiao_node`。`arm_ctrl_node` 在顶层 launch 中使用 `gear_ratio = 1.0`，实际齿轮比换算由 `damiao_ctrl/damiao_node` 统一完成，并以 50Hz 重发最近 joint command 维持反馈刷新。
 
-安全策略不由 `r2_launch` 自己实现，而由被启动的节点提供：`local_navigation_node` 与 `damiao_ctrl/damiao_node` 均有 0.5 s 默认 watchdog；`pneu_ctrl_node` 默认 1.0 s 气动超时归零。
+安全策略不由 `r2_launch` 自己实现，而由被启动的节点提供：`local_navigation_node` 与 `damiao_ctrl/damiao_node` 均有 0.5 s 默认 watchdog；`arm_arduino_node` 端 Arduino 有 200ms COMMAND_TIMEOUT 硬件保护。
 
 ## v3 — 2026-05-20
 

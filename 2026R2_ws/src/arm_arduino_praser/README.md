@@ -36,13 +36,13 @@ Arm-side Arduino 串口桥接节点。通过 USB Serial 与 Arm Arduino (Mega 25
 
 | Topic | 类型 | 格式 | 说明 |
 |---|---|---|---|
-| `arm/pneu_command` | `Int8MultiArray` | `[arm_stopper, arm_lift, arm_gripper]` | 气动阀指令，值域 0/1 |
+| `arm/pneu_ctrl` | `Int8MultiArray` | `[arm_gripper, arm_lift, arm_stopper]` | 气动阀指令，值域 0/1 |
 
 ### 发布 Topic
 
 | Topic | 类型 | 格式 | 说明 |
 |---|---|---|---|
-| `arm/pneu_ack` | `Int8MultiArray` | `[arm_stopper, arm_lift, arm_gripper]` | Arduino 回传的当前气动阀实际状态 |
+| `arm/pneu_ack` | `Int8MultiArray` | `[arm_gripper, arm_lift, arm_stopper]` | Arduino 回传的当前气动阀实际状态 |
 | `arm/ir_status` | `Bool` | `true/false` | IR 传感器状态（true=检测到物体） |
 | `arm/pneu_raw_frame` | `String` | 原始帧字符串 | 调试用，所有 Arduino 串口输出行原文 |
 
@@ -53,7 +53,7 @@ Arm-side Arduino 串口桥接节点。通过 USB Serial 与 Arm Arduino (Mega 25
 | `port` | string | `/dev/arm_arduino` | - | Arduino 串口设备路径。支持 `/dev/xxx` 绝对路径或 `/dev/serial/by-id/` 子串匹配。默认值依赖 udev 规则创建的 symlink |
 | `baud_rate` | int | `115200` | bit/s | 串口波特率，与 Arduino INO `Serial.begin()` 一致 |
 | `arduino_reset_wait_s` | double | `2.0` | s | 串口打开后等待 Arduino Mega 复位完成的时间 |
-| `command_topic` | string | `arm/pneu_command` | - | 订阅的气动指令 topic |
+| `command_topic` | string | `arm/pneu_ctrl` | - | 订阅的气动指令 topic |
 | `pneu_ack_topic` | string | `arm/pneu_ack` | - | 发布的气动状态回传 topic |
 | `ir_status_topic` | string | `arm/ir_status` | - | 发布的 IR 传感器状态 topic |
 | `raw_frame_topic` | string | `arm/pneu_raw_frame` | - | 发布的原始帧调试 topic |
@@ -86,7 +86,7 @@ OFF\n          ← 紧急全关（预留）
 |------|------|
 | `STATE` | 帧类型标识 |
 | `t:123456` | Arduino millis 时间戳 |
-| `pneu:[1,0,1]` | 当前 3 路气动状态 (stopper, lift, gripper) |
+| `pneu:[1,0,1]` | 当前 3 路气动状态 (gripper, lift, stopper) |
 | `ir:1` | IR 传感器状态（1=触发, 0=未触发） |
 | `,*5A` | XOR/LRC 校验和（hex，大写），计算范围：`<` 与 `,*` 之间的 payload |
 
@@ -105,7 +105,7 @@ ROS2 端还会识别以下帧类型：
 - **串口打开后 2.0s 复位等待**：Arduino Mega 2560 打开串口后自动复位，等待 bootloader 完成再开始通信
 - **接收缓冲区溢出保护**：RX buffer 超过 512 字节自动清空，防止噪声数据导致内存增长
 
-> 注意：本节点**不包含** `arm/pneu_command` topic 的上游超时保护。若 ROS2 侧指令源（如 `global_navigation_node` / FSM）停止发布，本节点将无限重复发送最后一次指令。上游超时归零应由 `arm_ctrl_node` 的 watchdog 负责。
+> 注意：本节点**不包含** `arm/pneu_ctrl` topic 的上游超时保护。若 ROS2 侧指令源（如 `global_navigation_node` / FSM）停止发布，本节点将无限重复发送最后一次指令。上游超时归零应由 `arm_ctrl_node` 的 watchdog 负责。
 
 ---
 
@@ -113,9 +113,9 @@ ROS2 端还会识别以下帧类型：
 
 | 索引 | 名称 | 说明 |
 |------|------|------|
-| 0 | `arm_stopper` | 止动 |
+| 0 | `arm_gripper` | 夹爪 |
 | 1 | `arm_lift` | 升降 |
-| 2 | `arm_gripper` | 夹爪 |
+| 2 | `arm_stopper` | 止动 |
 
 指令值：`0` = 关闭 / `1` = 开启，非 0/1 值会以 `> 0` 规则转换为 0 或 1 并输出 WARN。
 
@@ -163,10 +163,10 @@ ros2 topic echo arm/pneu_ack
 ros2 topic echo arm/ir_status
 
 # 手动发送气动指令
-ros2 topic pub --once arm/pneu_command std_msgs/msg/Int8MultiArray "{data: [0, 0, 1]}"
+ros2 topic pub --once arm/pneu_ctrl std_msgs/msg/Int8MultiArray "{data: [0, 0, 1]}"
 
 # 全部关闭
-ros2 topic pub --once arm/pneu_command std_msgs/msg/Int8MultiArray "{data: [0, 0, 0]}"
+ros2 topic pub --once arm/pneu_ctrl std_msgs/msg/Int8MultiArray "{data: [0, 0, 0]}"
 ```
 
 ---
@@ -183,6 +183,6 @@ ros2 topic pub --once arm/pneu_command std_msgs/msg/Int8MultiArray "{data: [0, 0
 
 | 日期 | 说明 |
 |---|---|
-| 2026-06-03 | v0.3 — pneu topic 改为 Int8MultiArray (arm/pneu_command, arm/pneu_ack)，替换 Float32MultiArray |
+| 2026-06-03 | v0.3 — pneu topic 改为 Int8MultiArray (arm/pneu_ctrl, arm/pneu_ack)，替换 Float32MultiArray |
 | 2026-06-03 | v0.2 — Charlie 原版：实现 `arm_arduino_node` 气动指令桥接 + IR 传感器回传，双向 XOR checksum 协议 |
 | 2026-06-03 | v0.1 — package 骨架建立（Steven） |

@@ -18,8 +18,8 @@ Example payload:
 ROS 2 interface
 ---------------
 Subscribe:
-    arm/pneu_command    std_msgs/msg/Int8MultiArray
-                         data: [arm_stopper, arm_lift, arm_gripper]
+    arm/pneu_ctrl    std_msgs/msg/Int8MultiArray
+                         data: [arm_gripper, arm_lift, arm_stopper]
 
 Publish:
     arm/pneu_ack        std_msgs/msg/Int8MultiArray
@@ -43,7 +43,7 @@ import serial
 from serial import SerialException
 
 
-DEFAULT_PNEU_NAMES = ["arm_stopper", "arm_lift", "arm_gripper"]
+DEFAULT_PNEU_NAMES = ["arm_gripper", "arm_lift", "arm_stopper"]
 NUM_PNEU = 3
 
 STATE_RE = re.compile(r"^STATE,t:(\d+),pneu:\[([01]),([01]),([01])\],ir:([01])$")
@@ -77,7 +77,7 @@ class ArmArduinoNode(Node):
         self.declare_parameter("arduino_reset_wait_s", 2.0)
 
         # Topic parameters.
-        self.declare_parameter("command_topic", "arm/pneu_command")
+        self.declare_parameter("command_topic", "arm/pneu_ctrl")
         self.declare_parameter("pneu_ack_topic", "arm/pneu_ack")
         self.declare_parameter("ir_status_topic", "arm/ir_status")
         self.declare_parameter("raw_frame_topic", "arm/pneu_raw_frame")

@@ -8,13 +8,13 @@ Subscribes:
 - arm/joint_navigation (Float32MultiArray):
     Triplet format: [motor_id, position_rad, speed_rad_s, ...]
     motor_id is matched against joint_motor_ids param for routing.
-- arm/pneu_navigation (Int8MultiArray): [stopper, lift, gripper]  (0/1)
+- arm/pneu_navigation (Int8MultiArray): [gripper, lift, stopper]  (0/1)
 
 Publishes:
 - arm/damiao_ctrl (Float32MultiArray):
     POS_VEL (mode 2): [motor_id, 2, speed, position]
     VEL (mode 3):     [motor_id, 3, speed]
-- arm/pneu_command (Int8MultiArray): [stopper, lift, gripper] (0/1) — consumed by arm_arduino_node
+- arm/pneu_ctrl (Int8MultiArray): [gripper, lift, stopper] (0/1) — consumed by arm_arduino_node
 """
 
 import rclpy
@@ -31,7 +31,7 @@ DEFAULT_MAX_SPEED_RAD_S = 1.3         # 输出端最大速度 (rad/s)
 DEFAULT_GEAR_RATIO = 1.0              # 主链路由 damiao_ctrl 统一做真实齿轮比换算
 DEFAULT_MAX_MOTOR_SPEED_RAD_S = 1.3 / 19.227  # 电机轴硬限速 1.3 rad/s，gear_ratio=1.0 时输出端等效 ≈0.0676
 DEFAULT_REPUBLISH_RATE_HZ = 20.0
-DEFAULT_PNEU_NAMES = ["arm_stopper", "arm_lift", "arm_gripper"]
+DEFAULT_PNEU_NAMES = ["arm_gripper", "arm_lift", "arm_stopper"]
 DEFAULT_MOTOR_CONTROL_TOPIC = "arm/damiao_ctrl"
 
 
@@ -123,7 +123,7 @@ class ArmCtrlNode(Node):
         )
         self.pneu_publisher = self.create_publisher(
             Int8MultiArray,
-            "arm/pneu_command",
+            "arm/pneu_ctrl",
             10,
         )
 
@@ -252,7 +252,7 @@ class ArmCtrlNode(Node):
         self.publish_pneu_commands(targets)
 
     def publish_pneu_commands(self, targets):
-        """Publish pneumatic states to arm/pneu_command."""
+        """Publish pneumatic states to arm/pneu_ctrl."""
         msg = Int8MultiArray()
         msg.data = targets
         self.pneu_publisher.publish(msg)

@@ -26,9 +26,9 @@
       STATE,t:123456,pneu:[1,0,1],ir:1
 
   Pin / relay / valve mapping:
-    Pneu 1 / Relay 1 / Stopper -> D5, active HIGH
+    Pneu 1 / Relay 1 / Gripper -> D5, active HIGH
     Pneu 2 / Relay 2 / Lift    -> D6, active LOW
-    Pneu 3 / Relay 3 / Gripper -> D8, active HIGH
+    Pneu 3 / Relay 3 / Stopper -> D8, active HIGH
 
     IR sensor OUT -> D2
     LED indicator -> D13
@@ -51,9 +51,9 @@ const byte NUM_PNEU = 3;
 
 // Keep original pneumatic / relay pins unchanged.
 const byte pneuPins[NUM_PNEU] = {
-  5,  // Pneu 1 / Relay 1 / Stopper
+  5,  // Pneu 1 / Relay 1 / Gripper
   6,  // Pneu 2 / Relay 2 / Lift
-  8   // Pneu 3 / Relay 3 / Gripper
+  8   // Pneu 3 / Relay 3 / Stopper
 };
 
 // true  = active LOW:  LOW = ON,  HIGH = OFF

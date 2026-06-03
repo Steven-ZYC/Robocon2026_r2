@@ -135,7 +135,7 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 | 日期 | 说明 |
 |---|---|
 | 2026-06-01 | v0.7 — `r2_launch` 主链路统一使用 `damiao_ctrl/damiao_node`，一个 USB-CAN 控制 chassis 1-4 与 arm 5-6 |
-| 2026-05-31 | v0.6 — topic 重命名：navigation → *_navigation，ctrl → *_ctrl；arm_ctrl_node → arm/damiao_ctrl + arm/pneu_ctrl |
+| 2026-05-31 | v0.6 — topic 重命名：navigation → *_navigation，ctrl → *_ctrl；arm_ctrl_node → arm/damiao_ctrl |
 | 2026-05-31 | v0.5 — feedback 改为命令触发：每次发送控制指令并 recv() 后立即发布，发布值经 gear_ratio 换算为输出端 q/dq/tau |
 | 2026-05-30 | v0.4 — 移除 input_speed_scale，_to_motor_speed 直接使用 gear_ratio 换算 |
 | 2026-05-30 | v0.3 — 新增 gear_ratio / input_speed_scale，支持低层 driver 做输出端到电机轴换算，并保留旧 PID 兼容模式 |

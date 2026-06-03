@@ -21,7 +21,7 @@
 - [ ] 与 arduino_sensor_driver 联调 /state_pose2d
 - [ ] 与 base_omniwheel 联调 /local_driving
 - [ ] 与 arm 联调 damiao_control (Motor 5-6)
-- [ ] 与 pneumatics 联调 arm/pneu_ctrl
+- [ ] 与 arm_arduino_praser 联调 arm/pneu_ctrl
 - [ ] 实测各 waypoint 坐标，校准正式 mission YAML
 - [ ] 实测各执行器语义值（motor positions, pneu states）
 - [ ] 添加更多 conditional 传感器条件支持（enc_x_counts 到达阈值等）

@@ -9,7 +9,7 @@ from ament_index_python.packages import get_package_share_directory
 def generate_launch_description():
     """Launch all R2 core nodes for FSM-mode operation.
 
-    Starts motor driver, sensors, kinematics, navigation, arm, and pneumatics.
+    Starts motor driver, sensors, kinematics, navigation, and arm control.
     For manual joystick mode, run joystick_control_node instead of
     global_navigation_node (the two conflict on /local_driving).
     """
@@ -86,13 +86,6 @@ def generate_launch_description():
         }],
     )
 
-    pneu_ctrl_node = Node(
-        package='pneumatics',
-        executable='pneu_ctrl_node',
-        name='pneu_ctrl_controller',
-        output='screen',
-    )
-
     return LaunchDescription([
         mission_file_arg,
         damiao_ctrl_node,
@@ -100,5 +93,4 @@ def generate_launch_description():
         local_navigation_node,
         global_navigation_node,
         arm_ctrl_node,
-        pneu_ctrl_node,
     ])

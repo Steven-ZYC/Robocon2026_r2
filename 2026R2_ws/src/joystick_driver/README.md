@@ -19,7 +19,7 @@ Joystick input driver for ROS 2. 通过 evdev 读取游戏手柄输入并发布�
 
 | 日期 | 说明 |
 |---|---|
-| 2026-06-03 | v7 气动 topic 兼容性修复: arm/pneu_navigation → arm/pneu_command，数据顺序对齐 arm_arduino [stopper, lift, gripper] |
+| 2026-06-03 | v7 气动 topic 兼容性修复: arm/pneu_navigation → arm/pneu_ctrl，数据顺序对齐 arm_arduino [gripper, lift, stopper] |
 | 2026-06-03 | 明确本 package 为备用上层控制节点，主链路由 `navigation/global_navigation_node` (FSM) 负责 |
 | 2026-05-24 | v6 双摇杆设备绑定（白/黑手柄 udev symlink） |
 | 2026-05-18 | v5 摇杆中位修复（STICK_RAW_CENTER 32768→0） |
@@ -122,7 +122,7 @@ ros2 run joystick_driver joystick_control_node
 ros2 run base_omniwheel_r2_600 local_navigation_node
 ros2 run damiao_ctrl damiao_node
 ros2 run arm arm_ctrl_node
-ros2 run pneumatics pneu_ctrl_node
+ros2 run arm_arduino_praser arm_arduino_node
 ```
 
 ---
@@ -309,19 +309,18 @@ sudo usermod -a -G input $USER
 | 项目 | 修改前 | 修改后 |
 |------|--------|--------|
 | 消息类型 | `Float32MultiArray` | `Int8MultiArray` |
-| 发布 topic | `arm/pneu_navigation` | `arm/pneu_command` |
-| 数据顺序 | `[gripper, lift, stopper]` | `[stopper, lift, gripper]` |
+| 发布 topic | `arm/pneu_navigation` | `arm/pneu_ctrl` |
+| 数据顺序 | `[gripper, lift, stopper]` | `[gripper, lift, stopper]` (v8 按硬件接线确认) |
 | 数据值域 | `0.0/1.0` (float) | `0/1` (int) |
-| 按钮映射 A | index 0 (gripper) | index 2 (gripper) |
-| 按钮映射 B | index 1 (lift) | index 1 (lift, 不变) |
-| 按钮映射 X | index 2 (stopper) | index 0 (stopper) |
 
 ### 对齐目标
 
-`arm_arduino_node` 订阅 `arm/pneu_command` (Int8MultiArray)，期望数据顺序:
+`arm_arduino_node` 订阅 `arm/pneu_ctrl` (Int8MultiArray)，期望数据顺序:
 ```
-[arm_stopper, arm_lift, arm_gripper]
+[arm_gripper, arm_lift, arm_stopper]
 ```
+
+对应 Arduino 硬件引脚: D5=gripper (active HIGH), D6=lift (active LOW), D8=stopper (active HIGH)
 
 ### 用户可见影响
 

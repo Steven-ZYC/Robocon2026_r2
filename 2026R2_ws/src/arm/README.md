@@ -17,7 +17,7 @@ Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 
 
 | Node | 可执行文件 | 职责 |
 |---|---|---|
-| arm_ctrl_node | `arm_ctrl_node` | 关节级控制器，订阅 `arm/joint_navigation` 和 `arm/pneu_navigation`，发布 `arm/damiao_ctrl` 和 `arm/pneu_command` |
+| arm_ctrl_node | `arm_ctrl_node` | 关节级控制器，订阅 `arm/joint_navigation` 和 `arm/pneu_navigation`，发布 `arm/damiao_ctrl` 和 `arm/pneu_ctrl` |
 
 ---
 
@@ -30,15 +30,15 @@ Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 
 | Sub | `arm/joint_navigation` | `std_msgs/Float32MultiArray` |
 | Sub | `arm/pneu_navigation` | `std_msgs/Int8MultiArray` |
 | Pub | `damiao_control` | `std_msgs/Float32MultiArray` |
-| Pub | `arm/pneu_command` | `std_msgs/Int8MultiArray` |
+| Pub | `arm/pneu_ctrl` | `std_msgs/Int8MultiArray` |
 
 `arm/joint_navigation` 格式：`[joint_1_target, joint_2_target, ...]`
 - VEL 模式（mode=3）：target 为角速度 (rad/s)
 - POS_VEL 模式（mode=2）：target 为位置 (rad)
 
-`arm/pneu_navigation` 格式：`[stopper, lift, gripper]`
+`arm/pneu_navigation` 格式：`[gripper, lift, stopper]`
 - 值域 0（关闭）/ 1（开启），arm_ctrl_node 会 clamp 到 0/1
-- 通过 `arm/pneu_command` 转发至 arm_arduino_praser（arm_arduino_node）
+- 通过 `arm/pneu_ctrl` 转发至 arm_arduino_praser（arm_arduino_node）
 
 #### 参数
 
@@ -79,7 +79,7 @@ ros2 topic pub arm/damiao_ctrl std_msgs/Float32MultiArray "data: [5, 0, 0.0]"
 ros2 topic pub arm/pneu_navigation std_msgs/Int8MultiArray "data: [1, 0, 1]"
 
 # 查看气动状态
-ros2 topic echo arm/pneu_command
+ros2 topic echo arm/pneu_ctrl
 ```
 
 ---
@@ -124,7 +124,7 @@ ros2 launch arm arm.launch.py
 
 - `arm_ctrl_node` 新增 `arm/pneu_navigation` 订阅和 `arm/pneu_ctrl` 发布
 - 气动指令由 FSM/global_navigation 发布到 `arm/pneu_navigation`，arm_ctrl_node 透传至 `arm/pneu_ctrl`
-- `arm/pneu_ctrl` 格式：`[gripper, lift, stopper]`（0.0/1.0）
+- `arm/pneu_ctrl` 格式：`[gripper, lift, stopper]`（0/1）
 - 新增 `pneu_names` 参数，默认 `["arm_gripper", "arm_lift", "arm_stopper"]`
 - 20Hz watchdog 同时覆盖 motor 和 pneu 指令刷新
 
@@ -136,7 +136,7 @@ FSM / global_navigation
     │        ↓
     │   arm_ctrl_node
     │        ├──→ damiao_control → damiao_ctrl → Motor 5, 6
-    │        └──→ arm/pneu_ctrl   → pneumatics   → Arduino → 气动阀
+    │        └──→ arm/pneu_ctrl → arm_arduino_node → Arduino → 气动阀
     │
     └── arm/pneu_navigation ([gripper, lift, stopper])
 ```
@@ -147,10 +147,7 @@ FSM / global_navigation
 # 启动 damiao 电机控制
 ros2 launch damiao_ctrl damiao_ctrl.launch.py
 
-# 启动气动控制
-ros2 launch pneumatics pneumatics.launch.py
-
-# 启动 arm
+# 启动 arm (包含气动桥接 arm_arduino_node)
 ros2 launch arm arm.launch.py
 ```
 
@@ -160,8 +157,8 @@ ros2 launch arm arm.launch.py
 
 | 日期 | 说明 |
 |---|---|
-| 2026-06-03 | v0.8 — pneu topic 改为 Int8MultiArray (arm/pneu_navigation, arm/pneu_command)，替换 Float32MultiArray |
-| 2026-06-03 | v0.7 — pneu 发布 topic 改为 `arm/pneu_command`（对接 arm_arduino_praser），pneu 顺序统一为 `[stopper, lift, gripper]`；`pneu_names` 默认值同步更新 |
+| 2026-06-03 | v0.8 — pneu topic 改为 Int8MultiArray (arm/pneu_navigation, arm/pneu_ctrl)，替换 Float32MultiArray |
+| 2026-06-03 | v0.7 — pneu 发布 topic 改为 `arm/pneu_ctrl`（对接 arm_arduino_praser），pneu 顺序统一为 `[stopper, lift, gripper]`；`pneu_names` 默认值同步更新 |
 | 2026-06-01 | v0.6 — `arm.launch.py` 默认只启动 `arm_ctrl_node`；`arm_damiao_node` 保留为备用，主链路由 `damiao_ctrl` 驱动达妙 |
 | 2026-06-01 | v0.5 — 新增根目录 `arm_damiao_test.sh`，通过统一 `damiao_ctrl` 测试 arm motor 5 的 45deg 往返动作 |
 | 2026-05-20 | v0.4 — arm 独立 USB-CAN Damiao 驱动，输出改为 `arm/damiao_ctrl`，`damiao_ctrl` 暂时悬置 |
@@ -200,7 +197,7 @@ Damiao motors 5-6 (POS_VEL)
 气动链条不变：
 
 ```text
-arm/pneu_navigation → arm_ctrl_node → arm/pneu_ctrl → pneumatics/pneu_ctrl_node
+arm/pneu_navigation → arm_ctrl_node → arm/pneu_ctrl → arm_arduino_node → Arduino Mega (气动阀)
 ```
 
 ### arm_damiao_node 接口

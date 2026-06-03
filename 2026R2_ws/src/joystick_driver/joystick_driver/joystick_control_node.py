@@ -10,7 +10,7 @@ joystick_control_node: 手柄直驱控制节点
 - arm/joint_navigation (Float32MultiArray):
     Triplet format: [motor_id, pos_rad, speed_rad_s, ...]
     手柄速度值同时用作 position（实现 POS_VEL 下的连续运动）和 speed。
-- arm/pneu_command (Int8MultiArray): [stopper, lift, gripper]  0/1
+- arm/pneu_ctrl (Int8MultiArray): [gripper, lift, stopper]  0/1
 
 订阅:
 - joystick_input (joystick_msgs/Joystick): 手柄原始输入
@@ -123,7 +123,7 @@ class JoystickControlNode(Node):
         self._joy_timeout_warned = False
 
         # 气动切换状态 (toggle on button press)
-        self._pneu_state = [0, 0, 0]   # [stopper, lift, gripper]
+        self._pneu_state = [0, 0, 0]   # [gripper, lift, stopper]
         self._prev_buttons = {"a": False, "b": False, "x": False}
 
         # ---- 订阅 ----
@@ -139,7 +139,7 @@ class JoystickControlNode(Node):
             Float32MultiArray, "arm/joint_navigation", 10
         )
         self.pneu_pub = self.create_publisher(
-            Int8MultiArray, "arm/pneu_command", 10
+            Int8MultiArray, "arm/pneu_ctrl", 10
         )
 
         # ---- 定时控制循环 ----
@@ -292,7 +292,7 @@ class JoystickControlNode(Node):
 
     def _update_pneu_toggles(self, joy):
         """检测 A/B/X 按钮上升沿，翻转对应气动状态。"""
-        mapping = {"a": 2, "b": 1, "x": 0}
+        mapping = {"a": 0, "b": 1, "x": 2}
         for btn, idx in mapping.items():
             cur = getattr(joy, btn, False)
             prev = self._prev_buttons.get(btn, False)
