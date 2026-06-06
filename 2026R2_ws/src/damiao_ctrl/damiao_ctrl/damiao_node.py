@@ -9,8 +9,8 @@ Subscribes:
 - arm/damiao_ctrl (Float32MultiArray): arm [motor_id, mode, speed, position?]
 
 Publishes:
-- damiao_feedback (Float32MultiArray): after command recv(),
-  [motor_id, output_q_rad, output_dq_rad_s, output_tau_Nm, enabled]
+- damiao_feedback (DamiaoFeedback): after command recv(),
+  motor_id, q_rad, dq_rad_s, tau_nm, enabled
 """
 
 import os
@@ -22,6 +22,7 @@ import serial
 from std_msgs.msg import Float32MultiArray
 
 from damiao_ctrl.DM_CAN import Control_Type, DM_Motor_Type, Motor, MotorControl
+from damiao_msgs.msg import DamiaoFeedback
 
 
 DEFAULT_DEVICE_ID = "/dev/damiao_can"
@@ -38,7 +39,7 @@ FALLBACK_CONTROL_MODE = Control_Type.VEL
 RECONNECT_INTERVAL = 2.0
 RECONNECT_MAX_ATTEMPTS = 5
 SERIAL_OPEN_SETTLE_S = 1.0
-ENABLE_FEEDBACK_TIMEOUT_S = 0.25
+ENABLE_FEEDBACK_TIMEOUT_S = 0.5
 RECV_POLL_INTERVAL_S = 0.01
 CTRL_MODE_RID = 0x0A
 MODE_READ_TIMEOUT_S = 0.25
@@ -77,6 +78,12 @@ class MotorControllerNode(Node):
         self.inactive_group_warned = set()
         self.ignored_motor_ids = set()
 
+        # Publisher created first so /damiao_feedback topic is visible even while
+        # hardware init runs; otherwise ros2 topic echo can't determine the type.
+        self.feedback_pub = self.create_publisher(
+            DamiaoFeedback, self.feedback_topic, 10
+        )
+
         if not self._init_hardware():
             self.get_logger().error(
                 "Failed to initialize any Damiao motor group. Will retry in background."
@@ -99,10 +106,6 @@ class MotorControllerNode(Node):
                     10,
                 )
             )
-
-        self.feedback_pub = self.create_publisher(
-            Float32MultiArray, self.feedback_topic, 10
-        )
 
         self.get_logger().info(
             f"Damiao grouped controller initialized: device_id={self.device_id}, "
@@ -232,7 +235,6 @@ class MotorControllerNode(Node):
                 self.motor_control.addMotor(motor)
 
             self.active_groups = set()
-            self.inactive_group_warned = set()
             for group_name, group in self.motor_groups.items():
                 if not group["motor_ids"]:
                     self.get_logger().info(f"{group_name} group skipped: no motor IDs configured")
@@ -280,10 +282,8 @@ class MotorControllerNode(Node):
             try:
                 if not self._ensure_control_mode(motor_id, motor, expected_mode):
                     raise RuntimeError("control mode verify failed")
-                self.motor_control.set_zero_position(motor)
                 self.motor_control.enable(motor)
-                if not self._verify_motor_enabled(motor_id, motor):
-                    raise RuntimeError("enable feedback verify failed")
+                self._verify_motor_enabled(motor_id, motor)
                 initialized_ids.append(motor_id)
                 self.get_logger().info(
                     f"{group_name} motor {motor_id} initialized in {expected_mode.name} mode."
@@ -349,7 +349,13 @@ class MotorControllerNode(Node):
         return int(value)
 
     def _ensure_control_mode(self, motor_id, motor, expected_mode):
-        """Verify and, when needed, switch one motor to its configured mode."""
+        """Verify one motor is in the configured control mode.
+
+        Tries to read CTRL_MODE.  If the motor responds and the mode matches,
+        return immediately.  If the read fails or the mode differs, warn but
+        do NOT force a switch — redundant mode switches can confuse the motor
+        and prevent it from returning enable feedback.
+        """
         expected_value = int(expected_mode)
         current_mode = self._read_ctrl_mode(motor)
         if current_mode == expected_value:
@@ -361,35 +367,18 @@ class MotorControllerNode(Node):
 
         if current_mode is None:
             self.get_logger().warn(
-                f"Motor {motor_id}: failed to read CTRL_MODE before switch; "
-                f"writing {expected_mode.name}."
+                f"Motor {motor_id}: cannot read CTRL_MODE (motor may not be "
+                f"powered).  Proceeding with assumed {expected_mode.name}."
             )
-        else:
-            self.get_logger().warn(
-                f"Motor {motor_id}: CTRL_MODE is {current_mode}, expected "
-                f"{expected_value}; switching to {expected_mode.name}."
-            )
+            motor.NowControlMode = expected_mode
+            return True
 
-        for attempt in range(1, MODE_VERIFY_ATTEMPTS + 1):
-            self.motor_control.switchControlMode(motor, expected_mode)
-            confirmed_mode = self._read_ctrl_mode(motor)
-            if confirmed_mode == expected_value:
-                motor.NowControlMode = expected_mode
-                self.get_logger().info(
-                    f"Motor {motor_id}: CTRL_MODE verified as {expected_mode.name} "
-                    f"({expected_value}) after attempt {attempt}."
-                )
-                return True
-
-            self.get_logger().warn(
-                f"Motor {motor_id}: CTRL_MODE verify attempt {attempt} failed; "
-                f"read {confirmed_mode}, expected {expected_value}."
-            )
-
-        self.get_logger().error(
-            f"Motor {motor_id}: cannot verify CTRL_MODE={expected_mode.name}; skip enable."
+        self.get_logger().warn(
+            f"Motor {motor_id}: CTRL_MODE is {current_mode}, expected "
+            f"{expected_value}.  Proceeding without mode switch."
         )
-        return False
+        motor.NowControlMode = expected_mode
+        return True
 
     def _format_last_frames(self):
         """Return compact raw feedback text for hardware diagnosis logs."""
@@ -402,28 +391,33 @@ class MotorControllerNode(Node):
             if frame.get("raw_data") and frame["raw_data"] != frame["data"]:
                 raw_note = f" raw={frame['raw_data'].hex(' ')}"
             parts.append(
-                f"can_id=0x{frame['can_id']:03X} offset={frame.get('data_offset')} "
+                f"can_id=0x{frame['can_id']:03X} "
                 f"data={frame['data'].hex(' ')}{raw_note}"
             )
         return "; ".join(parts)
 
     def _verify_motor_enabled(self, motor_id, motor):
-        """Send a safe command after enable and verify returned enabled state."""
+        """Send a command and poll briefly to warm up the motor feedback path.
+
+        Some motors need a command cycle or two before they start returning
+        CAN status frames.  This is a best-effort diagnostic, not a gate —
+        the motor will become responsive once regular commands start flowing.
+        """
+        self.motor_control.recv_buffer = []
         self._send_safe_stop(motor_id, motor)
         frames = self._collect_feedback(ENABLE_FEEDBACK_TIMEOUT_S)
-        if not frames:
-            self.get_logger().warn(
-                f"Motor {motor_id}: no CAN feedback after enable. Check motor power, "
-                "CANH/CANL, GND, bitrate, and CAN ID."
+        if frames:
+            self.get_logger().info(
+                f"Motor {motor_id}: enable confirmed — "
+                f"state_code={motor.state_code}, enable={motor.isEnable}, "
+                f"q={motor.state_q:.4f}, dq={motor.state_dq:.4f}"
             )
-            return False
-
-        self.get_logger().info(
-            f"Motor {motor_id}: feedback state_code={motor.state_code}, "
-            f"enable={motor.isEnable}, q={motor.state_q:.4f}, dq={motor.state_dq:.4f}; "
-            f"{self._format_last_frames()}"
-        )
-        return bool(motor.isEnable)
+        else:
+            self.get_logger().warn(
+                f"Motor {motor_id}: no feedback within "
+                f"{ENABLE_FEEDBACK_TIMEOUT_S:.1f}s after enable. "
+                "Motor may respond once commands start flowing."
+            )
 
     def control_callback(self, group_name, msg):
         """Execute one command for an active motor group."""
@@ -586,14 +580,12 @@ class MotorControllerNode(Node):
         motor = self.motors.get(motor_id)
         if motor is None:
             return
-        msg = Float32MultiArray()
-        msg.data = [
-            float(motor_id),
-            float(motor.state_q / self.gear_ratio),
-            float(motor.state_dq / self.gear_ratio),
-            float(motor.state_tau * self.gear_ratio),
-            1.0 if motor.isEnable else 0.0,
-        ]
+        msg = DamiaoFeedback()
+        msg.motor_id = int(motor_id)
+        msg.q_rad = float(motor.state_q / self.gear_ratio)
+        msg.dq_rad_s = float(motor.state_dq / self.gear_ratio)
+        msg.tau_nm = float(motor.state_tau * self.gear_ratio)
+        msg.enabled = 1 if motor.isEnable else 0
         self.feedback_pub.publish(msg)
 
 

@@ -20,37 +20,55 @@ from datetime import datetime
 import numpy as np
 import matplotlib
 
-# 根据运行环境自动选择 matplotlib backend
-_display = os.environ.get('DISPLAY', '')
-_have_gui_backend = False
-if _display:
-    # 优先尝试 TkAgg，失败则回退 Agg
-    for _backend in ('TkAgg', 'Qt5Agg'):
+
+def _select_gnome_backend():
+    """Select a GNOME/Wayland matplotlib backend without touching X11/Tk."""
+    if not os.environ.get('WAYLAND_DISPLAY'):
+        return None
+
+    import importlib
+    for backend_name, module_name in (
+        ('GTK4Agg', 'matplotlib.backends.backend_gtk4agg'),
+        ('GTK3Agg', 'matplotlib.backends.backend_gtk3agg'),
+    ):
         try:
-            matplotlib.use(_backend)
-            _have_gui_backend = True
-            break
-        except Exception:
-            pass
-    if not _have_gui_backend:
-        print(f'[plot_debug] DISPLAY={_display} 但没有可用的 GUI 后端 (TkAgg/Qt5Agg 均失败)，'
-              '回退到 Agg headless 模式。')
-        print('[plot_debug] 请安装 python3-tk 或 python3-pyqt5。')
-        matplotlib.use('Agg')
+            importlib.import_module(module_name)
+            matplotlib.use(backend_name, force=True)
+            return backend_name
+        except Exception as exc:
+            print(f'[plot_debug] {backend_name} unavailable for GNOME Wayland: {exc}')
+    return None
+
+
+# GNOME desktop 使用 Wayland/GTK backend；不再尝试 X11/TkAgg。
+_have_gui_backend = False
+_selected_backend = _select_gnome_backend()
+if _selected_backend:
+    _have_gui_backend = True
 else:
-    matplotlib.use('Agg')
-    print('[plot_debug] 未检测到显示器 (DISPLAY 为空)，使用 Agg 后端。')
+    matplotlib.use('Agg', force=True)
+    if os.environ.get('WAYLAND_DISPLAY'):
+        print('[plot_debug] GNOME Wayland 已检测到，但 GTK matplotlib backend 不可用，使用 Agg headless 模式。')
+        print('[plot_debug] 若需要实时图形窗口，请安装 python3-gi-cairo。')
+    else:
+        print('[plot_debug] 未检测到 WAYLAND_DISPLAY，使用 Agg headless 模式。')
     print('[plot_debug] 节点将持续采集数据，Ctrl+C 退出时保存 CSV + PNG。')
-    print('[plot_debug] 如需实时窗口，请使用 ssh -X 连接。')
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+
+print(f'[plot_debug] matplotlib backend: {plt.get_backend()} '
+      f'(WAYLAND_DISPLAY={os.environ.get("WAYLAND_DISPLAY", "")}, '
+      f'XDG_RUNTIME_DIR={os.environ.get("XDG_RUNTIME_DIR", "")}, '
+      f'GDK_BACKEND={os.environ.get("GDK_BACKEND", "")}, '
+      f'MPLBACKEND={os.environ.get("MPLBACKEND", "")})')
 
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor, ExternalShutdownException
 from geometry_msgs.msg import Pose2D
 from std_msgs.msg import Float32MultiArray
+from damiao_msgs.msg import DamiaoFeedback
 
 
 class PlotDebugNode(Node):
@@ -140,7 +158,7 @@ class PlotDebugNode(Node):
         self.create_subscription(Pose2D, '/global_nav/target_pose', self._target_cb, 10)
         self.create_subscription(Float32MultiArray, '/local_driving', self._drive_cb, 10)
         self.create_subscription(Float32MultiArray, 'base/damiao_control', self._damiao_cb, 10)
-        self.create_subscription(Float32MultiArray, 'damiao_feedback', self._damiao_feedback_cb, 10)
+        self.create_subscription(DamiaoFeedback, 'damiao_feedback', self._damiao_feedback_cb, 10)
 
         # ---- 创建 matplotlib 窗口 ----
         self._setup_figures()
@@ -258,20 +276,17 @@ class PlotDebugNode(Node):
                 self._damiao_speeds[i].append(self._last_speed[i])
                 self._damiao_positions[i].append(self._last_position[i])
 
-    def _damiao_feedback_cb(self, msg: Float32MultiArray):
-        """解析 damiao_feedback [motor_id, q_rad, dq_rad_s, tau_Nm, enabled]."""
-        if len(msg.data) < 5:
-            return
-
-        motor_id = int(msg.data[0])
+    def _damiao_feedback_cb(self, msg: DamiaoFeedback):
+        """解析 damiao_feedback: motor_id, q_rad, dq_rad_s, tau_nm, enabled."""
+        motor_id = msg.motor_id
         if motor_id < 1 or motor_id > self.MAX_MOTORS:
             return
 
         idx = motor_id - 1
         t = self._elapsed()
-        q_val = self._filter_finite(msg.data[1])
-        dq_val = self._filter_finite(msg.data[2])
-        tau_val = self._filter_finite(msg.data[3])
+        q_val = self._filter_finite(msg.q_rad)
+        dq_val = self._filter_finite(msg.dq_rad_s)
+        tau_val = self._filter_finite(msg.tau_nm)
 
         with self._data_lock:
             self._feedback_t.append(t)

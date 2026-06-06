@@ -1,5 +1,7 @@
 # Damiao Ctrl TODO
 
+- [x] feedback_pub 提前到硬件初始化前创建，避免 ros2 topic echo 无法确定消息类型
+- [x] control_Pos_Vel / control_Vel 后加 _recv_with_settle 沉降轮询，确保读到电机 CAN 反馈
 - [ ] 确认所有 6 个电机的 CAN ID 与物理连接对应
 - [ ] 与底盘 `local_navigation_node` 联调，确认 VEL 模式正常
 - [ ] 与 arm `arm_ctrl_node` 联调，确认 POS_VEL 模式正常

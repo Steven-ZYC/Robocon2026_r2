@@ -1,8 +1,6 @@
 # Robocon R2 — 固定 USB 串口设备名
 # 安装: sudo cp 99-robocon-r2.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger
 
-# 气动 Arduino (CH340 USB-Serial, 无唯一序列号)
-SUBSYSTEM=="tty", DRIVERS=="ch341", SYMLINK+="pneu_arduino"
 
 # 底盘大喵 USB-CAN 适配器 (HDSC CDC, SN=00000000050C)
 # damiao_can 保留作旧脚本兼容；当前底盘节点优先使用 chassis_damiao_can。

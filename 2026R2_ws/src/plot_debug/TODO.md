@@ -23,3 +23,18 @@
 
 - [x] v4：修复 headless 模式重复 spin 导致 plot_debug 可能无法正确启动
 - [x] v4：headless 退出保存截图前自动创建 save_dir 并刷新图表
+- [x] v5：测试 bash/tmux 链路显式导出 DISPLAY/XAUTHORITY/MPLBACKEND，修复多节点启动时 matplotlib GUI 环境丢失问题
+- [x] v5：plot_debug_node 启动时打印实际 matplotlib backend 与 GUI 关键环境变量
+
+- [x] v6：arm_damiao_test.sh 的 plot_debug 窗口补充 DISPLAY/XAUTHORITY/MPLBACKEND 导出
+- [x] v6：支持 PLOT_DEBUG_HEADLESS=1 强制 Agg headless 采集并保存 CSV/PNG
+- [x] v6：arm_damiao_test.sh 启动前检查 gnome-terminal，并提示纯 headless 使用 tmux_test.sh arm
+
+- [x] v7：arm_damiao_test.sh 不再猜测 `$HOME/.Xauthority`，避免导出错误 X11 cookie
+- [x] v7：plot_debug_node 在 TkAgg 前执行 Tk display preflight，授权失败自动回退 Agg
+
+- [x] v8：plot_debug_node 改为 GNOME Wayland/GTK backend 优先，不再尝试 X11/TkAgg
+- [x] v8：arm_damiao_test.sh 窗口6导出 XDG_RUNTIME_DIR/WAYLAND_DISPLAY/GDK_BACKEND
+- [ ] v8：在机器人系统安装 python3-gi-cairo，使 GTK3Agg/GTK4Agg 可弹实时窗口
+
+- [x] v9：arm_damiao_test.sh 窗口6显式写出 plot_debug_node 全部可选参数，方便手动 true/false

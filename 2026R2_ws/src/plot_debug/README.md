@@ -71,6 +71,11 @@ CPython GIL 保障 deque append / 迭代 的线程安全性。
 - 若窗口无数据：先确认上游 topic 是否在发布 `ros2 topic echo <topic>`
 - 若窗口卡顿：减小 `max_history` 参数（node 内 `self.max_history = 200`）
 - 若窗口不刷新：检查 `matplotlib` 后端是否支持 GUI，必要时改为 `Qt5Agg`
+- 若单独启动可显示，但从 `arm_damiao_test.sh` / `y_test.sh` / `red_area_test.sh` / `tmux_test.sh` 启动不显示：
+  - 查看 plot_debug 终端中的 `DISPLAY`, `XAUTHORITY`, `MPLBACKEND` 与 `matplotlib backend` 输出。
+  - GUI 模式应看到 `DISPLAY` 非空，并且 backend 为 `TkAgg` 或 `Qt5Agg`。
+  - 若 backend 变为 `Agg`，表示节点进入 headless 采集模式，不会弹出实时窗口，只会在退出时保存 CSV/PNG。
+  - gnome/tmux 测试脚本会显式导出 `DISPLAY`, `XAUTHORITY`, `MPLBACKEND=TkAgg`, `QT_QPA_PLATFORM=xcb`，用于避免多窗口启动时 GUI 环境丢失。
 
 ---
 
@@ -162,3 +167,91 @@ ros2 run plot_debug plot_debug_node --ros-args -p max_history:=1000 -p save_dir:
 **启动行为：**
 - 有 `DISPLAY`：使用 matplotlib GUI 窗口实时刷新，关闭窗口后保存 CSV。
 - 无 `DISPLAY`：使用 Agg 后端持续采集数据，Ctrl+C 退出后保存 CSV 与 `snapshot.png`。
+
+### v5 — 修复测试 bash 链路 GUI 环境继承问题（2026-06-04）
+
+**Bug 修复：**
+- `y_test.sh`、`red_area_test.sh`、`tmux_test.sh` 中的 plot_debug 链路现在会显式恢复 X11 GUI 环境：
+  - `DISPLAY`：目标显示器，默认沿用当前 shell，空值时使用 `:0`
+  - `XAUTHORITY`：X11 授权文件，默认沿用当前 shell，若未设置则尝试 `$HOME/.Xauthority`
+  - `MPLBACKEND=TkAgg`：优先要求 matplotlib 使用实时 GUI 后端
+  - `QT_QPA_PLATFORM=xcb`：避免 Qt 后端在 Wayland/X11 混合环境中错误选平台
+- `plot_debug_node` 启动时会打印实际 matplotlib backend 和 GUI 关键环境变量，便于判断是 GUI 后端、X11 授权还是 headless fallback 问题。
+
+**验证方式：**
+```bash
+bash y_test.sh
+```
+
+在窗口4中应看到类似：
+```text
+DISPLAY: :0
+MPLBACKEND: TkAgg
+[plot_debug] matplotlib backend: TkAgg (...)
+```
+
+
+### v6 — arm_damiao_test.sh 支持 plot_debug GNOME/headless 检查（2026-06-05）
+
+**新增检查：**
+- `arm_damiao_test.sh` 启动前检查 `gnome-terminal` 是否存在；若当前环境不是 GNOME 桌面测试环境，会提示改用 `bash tmux_test.sh arm`。
+- 窗口6启动 plot_debug 时会打印 `DISPLAY`、`XAUTHORITY`、`PLOT_DEBUG_HEADLESS`，并明确当前是 GUI 还是 headless 采集模式。
+
+**运行模式：**
+```bash
+# GNOME 桌面默认模式：TkAgg 实时图形窗口
+bash arm_damiao_test.sh
+
+# 强制 headless 采集：不弹实时图，Ctrl+C 后保存 CSV + snapshot.png
+PLOT_DEBUG_HEADLESS=1 bash arm_damiao_test.sh
+```
+
+**行为说明：**
+- `PLOT_DEBUG_HEADLESS=0`（默认）：导出 `DISPLAY`、`MPLBACKEND=TkAgg`、`QT_QPA_PLATFORM=xcb`，并且仅在当前 shell 已设置 `XAUTHORITY` 时沿用它，用于 GNOME 桌面实时绘图。
+- `PLOT_DEBUG_HEADLESS=1`：在窗口6内 `unset DISPLAY` 并使用 `MPLBACKEND=Agg`，plot_debug 只采集数据，退出时保存 CSV 与 `snapshot.png`。
+
+
+### v7 — 修复 TkAgg X11 授权失败时直接崩溃（2026-06-05）
+
+**Bug 修复：**
+- `arm_damiao_test.sh` 不再自动猜测 `$HOME/.Xauthority`。若当前 shell 没有真实的 `XAUTHORITY`，窗口6不会强行导出错误 cookie，避免出现 `Authorization required, but no authorization protocol specified`。
+- `plot_debug_node` 在选择 `TkAgg` 前会先用 `tkinter.Tk()` 做一次显示器授权预检；如果 `DISPLAY=:0` 但 X11 授权无效，会自动回退到 `Agg` headless 模式并继续采集数据，不再 traceback 退出。
+
+**现场判断：**
+- 若窗口6打印 `matplotlib backend: TkAgg`：实时图形窗口可用。
+- 若打印 `TkAgg display preflight failed` 或 `backend: agg`：GUI 授权不可用，但节点仍会保存 CSV 与 `snapshot.png`。
+
+
+### v8 — GNOME Wayland/GTK 后端取代 X11/TkAgg（2026-06-05）
+
+**设计变更：**
+- `plot_debug_node` 不再尝试 X11/TkAgg，也不再依赖 `DISPLAY`/`XAUTHORITY`。
+- GNOME 桌面实时绘图改用 Wayland/GTK backend：优先 `GTK4Agg`，其次 `GTK3Agg`，失败后回退 `Agg` headless。
+- `arm_damiao_test.sh` 的窗口6默认导出 `XDG_RUNTIME_DIR=/run/user/<uid>`、`WAYLAND_DISPLAY=wayland-0`、`GDK_BACKEND=wayland`、`MPLBACKEND=GTK3Agg`。
+
+**依赖要求：**
+```bash
+sudo apt install python3-gi-cairo
+```
+当前系统已有 `python3-gi`、`python3-cairo`、`gir1.2-gtk-3.0`、`gir1.2-gtk-4.0`，但缺 `python3-gi-cairo` 时 GTK backend 会提示 `Gtk-based backends require cairo` 并自动进入 headless。
+
+
+### v9 — arm_damiao_test.sh 显式暴露全部 plot_debug 参数（2026-06-05）
+
+`arm_damiao_test.sh` 窗口6现在把 `plot_debug_node` 的可选参数全部写在脚本顶部，方便现场直接修改 true/false：
+
+| 脚本变量 | 对应 ROS2 参数 | 默认值 | 作用 |
+|---|---|---|---|
+| `PLOT_SHOW_POSE2D` | `show_pose2d` | `false` | `/state_pose2d` 轨迹与 X/Y 曲线 |
+| `PLOT_SHOW_TARGET_ERROR` | `show_target_error` | `false` | `/global_nav/target_pose` 追踪误差 |
+| `PLOT_SHOW_DRIVING` | `show_driving` | `false` | `/local_driving` 指令曲线 |
+| `PLOT_SHOW_DAMIAO` | `show_damiao` | `true` | 大淼控制指令曲线 |
+| `PLOT_SHOW_DAMIAO_FEEDBACK` | `show_damiao_feedback` | `true` | 大淼反馈力矩曲线 |
+| `PLOT_MAX_HISTORY` | `max_history` | `600` | 每条曲线保留点数 |
+| `PLOT_UPDATE_RATE_HZ` | `update_rate_hz` | `10.0` | 图表刷新频率 |
+| `PLOT_SAVE_DIR` | `save_dir` | `/home/robotics/Robocon2026_r2/log_plot_debug` | CSV/PNG 保存目录 |
+
+示例：
+```bash
+PLOT_SHOW_POSE2D=true PLOT_SHOW_DRIVING=true bash arm_damiao_test.sh
+```

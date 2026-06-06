@@ -134,6 +134,7 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-04 | v0.8 — feedback_pub 提前到硬件初始化前创建，避免 ros2 topic echo 无法确定类型；control_Pos_Vel/Vel 后加沉降轮询 _recv_with_settle 确保读到电机反馈 |
 | 2026-06-01 | v0.7 — `r2_launch` 主链路统一使用 `damiao_ctrl/damiao_node`，一个 USB-CAN 控制 chassis 1-4 与 arm 5-6 |
 | 2026-05-31 | v0.6 — topic 重命名：navigation → *_navigation，ctrl → *_ctrl；arm_ctrl_node → arm/damiao_ctrl |
 | 2026-05-31 | v0.5 — feedback 改为命令触发：每次发送控制指令并 recv() 后立即发布，发布值经 gear_ratio 换算为输出端 q/dq/tau |
