@@ -14,7 +14,7 @@ import math
 import numpy as np
 import yaml
 
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, String
 from geometry_msgs.msg import Pose2D
 
 from .tracker import Tracker
@@ -536,10 +536,8 @@ class MissionExecutor:
         position is looked up from the actuator's positions table.
         speed is read from the actuator's speed field (default 3.0 rad/s).
         """
-        num_pneu = sum(1 for a in self.actuators.values() if a['type'] == 'pneumatic')
-
         joint_triplets = []          # [motor_id, pos, speed, ...]
-        pneu_targets = [0.0] * max(num_pneu, 1)
+        pneu_pairs = []              # ["name:value", ...]
 
         for name, value in stage.items():
             if name == 'type' or name == 'id':
@@ -557,14 +555,13 @@ class MissionExecutor:
                 joint_triplets.extend([float(motor_id), position, speed])
 
             elif act['type'] == 'pneumatic':
-                idx = act['index']
-                if idx < len(pneu_targets):
-                    # states is ordered list: [state0, state1] → 0.0 / 1.0
-                    pneu_targets[idx] = float(act['states'].index(value))
+                target_val = act['states'].index(value)
+                pneu_pairs.append(f"{name}:{target_val}")
 
         if joint_triplets:
             self._pub_joint_cmd(joint_triplets)
-        self._pub_pneu_cmd(pneu_targets)
+        if pneu_pairs:
+            self._pub_pneu_cmd(",".join(pneu_pairs))
 
     def _pub_joint_cmd(self, targets):
         """Publish joint triplets to arm/joint_navigation.
@@ -578,11 +575,14 @@ class MissionExecutor:
         self.pub_joint.publish(msg)
 
     def _pub_pneu_cmd(self, targets):
-        """Publish pneumatic target array to arm/pneu_navigation."""
+        """Publish pneumatic name:value pairs to arm/pneu_navigation.
+
+        targets format: "name1:val1,name2:val2,..."
+        """
         if self.pub_pneu is None:
             return
-        msg = Float32MultiArray()
-        msg.data = [float(t) for t in targets]
+        msg = String()
+        msg.data = targets
         self.pub_pneu.publish(msg)
 
     # ------------------------------------------------------------------
@@ -716,9 +716,14 @@ class MissionExecutor:
             msg.data = joint_triplets
             self.pub_joint.publish(msg)
         if self.pub_pneu is not None:
-            msg = Float32MultiArray()
-            msg.data = [0.0, 0.0, 0.0]
-            self.pub_pneu.publish(msg)
+            pneu_pairs = []
+            for name, act in self.actuators.items():
+                if act.get('type') == 'pneumatic':
+                    pneu_pairs.append(f"{name}:0")
+            if pneu_pairs:
+                msg = String()
+                msg.data = ",".join(pneu_pairs)
+                self.pub_pneu.publish(msg)
         self.phase = 'terminated'
         self.logger.info("Mission terminated")
 

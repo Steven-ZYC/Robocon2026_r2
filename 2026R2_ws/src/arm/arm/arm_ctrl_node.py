@@ -8,7 +8,9 @@ Subscribes:
 - arm/joint_navigation (Float32MultiArray):
     Triplet format: [motor_id, position_rad, speed_rad_s, ...]
     motor_id is matched against joint_motor_ids param for routing.
-- arm/pneu_navigation (Int8MultiArray): [gripper, lift, stopper]  (0/1)
+- arm/pneu_navigation (String):
+    Comma-separated name:value pairs, e.g. "arm_gripper:1.0,arm_lift:0.0"
+    Name is matched against pneu_names param to determine array index.
 
 Publishes:
 - arm/damiao_ctrl (Float32MultiArray):
@@ -19,8 +21,7 @@ Publishes:
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32MultiArray
-from std_msgs.msg import Int8MultiArray
+from std_msgs.msg import Float32MultiArray, Int8MultiArray, String
 import time
 
 DEFAULT_JOINT_MOTOR_IDS = [5, 6]
@@ -109,7 +110,7 @@ class ArmCtrlNode(Node):
             10,
         )
         self.pneu_sub = self.create_subscription(
-            Int8MultiArray,
+            String,
             "arm/pneu_navigation",
             self.pneu_command_callback,
             10,
@@ -239,15 +240,39 @@ class ArmCtrlNode(Node):
     # ------------------------------------------------------------------
 
     def pneu_command_callback(self, msg):
-        """Receive pneumatic target command, clamp to 0/1, and publish."""
-        if len(msg.data) < self.num_pneu:
-            self.get_logger().warn(
-                f"Expected {self.num_pneu} pneu targets, got {len(msg.data)}"
-            )
-            return
+        """Parse name:value pairs and update pneumatic targets by name.
 
-        # Clamp each value to 0 or 1 for safety
-        targets = [1 if int(msg.data[i]) > 0 else 0 for i in range(self.num_pneu)]
+        Message format: "name1:val1,name2:val2,..."
+        Each name is looked up in pneu_names to find its array index.
+        Unrecognized names are warned and skipped.
+        """
+        # Start from current state so partial updates merge correctly
+        targets = (
+            list(self.latest_pneu_targets)
+            if self.latest_pneu_targets is not None
+            else [0] * self.num_pneu
+        )
+
+        for pair in msg.data.split(","):
+            pair = pair.strip()
+            if not pair:
+                continue
+            try:
+                name, val_str = pair.split(":", 1)
+                val = 1 if int(val_str) > 0 else 0
+            except ValueError:
+                self.get_logger().warn(f"Invalid pneu pair format: '{pair}'")
+                continue
+
+            if name not in self.pneu_names:
+                self.get_logger().warn(
+                    f"Unknown pneumatic name '{name}', not in {self.pneu_names}"
+                )
+                continue
+
+            idx = self.pneu_names.index(name)
+            targets[idx] = val
+
         self.latest_pneu_targets = targets
         self.publish_pneu_commands(targets)
 

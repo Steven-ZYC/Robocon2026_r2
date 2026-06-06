@@ -32,9 +32,11 @@ Damiao 电机驱动的机械臂关节控制包。适用于通过 USB-CAN 控制 
 | Pub | `damiao_control` | `std_msgs/Float32MultiArray` |
 | Pub | `arm/pneu_ctrl` | `std_msgs/Int8MultiArray` |
 
-`arm/joint_navigation` 格式：`[joint_1_target, joint_2_target, ...]`
-- VEL 模式（mode=3）：target 为角速度 (rad/s)
-- POS_VEL 模式（mode=2）：target 为位置 (rad)
+`arm/joint_navigation` 格式：**三连组 (triplet)** `[motor_id, pos_rad, speed_rad_s, ...]`
+- 每个 triplet 包含 3 个 float：电机 ID、目标位置 (rad)、速度上限 (rad/s)
+- 一条消息可包含多个 triplet，控制多台电机，例如 `[5, 1.57, 0.8, 6, -0.78, 0.8]` 同时控制 M5 和 M6
+- motor_id 必须在 `joint_motor_ids` 参数列表中，否则 arm_ctrl_node 会跳过并 warn
+- 位置/速度均为**输出轴（关节空间）**，gear_ratio 换算由底层 damiao_node 负责
 
 `arm/pneu_navigation` 格式：`[gripper, lift, stopper]`
 - 值域 0（关闭）/ 1（开启），arm_ctrl_node 会 clamp 到 0/1
@@ -69,8 +71,8 @@ ros2 run arm arm_ctrl_node --ros-args -p joint_motor_ids:="[5,6]"
 # 查看 arm 控制状态
 ros2 topic echo arm/damiao_ctrl
 
-# 发送关节速度指令 (VEL 模式，关节 5 和 6 各 1.0 rad/s)
-ros2 topic pub arm/joint_navigation std_msgs/Float32MultiArray "data: [1.0, 1.0]"
+# 发送关节位置指令 (POS_VEL 模式，M5 目标 1.57rad 速度 0.8rad/s, M6 目标 -0.78rad 速度 0.8rad/s)
+ros2 topic pub --once arm/joint_navigation std_msgs/Float32MultiArray "data: [5, 1.57, 0.8, 6, -0.78, 0.8]"
 
 # 发送失能指令
 ros2 topic pub arm/damiao_ctrl std_msgs/Float32MultiArray "data: [5, 0, 0.0]"
@@ -157,6 +159,7 @@ ros2 launch arm arm.launch.py
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-04 | v0.9 — `arm/joint_navigation` 格式从位置数组 `[j1, j2]` 改为 triplet `[motor_id, pos_rad, speed_rad_s, ...]`，支持显式指定 motor_id；调试示例同步更新 |
 | 2026-06-03 | v0.8 — pneu topic 改为 Int8MultiArray (arm/pneu_navigation, arm/pneu_ctrl)，替换 Float32MultiArray |
 | 2026-06-03 | v0.7 — pneu 发布 topic 改为 `arm/pneu_ctrl`（对接 arm_arduino_praser），pneu 顺序统一为 `[stopper, lift, gripper]`；`pneu_names` 默认值同步更新 |
 | 2026-06-01 | v0.6 — `arm.launch.py` 默认只启动 `arm_ctrl_node`；`arm_damiao_node` 保留为备用，主链路由 `damiao_ctrl` 驱动达妙 |
@@ -267,4 +270,58 @@ ros2 run arm arm_ctrl_node --ros-args -p gear_ratio:=1.0 -p republish_rate_hz:=5
 
 ```bash
 ros2 run arm arm_damiao_node
+```
+
+---
+
+## v0.9 — `arm/joint_navigation` triplet 格式（2026-06-04）
+
+### 变更说明
+
+`arm/joint_navigation` 消息格式从位置数组改为 triplet 格式，每条 triplet 显式携带 `motor_id`。
+
+**旧格式（v0.8 及之前）：**
+
+```
+[joint_1_target, joint_2_target, ...]
+```
+- 按 `joint_motor_ids` 顺序隐式映射，如 `[1.57, -0.78]` 表示 M5=1.57rad, M6=-0.78rad
+- 不支持跳电机或非连续 ID
+
+**新格式（v0.9）：**
+
+```
+[motor_id, pos_rad, speed_rad_s,  motor_id, pos_rad, speed_rad_s,  ...]
+```
+- 每条 triplet 为 3 个 float：电机 ID、目标位置(rad)、速度上限(rad/s)
+- 可任意组合电机，跳过不关心的电机
+- motor_id 必须在 `joint_motor_ids` 列表中，否则 arm_ctrl_node 跳过并 warn
+
+### 调试命令（v0.9）
+
+```bash
+# 控制 M5 到 1.57rad，速度 0.8rad/s
+ros2 topic pub --once arm/joint_navigation std_msgs/Float32MultiArray "data: [5, 1.57, 0.8]"
+
+# 同时控制 M5 和 M6
+ros2 topic pub --once arm/joint_navigation std_msgs/Float32MultiArray "data: [5, 1.57, 0.8, 6, -0.78, 0.8]"
+```
+
+### 兼容性
+
+不兼容旧格式。以下发布方已同步更新：
+- `navigation/mission_executor.py`（FSM）— `_execute_arm()` 构建 triplet
+- `joystick_driver/joystick_control_node.py`（摇杆）— `_pub_joint_cmd()` 构建 triplet
+- 根目录 `arm_damiao_test.sh`（测试脚本）— `publish_joint()` 构建 triplet
+
+### arm_damiao_test.sh 中的格式
+
+测试脚本的第 100 行已使用 triplet：
+
+```bash
+publish_joint() {
+  local p="$1"
+  ros2 topic pub --once /arm/joint_navigation std_msgs/Float32MultiArray \
+    "data: [$ARM_MOTOR_ID, $p, $SPEED_RAD_S]"
+}
 ```

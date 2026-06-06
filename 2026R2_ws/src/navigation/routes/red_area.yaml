@@ -11,10 +11,52 @@ waypoints:
   wp_head_1:     { pose: { x: 0.130, y: -0.875, yaw: 0.0 } }
 
 # ===== 导航预设 =====
+# XY 分立 PID 模式（与 y_test.sh 一致的 algo 和 PID 值）
 profiles:
-  slow:   { speed_mps: 0.0005, yaw_rate_rps: 0.8, start_radius_m: 0.2, end_radius_m: 0.2 }
-  medium: { speed_mps: 0.001, yaw_rate_rps: 1.5, start_radius_m: 0.3, end_radius_m: 0.3 }
-  fast:   { speed_mps: 0.002, yaw_rate_rps: 2.0, start_radius_m: 0.4, end_radius_m: 0.4 }
+  slow:
+    speed_mps: 0.4
+    yaw_rate_rps: 0.3
+    start_radius_m: 0.0
+    end_radius_m: 0.0
+    min_speed_scale: 0.0
+    k_p_x: 0.044729
+    k_p_y: 0.104020
+    k_d_x: 0.001560
+    k_d_y: 0.001040
+    k_heading_p: 0.06
+    k_heading_d: 0.0
+    max_body_x_mps: 1.0
+    max_body_y_mps: 1.0
+
+  medium:
+    speed_mps: 0.4
+    yaw_rate_rps: 0.3
+    start_radius_m: 0.0
+    end_radius_m: 0.0
+    min_speed_scale: 0.0
+    k_p_x: 0.044729
+    k_p_y: 0.104020
+    k_d_x: 0.001560
+    k_d_y: 0.001040
+    k_heading_p: 0.06
+    k_heading_d: 0.0
+    max_body_x_mps: 1.0
+    max_body_y_mps: 1.0
+
+  fast:
+    speed_mps: 0.4
+    yaw_rate_rps: 0.3
+    start_radius_m: 0.0
+    end_radius_m: 0.0
+    min_speed_scale: 0.0
+    k_p_x: 0.044729
+    k_p_y: 0.104020
+    k_d_x: 0.001560
+    k_d_y: 0.001040
+    k_heading_p: 0.06
+    k_heading_d: 0.0
+    max_body_x_mps: 1.0
+    max_body_y_mps: 1.0
 
 # ===== 执行器语义映射 =====
 actuators:
@@ -40,17 +82,14 @@ actuators:
 
   arm_gripper:
     type: pneumatic
-    index: 0
     states: [open, close]
 
   arm_lift:
     type: pneumatic
-    index: 1
     states: [low, high]
 
   arm_stopper:
     type: pneumatic
-    index: 2
     states: [low, high]
 
 # ===== 任务脚本 =====

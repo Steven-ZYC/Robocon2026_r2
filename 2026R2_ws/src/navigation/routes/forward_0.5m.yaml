@@ -130,7 +130,6 @@ actuators: {}
 #       back: 3.14
 #   arm_gripper:
 #     type: pneumatic
-#     index: 0
 #     states: [open, close]
 
 stages:
