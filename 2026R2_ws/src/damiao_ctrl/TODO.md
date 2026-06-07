@@ -1,6 +1,9 @@
 # Damiao Ctrl TODO
 
+- [x] 将 `DM_CAN.py` 与 `damiao_node.py` 回退到 `a6ebf5f1fddb05c41415d5907353ed1895131602` 基线
 - [x] feedback_pub 提前到硬件初始化前创建，避免 ros2 topic echo 无法确定消息类型
+- [x] 修正 HDSC USB-CAN feedback payload offset 选择，避免 enabled/torque 因错位解析长期为 0
+- [x] 正常 feedback 优先使用 D0 低 4 bit 的 motor ID，避免把 MST_ID 当作电机 ID
 - [x] control_Pos_Vel / control_Vel 后加 _recv_with_settle 沉降轮询，确保读到电机 CAN 反馈
 - [ ] 确认所有 6 个电机的 CAN ID 与物理连接对应
 - [ ] 与底盘 `local_navigation_node` 联调，确认 VEL 模式正常

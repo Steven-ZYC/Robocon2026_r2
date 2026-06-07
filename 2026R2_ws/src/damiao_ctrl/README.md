@@ -134,6 +134,8 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-07 | v0.10 — `DM_CAN.py` 与 `damiao_node.py` 已按 `a6ebf5f1fddb05c41415d5907353ed1895131602` 回退；v0.9 解析改动不再作为当前代码行为 |
+| 2026-06-07 | v0.9 — Damiao feedback payload 改为扫描 HDSC USB-CAN 回包 offset；正常反馈优先使用 D0 低 4 bit 的 motor ID，避免把 MST_ID 误当电机 ID |
 | 2026-06-04 | v0.8 — feedback_pub 提前到硬件初始化前创建，避免 ros2 topic echo 无法确定类型；control_Pos_Vel/Vel 后加沉降轮询 _recv_with_settle 确保读到电机反馈 |
 | 2026-06-01 | v0.7 — `r2_launch` 主链路统一使用 `damiao_ctrl/damiao_node`，一个 USB-CAN 控制 chassis 1-4 与 arm 5-6 |
 | 2026-05-31 | v0.6 — topic 重命名：navigation → *_navigation，ctrl → *_ctrl；arm_ctrl_node → arm/damiao_ctrl |
@@ -376,3 +378,51 @@ arm/joint_navigation → arm_ctrl_node → arm/damiao_ctrl
 ### 超时保护不变
 
 v0.7 不改变 watchdog 行为。`damiao_ctrl/damiao_node` 仍对 chassis/arm 各自独立计时，默认 `0.5 s`。
+
+
+## v0.9 — HDSC USB-CAN feedback offset 扫描（2026-06-07）
+
+### 设计目标
+
+实车调试中出现 `damiao_feedback` 的 `enabled` 长期为 `0`、部分 motor torque 长期为 `0` 的现象。该版本不改变 topic 协议，只修正底层 USB-CAN 回包中 Damiao D0-D7 payload 的选择方式。
+
+### 变更摘要
+
+- `DM_CAN.recv()` 不再只固定读取 `frame[21:29]` 或 `frame[24:32]`。
+- 新增小窗口扫描：在 `frame[21]` 到 `frame[30]` 之间寻找低 4 bit 能匹配已注册 motor ID 的 payload。
+- 正常反馈更新 motor state 时优先使用 D0 低 4 bit 的 motor ID；CAN frame ID 是 MST_ID，可与电机接收 ID 不同。
+- `damiao_node` 的 enable 验证日志会显示 `offset=<n>`、`data=<...>`，若 raw 与 selected payload 不同会同时显示 `raw=<...>`。
+
+### 接口影响
+
+Topic 与消息格式不变：
+
+```text
+damiao_feedback: damiao_msgs/msg/DamiaoFeedback
+motor_id, q_rad, dq_rad_s, tau_nm, enabled
+```
+
+### 超时保护不变
+
+v0.9 不改变 watchdog 行为。`command_timeout` 默认仍为 `0.5 s`，每个 active group 独立计时；超时后 VEL 电机发零速度，POS_VEL 电机保持当前位置并发零速度。
+
+
+## v0.10 — 回退 Damiao Python 控制代码（2026-06-07）
+
+### 设计目标
+
+实车测试中 `damiao_ctrl` 仍持续报告 disabled/re-enable，且 `/damiao_feedback` 链路不稳定。为恢复到已知基线，本版本将以下两个 Python 文件回退到 commit `a6ebf5f1fddb05c41415d5907353ed1895131602` 的内容：
+
+- `damiao_ctrl/damiao_ctrl/DM_CAN.py`
+- `damiao_ctrl/damiao_ctrl/damiao_node.py`
+
+### 当前代码行为
+
+- feedback payload 选择回到该 commit 的实现。
+- re-enable 逻辑回到该 commit 的实现。
+- `damiao_feedback` 发布策略回到该 commit 的实现。
+- v0.9 文档保留为调试记录，但不代表当前 Python 代码行为。
+
+### 超时保护不变
+
+本次回退不改变 watchdog 行为。`command_timeout` 默认仍为 `0.5 s`，每个 active group 独立计时；超时后 VEL 电机发零速度，POS_VEL 电机保持当前位置并发零速度。

@@ -9,9 +9,6 @@ class Control_Type(IntEnum):
     POS_VEL = 2  # 位置速度模式
     VEL = 3
 
-class DM_Motor_Type(IntEnum):
-    DM3519 = 9  # 根据手册确认型号
-
 
 class Register_Type(IntEnum):
     """Damiao register value type used when decoding 0x33 replies."""
@@ -65,7 +62,7 @@ class MotorControl:
     send_data_frame = np.array(
         [0x55, 0xAA, 0x1e, 0x03, 0x01, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0x00, 0x08, 0x00,
          0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0x00], np.uint8)
-
+    
     Limit_Param = [[12.5, 30, 10], [12.5, 50, 10], [12.5, 8, 28], [12.5, 10, 28],
                    [12.5, 45, 20], [12.5, 45, 40], [12.5, 45, 54], [12.5, 25, 200], [12.5, 20, 200],
                    [12.5 , 280 , 1],[12.5 , 45 , 10],[12.5 , 45 , 10]]
@@ -92,7 +89,7 @@ class MotorControl:
         data[4:8] = unpack('4B', pack('<I', int(mode))) # 写入模式值
         self.__send_data(0x7FF, data)
         Motor.NowControlMode = mode
-        sleep(0.1)
+        sleep(0.1) 
 
     def read_param(self, Motor, rid):
         """Read one Damiao register through 0x7FF + 0x33."""
@@ -127,7 +124,7 @@ class MotorControl:
         data[0:4] = unpack('4B', pack('<f', float(P_desired))) # 小端序浮点
         data[4:8] = unpack('4B', pack('<f', float(V_desired)))
         self.__send_data(motorid, data)
-        self._recv_with_settle()
+        self.recv()
 
     def control_Vel(self, Motor, V_desired):
         """速度模式：ID 偏移 0x200"""
@@ -135,11 +132,6 @@ class MotorControl:
         data = np.array([0]*8, np.uint8)
         data[0:4] = unpack('4B', pack('<f', float(V_desired))) # 只发送速度
         self.__send_data(motorid, data)
-        self._recv_with_settle()
-
-    def _recv_with_settle(self):
-        """Brief settle before recv so the USB-CAN bridge has time to reply."""
-        sleep(0.002)
         self.recv()
 
     def recv(self):
@@ -147,49 +139,42 @@ class MotorControl:
         self.last_can_frames = []
         if self.serial_.in_waiting > 0:
             self.recv_buffer.extend(self.serial_.read(self.serial_.in_waiting))
-
-            while len(self.recv_buffer) >= 3:
+            
+            while len(self.recv_buffer) >= 30:
                 # 寻找帧头 0x55 0xAA
                 if self.recv_buffer[0] == 0x55 and self.recv_buffer[1] == 0xAA:
-                    pkt_len = self.recv_buffer[2]
-                    # Guard against corrupt length byte
-                    if pkt_len < 10 or pkt_len > 64:
-                        self.recv_buffer.pop(0)
-                        continue
-                    if len(self.recv_buffer) < pkt_len:
+                    frame_len = self.__select_frame_length()
+                    if len(self.recv_buffer) < frame_len:
                         break
 
-                    frame = self.recv_buffer[:pkt_len]
-                    del self.recv_buffer[:pkt_len]
-
-                    # USB-CAN bridge ACK frames (16-17 bytes) are not motor
-                    # feedback.  Drain them silently so they don't mix with
-                    # real feedback and corrupt q/dq/tau parsing.
-                    if pkt_len < 24:
-                        continue
-
+                    frame = self.recv_buffer[:frame_len]
+                    # HDSC USB-CAN feedback has been observed in both legacy
+                    # 30-byte and shifted 33-byte layouts.  Select the payload
+                    # whose D0 nibble matches a registered motor ID.
                     can_id = frame[13] | (frame[14] << 8)
                     raw_data = frame[21:29]
-                    data = self.__select_feedback_data(frame, raw_data)
+                    data, data_offset = self.__select_feedback_data(frame, raw_data)
                     self.last_can_frames.append({
                         "can_id": can_id,
                         "data": bytes(data),
                         "raw_data": bytes(raw_data),
+                        "data_offset": data_offset,
                     })
-
+                    
                     # 反馈解析逻辑
                     if len(data) < 6:
+                        del self.recv_buffer[:frame_len]
                         continue
 
-                    if len(data) >= 4 and data[2] in (0x33, 0x55):
-                        if data[2] == 0x33:
-                            self.__parse_param_reply(can_id, data)
+                    if len(data) >= 8 and data[2] == 0x33:
+                        self.__parse_param_reply(can_id, data)
+                        del self.recv_buffer[:frame_len]
                         continue
 
                     motor_id_feedback = data[0] & 0x0F
                     state_code = (data[0] >> 4) & 0x0F
                     is_enabled = state_code == 1
-
+                    
                     # 查找对应的电机对象并更新状态
                     target_id = can_id if can_id in self.motors_map else motor_id_feedback
                     if target_id in self.motors_map:
@@ -198,13 +183,14 @@ class MotorControl:
                         q_uint = np.uint16((np.uint16(data[1]) << 8) | data[2])
                         dq_uint = np.uint16((np.uint16(data[3]) << 4) | (data[4] >> 4))
                         tau_uint = np.uint16(((data[4] & 0xf) << 8) | data[5])
-
+                        
                         limit = self.Limit_Param[m.MotorType]
                         q = self.__uint_to_float(q_uint, -limit[0], limit[0], 16)
                         dq = self.__uint_to_float(dq_uint, -limit[1], limit[1], 12)
                         tau = self.__uint_to_float(tau_uint, -limit[2], limit[2], 12)
                         m.recv_data(q, dq, tau, is_enabled, state_code)
-
+                    
+                    del self.recv_buffer[:frame_len]
                 else:
                     self.recv_buffer.pop(0)
 
@@ -232,25 +218,47 @@ class MotorControl:
         self.motors_map[target_id].recv_param(rid, value)
 
     def __select_feedback_data(self, frame, raw_data):
-        """Select the Damiao feedback payload from known USB-CAN return layouts."""
-        candidates = [raw_data]
-        # Some observed HDSC CDC returns place D0 at frame[24], while the legacy
-        # parser starts at frame[21].  33-byte receive frames contain full D0-D7
-        # at 24:32; 30-byte frames still provide enough bytes for q/dq/tau.
-        candidates.append(frame[24:32])
+        """Select the real Damiao D0-D7 payload from known USB-CAN layouts."""
+        candidates = []
 
-        for candidate in candidates:
+        # Legacy parser used frame[21:29].  HDSC CDC receive frames observed on
+        # this robot can place D0 later; scan a small window and prefer the
+        # slice whose first byte low nibble matches a registered motor ID.
+        for offset in range(21, min(len(frame) - 7, 30) + 1):
+            candidates.append((frame[offset:offset + 8], offset))
+
+        for candidate, offset in candidates:
             if len(candidate) < 6:
                 continue
             motor_id = candidate[0] & 0x0F
-            enable_state = (candidate[0] >> 4) & 0x0F
-            if motor_id in self.motors_map and enable_state in (0, 1):
-                return candidate
+            state_code = (candidate[0] >> 4) & 0x0F
+            if motor_id in self.motors_map and 0 <= state_code <= 15:
+                return candidate, offset
 
-        return raw_data
+        return raw_data, 21
+
+    def __select_frame_length(self):
+        """Choose legacy 30-byte frames or observed 33-byte HDSC frames."""
+        if len(self.recv_buffer) >= 33:
+            for offset in range(24, min(len(self.recv_buffer) - 7, 30) + 1):
+                shifted_data = self.recv_buffer[offset:offset + 8]
+                if len(shifted_data) >= 6:
+                    motor_id = shifted_data[0] & 0x0F
+                    if motor_id in self.motors_map:
+                        return 33
+        return 30
 
     def __uint_to_float(self, uint_value, min_value, max_value, bits):
         """Convert packed unsigned feedback into position/velocity/torque."""
         span = max_value - min_value
         offset = min_value
         return float(uint_value) * span / float((1 << bits) - 1) + offset
+
+# --- 枚举类定义 ---
+class Control_Type(IntEnum):
+    MIT = 1
+    POS_VEL = 2 # 位置速度模式
+    VEL = 3
+
+class DM_Motor_Type(IntEnum):
+    DM3519 = 9 # 根据手册确认型号
