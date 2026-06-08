@@ -134,6 +134,7 @@ ros2 topic pub damiao_control std_msgs/Float32MultiArray "data: [1, 0, 0.0]"
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-08 | v0.11 — 新增 `arm/damiao_torque_sense` topic，触发 50Hz dither 以持续获取 motor 5/6 torque feedback；Limit_Param[9] T 修正为 ±8 Nm |
 | 2026-06-07 | v0.10 — `DM_CAN.py` 与 `damiao_node.py` 已按 `a6ebf5f1fddb05c41415d5907353ed1895131602` 回退；v0.9 解析改动不再作为当前代码行为 |
 | 2026-06-07 | v0.9 — Damiao feedback payload 改为扫描 HDSC USB-CAN 回包 offset；正常反馈优先使用 D0 低 4 bit 的 motor ID，避免把 MST_ID 误当电机 ID |
 | 2026-06-04 | v0.8 — feedback_pub 提前到硬件初始化前创建，避免 ros2 topic echo 无法确定类型；control_Pos_Vel/Vel 后加沉降轮询 _recv_with_settle 确保读到电机反馈 |
@@ -406,6 +407,58 @@ motor_id, q_rad, dq_rad_s, tau_nm, enabled
 
 v0.9 不改变 watchdog 行为。`command_timeout` 默认仍为 `0.5 s`，每个 active group 独立计时；超时后 VEL 电机发零速度，POS_VEL 电机保持当前位置并发零速度。
 
+
+---
+
+## v0.11 — 50Hz torque sensing dither + 扭矩范围修正（2026-06-08）
+
+### 设计目标
+
+Damiao 电调只在收到上位机指令后才回报 CAN feedback。arm_ctrl 以 20Hz 发送 POS_VEL，频率不足以快速读取 torque。新增 `arm/damiao_torque_sense` topic，允许上层请求 50Hz dither 以持续刷新 motor 5/6 的 torque feedback。
+
+同时修正 `Limit_Param[9]`（DM3519）扭矩范围从 ±1 Nm 到 ±8 Nm，与 docs 协议文档一致。
+
+### 新增 Topic
+
+| 方向 | Topic | 类型 | 说明 |
+|---|---|---|---|
+| Sub | `arm/damiao_torque_sense` | `std_msgs/Float32MultiArray` | `[motor_id, position_rad]` 激活 50Hz dither |
+
+### 工作逻辑
+
+1. 收到 `arm/damiao_torque_sense` 消息后，对该 motor_id 启动 50Hz dither timer
+2. 每 tick（20ms）：`control_Pos_Vel(motor, position, random(-0.3, 0.3))`
+3. 指令后 `recv()` 刷新 feedback → `_publish_motor_feedback` 发布 `/damiao_feedback`
+4. 超时 0.5s 未收到新消息 → 自动停止 dither，恢复由 `arm/damiao_control` 控制
+5. Dither 激活期间，`arm/damiao_control` 对该电机的指令被忽略（互斥）
+
+### 新增参数
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `torque_sense_topic` | `arm/damiao_torque_sense` | torque sense 请求 topic |
+| `TORQUE_SENSE_RATE_HZ` | 50.0 | dither 频率 (代码常量) |
+| `TORQUE_SENSE_DITHER_RANGE` | 0.3 | 随机速度范围 rad/s (代码常量) |
+| `TORQUE_SENSE_TIMEOUT_S` | 0.5 | 超时退出时间 (代码常量) |
+
+### 调试
+
+```bash
+# 手动激活 motor 5 torque sense (目标位置 0 rad)
+ros2 topic pub arm/damiao_torque_sense std_msgs/Float32MultiArray "data: [5, 0.0]"
+
+# 观察 torque 反馈 (每 20ms 刷新)
+ros2 topic echo /damiao_feedback
+
+# motor 6 torque sense
+ros2 topic pub arm/damiao_torque_sense std_msgs/Float32MultiArray "data: [6, 0.0]"
+```
+
+### 超时保护不变
+
+v0.11 不改变 watchdog 行为。Torque sense 有自己的超时机制（0.5s 无消息自动退出）。
+
+---
 
 ## v0.10 — 回退 Damiao Python 控制代码（2026-06-07）
 

@@ -149,28 +149,33 @@ class MotorControllerNode(Node):
                 self.motors[motor_id] = motor
                 self.motor_control.addMotor(motor)
 
-            # 5. 显式初始化序列 (为所有电机执行)
+            # 5. 逐电机初始化，失败的跳过而不是中断全部
             self.get_logger().info(f"Executing hardware initialization for all motors in {DEFAULT_CONTROL_MODE.name} mode...")
+            self.active_motors = set()
             for motor_id, motor in self.motors.items():
                 try:
-                    # A. 先读取 CTRL_MODE，必要时切换，并读回确认。
                     if not self._ensure_control_mode(motor_id, motor, DEFAULT_CONTROL_MODE):
-                        return False
-                    # B. 设置当前位置为零位
+                        self.get_logger().warn(f"Motor {motor_id}: SKIPPED, will not be controlled.")
+                        continue
                     self.motor_control.set_zero_position(motor)
-                    # C. 显式使能
                     self.motor_control.enable(motor)
-                    if self._verify_motor_enabled(motor_id, motor):
+                    verified = self._verify_motor_enabled(motor_id, motor)
+                    if verified:
                         self.get_logger().info(
                             f"Motor {motor_id} INITIALIZED and VERIFIED ENABLED in {DEFAULT_CONTROL_MODE.name} mode."
                         )
                     else:
                         self.get_logger().warn(
-                            f"Motor {motor_id} initialization commands sent, but enabled feedback was not verified."
+                            f"Motor {motor_id}: enable feedback unconfirmed, but commands will still be sent."
                         )
+                    self.active_motors.add(motor_id)
                 except Exception as e:
                     self.get_logger().error(f"Failed to initialize motor {motor_id}: {e}")
-                    return False
+                    continue
+
+            if not self.active_motors:
+                self.get_logger().error("No motors initialized successfully.")
+                return False
             
             self.is_connected = True
             self.reconnect_attempts = 0
@@ -373,6 +378,10 @@ class MotorControllerNode(Node):
                     f"this base node only owns motors {sorted(self.motors.keys())}. "
                     "Check for an old arm_ctrl_node publishing to base/damiao_control."
                 )
+            return
+
+        if motor_id not in self.active_motors:
+            self.get_logger().debug(f"Motor {motor_id} not active; skipping command.")
             return
 
         motor = self.motors[motor_id]

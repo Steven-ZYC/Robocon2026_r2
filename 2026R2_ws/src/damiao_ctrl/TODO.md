@@ -1,6 +1,9 @@
 # Damiao Ctrl TODO
 
-- [x] 将 `DM_CAN.py` 与 `damiao_node.py` 回退到 `a6ebf5f1fddb05c41415d5907353ed1895131602` 基线
+- [x] 新增 `arm/damiao_torque_sense` topic + 50Hz dither timer 机制
+- [x] 修正 `Limit_Param[9]` (DM3519) T 范围从 ±1 Nm 到 ±8 Nm
+- [x] `/damiao_feedback` 改为指令触发发布（去 50Hz 空轮询 timer）
+- [ ] arm_ctrl 订阅 `/damiao_feedback`，读取 motor 5/6 实时 torque 用于力矩控制
 - [x] feedback_pub 提前到硬件初始化前创建，避免 ros2 topic echo 无法确定消息类型
 - [x] 修正 HDSC USB-CAN feedback payload offset 选择，避免 enabled/torque 因错位解析长期为 0
 - [x] 正常 feedback 优先使用 D0 低 4 bit 的 motor ID，避免把 MST_ID 当作电机 ID

@@ -7,9 +7,13 @@ initialized successfully, while different groups may run independently.
 Subscribes:
 - base/damiao_control (Float32MultiArray): chassis [motor_id, mode, speed, position?]
 - arm/damiao_control (Float32MultiArray): arm [motor_id, mode, speed, position?]
+- arm/damiao_torque_sense (Float32MultiArray): [motor_id, position_rad]
+    Activates a 50 Hz dither loop on the motor (pos=target, speed=random ±0.3)
+    so torque feedback is refreshed at 50 Hz. Timeout after 0.5 s of silence.
 
 Publishes:
-- damiao_feedback (Float32MultiArray): [motor_id, q_rad, dq_rad_s, tau_Nm, enabled]
+- damiao_feedback (DamiaoFeedback): motor_id, q_rad, dq_rad_s, tau_nm, enabled
+    Published after every control command or dither tick. Values are output-side.
 """
 
 import os
@@ -21,6 +25,7 @@ import serial
 from std_msgs.msg import Float32MultiArray
 
 from damiao_ctrl.DM_CAN import Control_Type, DM_Motor_Type, Motor, MotorControl
+from damiao_msgs.msg import DamiaoFeedback
 
 
 DEFAULT_DEVICE_ID = "/dev/damiao_can"
@@ -42,6 +47,9 @@ RECV_POLL_INTERVAL_S = 0.01
 CTRL_MODE_RID = 0x0A
 MODE_READ_TIMEOUT_S = 0.25
 MODE_VERIFY_ATTEMPTS = 2
+TORQUE_SENSE_RATE_HZ = 50.0
+TORQUE_SENSE_DITHER_RANGE = 0.3
+TORQUE_SENSE_TIMEOUT_S = 0.5
 
 
 class MotorControllerNode(Node):
@@ -62,6 +70,11 @@ class MotorControllerNode(Node):
         self.gear_ratio = float(
             self.declare_parameter("gear_ratio", DAMIAO_GEAR_RATIO).value
         )
+        self.torque_sense_topic = str(
+            self.declare_parameter(
+                "torque_sense_topic", "arm/damiao_torque_sense"
+            ).value
+        )
 
         self.motor_groups = self._load_motor_groups()
         self.motor_to_group = {}
@@ -76,10 +89,15 @@ class MotorControllerNode(Node):
         self.inactive_group_warned = set()
         self.ignored_motor_ids = set()
 
+        # Torque sensing state — per-motor 50Hz dither timers
+        self._torque_sense_timers = {}   # motor_id -> Timer
+        self._torque_sense_positions = {}  # motor_id -> target position (rad, output side)
+        self._torque_sense_last_msg = {}   # motor_id -> last message timestamp
+
         # Create feedback publisher before hardware init so the topic is visible
         # even while motors are initializing.
         self.feedback_pub = self.create_publisher(
-            Float32MultiArray, self.feedback_topic, 10
+            DamiaoFeedback, self.feedback_topic, 10
         )
 
         if not self._init_hardware():
@@ -104,6 +122,13 @@ class MotorControllerNode(Node):
                     10,
                 )
             )
+
+        self.torque_sense_sub = self.create_subscription(
+            Float32MultiArray,
+            self.torque_sense_topic,
+            self._torque_sense_callback,
+            10,
+        )
 
         self.get_logger().info(
             f"Damiao grouped controller initialized: device_id={self.device_id}, "
@@ -467,6 +492,10 @@ class MotorControllerNode(Node):
             self.get_logger().warn(f"Motor {motor_id} not initialized")
             return
 
+        # Skip normal control if this motor is in torque-sense dither mode
+        if motor_id in self._torque_sense_timers:
+            return
+
         self.last_control_time[group_name] = time.monotonic()
         self.timeout_stop_sent[group_name] = False
 
@@ -594,19 +623,101 @@ class MotorControllerNode(Node):
         if motor is None:
             return
 
-        output_q = motor.state_q / self.gear_ratio
-        output_dq = motor.state_dq / self.gear_ratio
-        output_tau = motor.state_tau  # already output torque per docs
-
-        msg = Float32MultiArray()
-        msg.data = [
-            float(motor_id),
-            float(output_q),
-            float(output_dq),
-            float(output_tau),
-            1.0 if motor.isEnable else 0.0,
-        ]
+        msg = DamiaoFeedback()
+        msg.motor_id = int(motor_id)
+        msg.q_rad = float(motor.state_q / self.gear_ratio)
+        msg.dq_rad_s = float(motor.state_dq / self.gear_ratio)
+        msg.tau_nm = float(motor.state_tau)
+        msg.enabled = 1 if motor.isEnable else 0
         self.feedback_pub.publish(msg)
+
+    # ------------------------------------------------------------------
+    # Torque sensing — 50 Hz dither loop
+    # ------------------------------------------------------------------
+
+    def _torque_sense_callback(self, msg):
+        """Start or refresh a 50 Hz dither loop for torque sensing on one motor.
+
+        Message: [motor_id, position_rad]
+        The node sends POS_VEL with pos=position and random speed [-0.3, 0.3]
+        at 50 Hz, keeping the motor electrically active so the ESC returns
+        fresh torque feedback after every command.
+        """
+        if len(msg.data) < 2:
+            self.get_logger().warn("torque_sense requires [motor_id, position_rad]")
+            return
+
+        motor_id = int(msg.data[0])
+        position = float(msg.data[1])
+
+        if motor_id not in self.motors:
+            self.get_logger().warn(f"torque_sense: unknown motor {motor_id}")
+            return
+
+        if self.motor_to_group.get(motor_id) not in self.active_groups:
+            self.get_logger().warn(
+                f"torque_sense: motor {motor_id} group not active"
+            )
+            return
+
+        self._torque_sense_positions[motor_id] = position
+        self._torque_sense_last_msg[motor_id] = time.monotonic()
+
+        if motor_id not in self._torque_sense_timers:
+            timer = self.create_timer(
+                1.0 / TORQUE_SENSE_RATE_HZ,
+                lambda mid=motor_id: self._torque_sense_tick(mid),
+            )
+            self._torque_sense_timers[motor_id] = timer
+            self.get_logger().info(
+                f"torque_sense: started 50 Hz dither on motor {motor_id} "
+                f"at position={position:.4f}"
+            )
+
+    def _torque_sense_tick(self, motor_id):
+        """One tick of the dither loop — send a command, read feedback, publish."""
+        import random
+
+        # Timeout check: cancel timer if no refresh message received
+        last_msg = self._torque_sense_last_msg.get(motor_id, 0.0)
+        if time.monotonic() - last_msg > TORQUE_SENSE_TIMEOUT_S:
+            self._teardown_torque_sense(motor_id)
+            return
+
+        if not self.is_connected:
+            return
+
+        motor = self.motors.get(motor_id)
+        if motor is None:
+            self._teardown_torque_sense(motor_id)
+            return
+
+        position = self._to_motor_position(
+            self._torque_sense_positions.get(motor_id, 0.0)
+        )
+        dither_speed = random.uniform(
+            -TORQUE_SENSE_DITHER_RANGE, TORQUE_SENSE_DITHER_RANGE
+        )
+        motor_dither = dither_speed * self.gear_ratio
+
+        try:
+            self.motor_control.control_Pos_Vel(motor, position, motor_dither)
+        except Exception as exc:
+            self.get_logger().error(f"torque_sense motor {motor_id} error: {exc}")
+            return
+
+        self._publish_motor_feedback(motor_id)
+
+    def _teardown_torque_sense(self, motor_id):
+        """Stop the dither timer for one motor and clean up state."""
+        timer = self._torque_sense_timers.pop(motor_id, None)
+        if timer is not None:
+            timer.cancel()
+        self._torque_sense_positions.pop(motor_id, None)
+        self._torque_sense_last_msg.pop(motor_id, None)
+        self.get_logger().info(
+            f"torque_sense: stopped dither on motor {motor_id}"
+        )
 
 
 def main(args=None):

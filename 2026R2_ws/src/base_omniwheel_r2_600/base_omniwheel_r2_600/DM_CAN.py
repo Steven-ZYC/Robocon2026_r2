@@ -139,7 +139,7 @@ class MotorControl:
         self.last_can_frames = []
         if self.serial_.in_waiting > 0:
             self.recv_buffer.extend(self.serial_.read(self.serial_.in_waiting))
-            
+
             while len(self.recv_buffer) >= 30:
                 # 寻找帧头 0x55 0xAA
                 if self.recv_buffer[0] == 0x55 and self.recv_buffer[1] == 0xAA:
@@ -160,7 +160,7 @@ class MotorControl:
                         "raw_data": bytes(raw_data),
                         "data_offset": data_offset,
                     })
-                    
+
                     # 反馈解析逻辑
                     if len(data) < 6:
                         del self.recv_buffer[:frame_len]
@@ -174,7 +174,7 @@ class MotorControl:
                     motor_id_feedback = data[0] & 0x0F
                     state_code = (data[0] >> 4) & 0x0F
                     is_enabled = state_code == 1
-                    
+
                     # 查找对应的电机对象并更新状态
                     target_id = can_id if can_id in self.motors_map else motor_id_feedback
                     if target_id in self.motors_map:
@@ -183,13 +183,13 @@ class MotorControl:
                         q_uint = np.uint16((np.uint16(data[1]) << 8) | data[2])
                         dq_uint = np.uint16((np.uint16(data[3]) << 4) | (data[4] >> 4))
                         tau_uint = np.uint16(((data[4] & 0xf) << 8) | data[5])
-                        
+
                         limit = self.Limit_Param[m.MotorType]
                         q = self.__uint_to_float(q_uint, -limit[0], limit[0], 16)
                         dq = self.__uint_to_float(dq_uint, -limit[1], limit[1], 12)
                         tau = self.__uint_to_float(tau_uint, -limit[2], limit[2], 12)
                         m.recv_data(q, dq, tau, is_enabled, state_code)
-                    
+
                     del self.recv_buffer[:frame_len]
                 else:
                     self.recv_buffer.pop(0)
