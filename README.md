@@ -135,18 +135,19 @@ arm/arm_damiao_node
 Damiao motors 5-6 (POS_VEL)
 ```
 
-Pneumatics remains unchanged:
+Pneumatics (now via arm_arduino_praser, 独立 pneumatics 包已删除):
 
 ```text
-arm/pneu_command
+arm/pneu_ctrl (Int8MultiArray)
     ↓
-arm/arm_ctrl_node
+arm_arduino_praser/arm_arduino_node
     ↓
-joint_pneu_control
+USB Serial → Arduino Mega 2560
     ↓
-pneumatics/pneu_ctrl_node
+3-way pneumatic valves
     ↓
-Arduino pneumatic board
+arm/pneu_ack (Int8MultiArray, 回传)
+arm/ir_status (Bool, IR 传感器)
 ```
 
 ### Topic 约定
@@ -156,7 +157,7 @@ Arduino pneumatic board
 | Chassis low-level | `/damiao_control` | `std_msgs/Float32MultiArray` | 只给底盘 1-4 号电机使用 |
 | Arm low-level | `arm/damiao_control` | `std_msgs/Float32MultiArray` | 只给 arm 5-6 号电机使用 |
 | Arm feedback | `/damiao_feedback` | `std_msgs/Float32MultiArray` | arm Damiao node 发布 motor 5 反馈，供 FSM torque condition 使用 |
-| Pneumatics | `joint_pneu_control` | `std_msgs/Float32MultiArray` | 气动阀控制，不经过 Damiao |
+| Pneumatics | `arm/pneu_ctrl` | `std_msgs/Int8MultiArray` | 气动阀控制，经 arm_arduino_praser 发送至 Arduino |
 
 低层 Damiao 命令格式保持一致：
 
@@ -195,8 +196,8 @@ ros2 run arm arm_damiao_node
 # 4. arm 控制层
 ros2 run arm arm_ctrl_node
 
-# 5. 气动
-ros2 launch pneumatics pneumatics.launch.py
+# 5. 气动 (arm Arduino 桥接)
+ros2 run arm_arduino_praser arm_arduino_node
 
 # 6. 传感器与 FSM/navigation
 ros2 launch arduino_sensor_driver arduino_sensor.launch.py
@@ -340,6 +341,7 @@ ls -la /dev/input/event*      # 查看是否有新 event 设备
 
 | 日期 | 版本 | 说明 |
 |---|---|---|
+| 2026-06-04 | v5 | 校正 package 列表（+arm_arduino_praser, plot_debug, test_damiao），更新 pneumatics → arm_arduino_praser 引用，修正 topic 类型；v2 数据流图仅供历史参考。
 | 2026-05-20 | v4 | 说明当前双 USB-CAN Damiao 临时架构：底盘与 arm 分别用各自 damiao node，`damiao_ctrl` 暂时悬置。 |
 | 2026-05-17 | v3 | 新增手柄设备绑定说明，udev 规则，权限设置，开机自启配置 |
 | 2026-05-14 | v2 | 基于实际代码审查，修正节点名称、话题格式、包结构。v1 内容保留以备回溯。 |
@@ -347,7 +349,73 @@ ls -la /dev/input/event*      # 查看是否有新 event 设备
 
 ---
 
-> **说明**: 下面的 v2/v3 内容是当时的设计记录，按 README 演进规则保留，便于回溯。涉及 Damiao 启动链路时，当前实车调试以 v4 双 USB-CAN 说明为准；不要照旧的 `damiao_ctrl` 统一驱动方式启动整车。
+> **说明**: v2/v3 内容为当时的设计记录，按 README 演进规则保留，便于回溯。涉及 Damiao 启动链路时，当前实车调试以 v4 双 USB-CAN 说明为准；不要照旧的 `damiao_ctrl` 统一驱动方式启动整车。v5 的完整包列表和节点总览见下方。
+
+---
+
+## v5 — Package 列表更新与 pneumatics 迁移 (2026-06-04)
+
+v5 为文档校正，反映当前仓库真实状态。架构上仍遵循 v4 双 USB-CAN 设计。
+
+### 当前完整 Package 列表
+
+| Package | 类型 | 用途 |
+|---|---|---|
+| `arduino_sensor_driver` | ament_python | Arduino 串口解析：IMU + 双编码器 → odometry |
+| `arduino_sensor_msgs` | ament_cmake | 自定义消息 `ArduinoSensorData` |
+| `arm` | ament_python | 机械臂关节控制 + arm Damiao driver (motor 5-6) |
+| `arm_arduino_praser` | ament_python | **v5 新增** Arm Arduino 串口桥接：气动指令转发 + IR 传感器回传。取代已删除的独立 `pneumatics` 包 |
+| `base_omniwheel_r2_600` | ament_python | 底盘逆运动学 + 本地导航 + 底盘 Damiao driver (motor 1-4) |
+| `damiao_ctrl` | ament_python | 统一 Damiao 电机驱动（当前悬置，不用于实车链路） |
+| `joystick_driver` | ament_python | evdev 手柄 → `joystick_msgs/Joystick` |
+| `joystick_msgs` | ament_cmake | 自定义消息 `Joystick` |
+| `navigation` | ament_python | 基于 YAML 路线的全局导航（含 cubic ease 速度平滑）+ rviz 可视化 |
+| `plot_debug` | ament_python | **v5 新增** matplotlib 实时可视化调试：4 topic 同步绘图 + 退出时 CSV 自动保存 |
+| `r2_launch` | ament_python | 顶层 launch（WIP） |
+| `test_damiao` | ament_python | **v5 新增** Damiao 电机独立测试脚本 |
+
+### v5 vs v4 关键变更
+
+1. **Package 数**: 9 → 12，增 `arm_arduino_praser` / `plot_debug` / `test_damiao`
+2. **pneumatics 独立包已删除** (commit `155b340`)：气动功能与 IR 传感器一并归入 `arm_arduino_praser`
+3. **气动 topic 变更**: `joint_pneu_control` (Float32MultiArray) → `arm/pneu_ctrl` (Int8MultiArray)
+4. **气动回传**: 新增 `arm/pneu_ack` (Int8MultiArray) 和 `arm/ir_status` (Bool)
+5. **启动命令变更**: `ros2 launch pneumatics` → `ros2 run arm_arduino_praser arm_arduino_node`
+6. **v2 包名修正**: v2 表写 `global_navigation`，实际包名为 `navigation`，内含 `global_navigation_node`、`plot_node`、`mission_viz_node` 三个可执行节点
+
+### v5 当前节点总览
+
+| Package | 可执行节点 | 职责 |
+|---|---|---|
+| `arduino_sensor_driver` | `arduino_sensor_parser` | 串口 → IMU + 编码器 → odometry / Pose2D |
+| `arm` | `arm_ctrl_node` | 机械臂关节 POS_VEL 控制（motor 5-6） |
+| `arm` | `arm_damiao_node` | Arm Damiao USB-CAN driver |
+| `arm_arduino_praser` | `arm_arduino_node` | Arm Arduino 串口桥接（气动 + IR） |
+| `base_omniwheel_r2_600` | `damiao_node` | 底盘 Damiao USB-CAN driver（motor 1-4） |
+| `base_omniwheel_r2_600` | `local_navigation_node` | 底盘逆运动学 |
+| `joystick_driver` | `joystick_publisher_node` | evdev → joystick_msgs/Joystick |
+| `navigation` | `global_navigation_node` | YAML 路线 FSM 导航 |
+| `navigation` | `plot_node` | 路线 rviz marker 可视化 |
+| `navigation` | `mission_viz_node` | 任务路线可视化 |
+| `plot_debug` | `plot_debug_node` | 实时 matplotlib 绘图 + CSV 保存 |
+| `test_damiao` | `damiao_node` | Damiao 单电机测试 |
+| `damiao_ctrl` | `damiao_motor_controller` | 统一 Damiao 驱动（悬置中） |
+
+### v5 气动链路（当前）
+
+```text
+arm/pneu_ctrl (Int8MultiArray)
+    ↓
+arm_arduino_praser/arm_arduino_node
+    ↓
+USB Serial → Arduino Mega 2560
+    ↓
+3-way pneumatic valves (stopper / lift / gripper)
+    ↓
+arm/pneu_ack (Int8MultiArray, Arduino 回传实际状态)
+arm/ir_status (Bool, IR 传感器)
+arm/pneu_raw_frame (String, 调试用原始帧)
+```
 
 ## v2 — 当前实际架构（2026-05-14 代码审查）
 

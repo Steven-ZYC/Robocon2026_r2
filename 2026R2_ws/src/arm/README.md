@@ -325,3 +325,61 @@ publish_joint() {
     "data: [$ARM_MOTOR_ID, $p, $SPEED_RAD_S]"
 }
 ```
+
+## v0.10 — 当前 arm/pneu_navigation 源码接口修正（2026-06-06）
+
+当前源码中 `arm_ctrl_node` 订阅的 `arm/pneu_navigation` 类型为 `std_msgs/String`，不是 `Int8MultiArray`。消息格式为逗号分隔的 `name:value`：
+
+```text
+arm_gripper:1,arm_lift:0,arm_stopper:0
+```
+
+`arm_ctrl_node` 根据 `pneu_names` 参数把名称映射到 `arm/pneu_ctrl` 的 `std_msgs/Int8MultiArray`。默认顺序为：
+
+```text
+[arm_gripper, arm_lift, arm_stopper]
+```
+
+因此 navigation 的 `arm` stage 会这样展开：
+
+| YAML | 输出到 `arm/pneu_navigation` | 再输出到 `arm/pneu_ctrl` |
+|---|---|---|
+| `arm_gripper: close` | `arm_gripper:1` | `[1, current_lift, current_stopper]` |
+| `arm_lift: high` | `arm_lift:1` | `[current_gripper, 1, current_stopper]` |
+
+`arm_ctrl_node` 继续以 `republish_rate_hz` 刷新最新 motor 与 pneu 指令，维持下游 watchdog。
+
+## v0.11 — arm_damiao_test.sh 加入气动控制测试（2026-06-06）
+
+根目录 `arm_damiao_test.sh` 现在同时测试 Damiao arm motor 与气动链路。脚本新增两个环境变量：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `PNEU_ARDUINO_PORT` | `/dev/arm_arduino` | arm Arduino 串口设备路径 |
+| `PNEU_BAUD_RATE` | `115200` | arm Arduino 串口波特率 |
+
+新增窗口：
+
+| 窗口 | 内容 |
+|---|---|
+| 窗口4 | 启动 `arm_arduino_praser/arm_arduino_node`，订阅 `/arm/pneu_ctrl`，发布 `/arm/pneu_ack`、`/arm/ir_status` |
+| 窗口6 | 发布 `/arm/pneu_navigation` String 指令，观察 `/arm/pneu_ctrl`、`/arm/pneu_ack`、`/arm/ir_status` |
+
+气动测试链路：
+
+```text
+/arm/pneu_navigation (std_msgs/String, "name:value")
+  -> arm_ctrl_node
+  -> /arm/pneu_ctrl (std_msgs/Int8MultiArray, [arm_gripper, arm_lift, arm_stopper])
+  -> arm_arduino_node
+  -> Arduino 气动阀
+```
+
+测试脚本中的气动发布示例：
+
+```bash
+ros2 topic pub --once /arm/pneu_navigation std_msgs/String \
+  "{data: 'arm_gripper:1,arm_lift:0,arm_stopper:0'}"
+```
+
+超时保护：`arm_ctrl_node` 以 `republish_rate_hz=20.0` 刷新 `/arm/pneu_ctrl`，满足 `arm_arduino_node` / Arduino 侧 200ms command watchdog；若 arm_ctrl_node 停止，Arduino 侧会按固件 watchdog 关闭气动阀。

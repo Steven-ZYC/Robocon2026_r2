@@ -30,6 +30,7 @@ Publish:
 import os
 import re
 import time
+import termios
 from typing import Iterable, List, Optional
 
 import rclpy
@@ -172,15 +173,30 @@ class ArmArduinoNode(Node):
                 timeout=0,
                 write_timeout=0.05,
             )
-            self.rx_buffer.clear()
 
-            # Opening Arduino USB serial often resets the Mega.
-            # Wait before normal communication starts.
+            # Match arduino_sensor_driver: do not drop DTR on close, so quick
+            # relaunches are less likely to force another Arduino reset.
+            try:
+                attrs = termios.tcgetattr(self.serial_port.fd)
+                attrs[2] &= ~termios.HUPCL
+                termios.tcsetattr(self.serial_port.fd, termios.TCSANOW, attrs)
+            except (termios.error, AttributeError, OSError) as exc:
+                self.get_logger().warn(
+                    f"Could not clear HUPCL for {actual_port}: {exc}",
+                    throttle_duration_sec=5.0,
+                )
+
+            # Opening Arduino USB serial often resets the Mega. Wait for boot,
+            # then discard any half STATE frame or startup timeout already queued.
             if self.arduino_reset_wait_s > 0:
                 time.sleep(self.arduino_reset_wait_s)
 
+            self.serial_port.reset_input_buffer()
+            self.rx_buffer.clear()
+            self._write_current_command_once()
+
             self.get_logger().info(
-                f"Opened serial port {actual_port} @ {self.baud_rate}"
+                f"Opened serial port: {actual_port} @ {self.baud_rate} baud"
             )
 
         except SerialException as exc:
@@ -209,7 +225,7 @@ class ArmArduinoNode(Node):
             if warn:
                 self.get_logger().warn(
                     "pneu_command needs 3 values in this order: "
-                    "[arm_stopper, arm_lift, arm_gripper]. "
+                    "[arm_gripper, arm_lift, arm_stopper]. "
                     f"Got: {values}"
                 )
             return None
@@ -238,6 +254,9 @@ class ArmArduinoNode(Node):
         if self.serial_port is None or not self.serial_port.is_open:
             return
 
+        self._write_current_command_once()
+
+    def _write_current_command_once(self) -> None:
         # Arduino parser accepts only [0,0,0] style, not [0.0,0.0,0.0].
         line = f"[{self.current_cmd[0]},{self.current_cmd[1]},{self.current_cmd[2]}]\n"
 
@@ -248,6 +267,12 @@ class ArmArduinoNode(Node):
             self.close_serial()
 
     def read_serial(self) -> None:
+        """Read serial bytes and extract complete '<...>' Arduino frames.
+
+        This mirrors arduino_sensor_driver's frame-boundary scanner. It avoids
+        treating a startup half-frame as a full line when ROS connects while the
+        Arduino is already streaming STATE frames.
+        """
         if self.serial_port is None or not self.serial_port.is_open:
             return
 
@@ -262,21 +287,60 @@ class ArmArduinoNode(Node):
 
             self.rx_buffer.extend(data)
 
-            while b"\n" in self.rx_buffer:
-                line_bytes, _, rest = self.rx_buffer.partition(b"\n")
-                self.rx_buffer = bytearray(rest)
+            while True:
+                start = self.rx_buffer.find(b"<")
+                if start == -1:
+                    if len(self.rx_buffer) > 0 and bytes(self.rx_buffer).strip():
+                        self.get_logger().warn(
+                            f"Discarding {len(self.rx_buffer)} non-frame bytes",
+                            throttle_duration_sec=2.0,
+                        )
+                    self.rx_buffer.clear()
+                    break
 
-                line = line_bytes.decode("ascii", errors="replace").strip()
-                if line:
-                    self.handle_serial_line(line)
+                if start > 0:
+                    del self.rx_buffer[:start]
 
-            # If noise/corruption arrives without newlines, avoid unbounded growth.
+                end = self.rx_buffer.find(b">")
+                if end == -1:
+                    break
+
+                frame_bytes = bytes(self.rx_buffer[: end + 1])
+                del self.rx_buffer[: end + 1]
+
+                try:
+                    frame = frame_bytes.decode("ascii", errors="ignore").strip()
+                except UnicodeDecodeError as exc:
+                    self.get_logger().warn(
+                        f"Frame decode error: {exc}",
+                        throttle_duration_sec=2.0,
+                    )
+                    continue
+
+                if frame:
+                    self.handle_serial_line(frame)
+
+            # If noise/corruption arrives without a frame tail, avoid unbounded growth.
             if len(self.rx_buffer) > 512:
-                self.get_logger().warn("Serial RX buffer too large; clearing buffer.")
+                self.get_logger().error(
+                    f"Frame buffer overflow ({len(self.rx_buffer)} bytes), "
+                    'no closing ">" received; clearing buffer.',
+                    throttle_duration_sec=2.0,
+                )
                 self.rx_buffer.clear()
 
         except SerialException as exc:
-            self.get_logger().warn(f"Serial read failed: {exc}")
+            self.get_logger().error(f"Serial disconnected: {exc}. Will reconnect.")
+            self.close_serial()
+        except OSError as exc:
+            self.get_logger().error(
+                f"OS error on serial (device removed?): {exc}. Closing and reconnecting."
+            )
+            self.close_serial()
+        except Exception as exc:
+            self.get_logger().error(
+                f"Unexpected serial read error: {exc}. Closing and reconnecting."
+            )
             self.close_serial()
 
     def handle_serial_line(self, line: str) -> None:
@@ -315,7 +379,10 @@ class ArmArduinoNode(Node):
         err_match = ERR_RE.match(payload)
         if err_match:
             reason = err_match.group(1)
-            self.get_logger().warn(f"Arduino error frame: {reason}")
+            self.get_logger().warn(
+                f"Arduino error frame: {reason}",
+                throttle_duration_sec=2.0,
+            )
             return
 
         if BOOT_RE.match(payload):
@@ -327,13 +394,19 @@ class ArmArduinoNode(Node):
     def extract_and_verify_payload(self, frame: str) -> Optional[str]:
         """Return payload if the Arduino frame wrapper and XOR checksum are valid."""
         if not frame.startswith("<") or not frame.endswith(">"):
-            self.get_logger().warn(f"Invalid frame wrapper: {frame}")
+            self.get_logger().warn(
+                f"Invalid frame wrapper: {frame}",
+                throttle_duration_sec=2.0,
+            )
             return None
 
         body = frame[1:-1]
 
         if ",*" not in body:
-            self.get_logger().warn(f"Frame has no checksum separator: {frame}")
+            self.get_logger().warn(
+                f"Frame has no checksum separator: {frame}",
+                throttle_duration_sec=2.0,
+            )
             return None
 
         payload, checksum_text = body.rsplit(",*", 1)
@@ -341,7 +414,10 @@ class ArmArduinoNode(Node):
         try:
             received_lrc = int(checksum_text, 16)
         except ValueError:
-            self.get_logger().warn(f"Invalid checksum text: {checksum_text}")
+            self.get_logger().warn(
+                f"Invalid checksum text: {checksum_text}",
+                throttle_duration_sec=2.0,
+            )
             return None
 
         calculated_lrc = self.calc_xor_lrc(payload)
@@ -351,7 +427,8 @@ class ArmArduinoNode(Node):
                 "Checksum mismatch. "
                 f"payload={payload}, "
                 f"received=0x{received_lrc:02X}, "
-                f"calculated=0x{calculated_lrc:02X}"
+                f"calculated=0x{calculated_lrc:02X}",
+                throttle_duration_sec=2.0,
             )
             return None
 

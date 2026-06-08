@@ -13,10 +13,15 @@
 ## 待完成
 
 - [ ] 与 Arduino INO 固件联调，确认协议帧格式匹配
+- [x] 静态对照 `docs/pneu_ir_o_v1.2.ino` 与 ROS2 pipeline，确认 topic、串口帧、三路气动顺序一致
+- [x] 参考 `arduino_sensor_driver` 改为 `<...>` 帧边界扫描，并在串口打开后清空启动残留帧
+- [x] 忽略 Arduino `println()` 产生的 `\r\n` 帧后残留，避免正常通信时重复 WARN
 - [ ] 上车实测 IR 传感器检测阈值与位置
 - [ ] 确认气动阀通断逻辑（0/1 → 继电器 ON/OFF 映射）
 - [ ] 与 `arm_ctrl_node` 联调 `arm/pneu_ctrl` topic 链路
-- [ ] 编写 launch 文件（`launch/arm_arduino.launch.py`）
+- [x] 编写 launch 文件（`launch/arm_arduino.launch.py`）
 - [ ] 编写配置文件（`config/arm_arduino_params.yaml`）
 - [ ] 编写测试脚本（串口直读验证）
 - [ ] 考虑是否添加 `arm/pneu_ctrl` 上游超时保护
+- [x] 新增 `launch/arm_arduino.launch.py`，用于启动气动与 IR 桥接节点
+- [x] README 补充 `arm_arduino.launch.py` 参数与 topic 说明

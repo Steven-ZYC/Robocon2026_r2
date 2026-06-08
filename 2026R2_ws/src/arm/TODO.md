@@ -16,3 +16,8 @@
 - [x] 新增根目录 `arm_damiao_test.sh`，使用统一 `damiao_ctrl` 测试 arm motor 5 的 45deg 往返动作
 - [ ] FSM/global_navigation 对接，确认 arm/pneu_navigation 与 arm/joint_navigation 指令时序
 - [ ] 考虑关节与气动安全互锁逻辑（如夹爪未闭合时禁止关节运动）
+- [x] 修正 README：当前源码 `arm/pneu_navigation` 类型为 `std_msgs/String`，格式为 `name:value`
+- [ ] 与 navigation 联调 gripper close → 0.1s wait → lift high → yaw 0deg 时序
+- [x] 更新 `arm_damiao_test.sh`，加入 `arm_arduino_node` 气动桥接窗口
+- [x] 更新 `arm_damiao_test.sh`，通过 `/arm/pneu_navigation` String 测试 gripper/lift/stopper
+- [ ] 实车验证 `arm_damiao_test.sh` 气动窗口的 `/arm/pneu_ack` 与实际阀状态一致

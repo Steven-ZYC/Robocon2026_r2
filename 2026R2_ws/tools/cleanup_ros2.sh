@@ -24,9 +24,11 @@ PATTERNS=(
     "local_navigation_node"
     "damiao_node"
     "arm_ctrl_node"
+    "arm_arduino_node"
     "pneu_ctrl_node"
     "joystick_control_node"
     "joystick_publisher_node"
+    "joystick_node"
     "mission_viz_node"
     "plot_node"
     # 残留的 launch 子进程 (python3 跑 node)

@@ -52,13 +52,13 @@ Arm-side Arduino 串口桥接节点。通过 USB Serial 与 Arm Arduino (Mega 25
 |---|---|---|---|---|
 | `port` | string | `/dev/arm_arduino` | - | Arduino 串口设备路径。支持 `/dev/xxx` 绝对路径或 `/dev/serial/by-id/` 子串匹配。默认值依赖 udev 规则创建的 symlink |
 | `baud_rate` | int | `115200` | bit/s | 串口波特率，与 Arduino INO `Serial.begin()` 一致 |
-| `arduino_reset_wait_s` | double | `2.0` | s | 串口打开后等待 Arduino Mega 复位完成的时间 |
 | `command_topic` | string | `arm/pneu_ctrl` | - | 订阅的气动指令 topic |
 | `pneu_ack_topic` | string | `arm/pneu_ack` | - | 发布的气动状态回传 topic |
 | `ir_status_topic` | string | `arm/ir_status` | - | 发布的 IR 传感器状态 topic |
 | `raw_frame_topic` | string | `arm/pneu_raw_frame` | - | 发布的原始帧调试 topic |
 | `send_rate_hz` | double | `20.0` | Hz | 指令重复发送频率（必须快于 Arduino INO 的 COMMAND_TIMEOUT_MS=200ms） |
 | `read_rate_hz` | double | `100.0` | Hz | 串口读取轮询频率 |
+| `arduino_reset_wait_s` | double | `2.0` | s | 打开 Arduino USB 串口后的复位等待时间；等待结束后会清空输入缓冲，避免启动半帧误报 |
 | `default_pneu` | int array | `[0, 0, 0]` | - | 启动默认气动状态（全关） |
 
 ---
@@ -69,7 +69,7 @@ Arm-side Arduino 串口桥接节点。通过 USB Serial 与 Arm Arduino (Mega 25
 
 ```
 [0,0,0]\n      ← 全部关闭
-[1,0,1]\n      ← stopper ON, lift OFF, gripper ON
+[1,0,1]\n      ← gripper ON, lift OFF, stopper ON
 STATUS\n       ← 查询状态（预留）
 OFF\n          ← 紧急全关（预留）
 ```
@@ -186,3 +186,89 @@ ros2 topic pub --once arm/pneu_ctrl std_msgs/msg/Int8MultiArray "{data: [0, 0, 0
 | 2026-06-03 | v0.3 — pneu topic 改为 Int8MultiArray (arm/pneu_ctrl, arm/pneu_ack)，替换 Float32MultiArray |
 | 2026-06-03 | v0.2 — Charlie 原版：实现 `arm_arduino_node` 气动指令桥接 + IR 传感器回传，双向 XOR checksum 协议 |
 | 2026-06-03 | v0.1 — package 骨架建立（Steven） |
+
+## v0.4 — arm_arduino.launch.py（2026-06-07）
+
+新增 `launch/arm_arduino.launch.py`，用于启动 arm Arduino 气动与 IR 桥接节点。
+
+```bash
+ros2 launch arm_arduino_praser arm_arduino.launch.py \
+  port:=/dev/arm_arduino \
+  baud_rate:=115200
+```
+
+launch 参数：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `port` | `/dev/arm_arduino` | Arm Arduino 串口设备路径 |
+| `baud_rate` | `115200` | 串口波特率 |
+
+launch 内固定 topic：
+
+| Topic | 类型 | 说明 |
+|---|---|---|
+| `arm/pneu_ctrl` | `Int8MultiArray` | 气动阀指令 `[arm_gripper, arm_lift, arm_stopper]` |
+| `arm/pneu_ack` | `Int8MultiArray` | Arduino 回传气动状态 |
+| `arm/ir_status` | `Bool` | IR 状态 |
+| `arm/pneu_raw_frame` | `String` | 串口原始帧 |
+
+超时保护沿用节点原有策略：ROS2 侧 20Hz 重发最新气动指令，Arduino 固件 200ms 内收不到有效指令则全关。
+
+
+## v0.5 — Arduino INO 与 ROS2 pipeline 静态对照（2026-06-07）
+
+已对照 `docs/pneu_ir_o_v1.2.ino`、`arm_arduino_node.py`、`arm_ctrl_node.py`、`joystick_control_node.py` 与测试脚本，当前静态接口一致：
+
+| 链路 | Topic / 串口帧 | 格式 |
+|---|---|---|
+| `joystick_control_node` → `arm_arduino_node` | `arm/pneu_ctrl` | `Int8MultiArray [arm_gripper, arm_lift, arm_stopper]` |
+| `arm_ctrl_node` → `arm_arduino_node` | `arm/pneu_ctrl` | `Int8MultiArray [arm_gripper, arm_lift, arm_stopper]` |
+| ROS2 Host → Arduino INO | USB Serial line | `[gripper,lift,stopper]\n`，例如 `[1,0,1]` |
+| Arduino INO → ROS2 Host | `<STATE,...>` | `<STATE,t:123456,pneu:[gripper,lift,stopper],ir:1,*XX>` |
+| `arm_arduino_node` → ROS2 | `arm/pneu_ack` | `Int8MultiArray [arm_gripper, arm_lift, arm_stopper]` |
+| `arm_arduino_node` → ROS2 | `arm/ir_status` | `Bool`，`true` 表示 IR 检测到物体 |
+
+Arduino 固件引脚映射：
+
+| 索引 | ROS2 名称 | Arduino 引脚 | 有效电平 |
+|---|---|---|---|
+| 0 | `arm_gripper` | D5 | active HIGH |
+| 1 | `arm_lift` | D6 | active LOW |
+| 2 | `arm_stopper` | D8 | active HIGH |
+
+仍需实车确认的部分：继电器实际接线是否与 INO 中 `pneuActiveLow` 完全一致，以及 IR 模块是否确实为 LOW=检测到物体。
+
+
+## v0.6 — 串口启动稳定化与日志标准对齐（2026-06-07）
+
+参考 `arduino_sensor_driver` 的串口处理方式，`arm_arduino_node` 现在使用 `<` / `>` 作为帧边界扫描完整 Arduino 帧，不再按 `\n` 直接切行。这样可以处理以下情况：
+
+- 节点启动时刚好读到半截 `STATE` 帧：丢弃 `<` 之前的残留字节，不再产生 checksum mismatch 假警告
+- 多帧粘连：`<...><...>` 会被拆成独立帧处理
+- 单帧跨多次 USB read：缓存在本地，直到收到 `>` 后再解析
+- 缓冲区长期没有帧尾：超过 512 bytes 后清空并按 throttle 输出 ERROR
+
+启动流程也对齐 sensor driver 的稳定化策略：
+
+1. 打开 `/dev/arm_arduino` 后尝试清除 `HUPCL`，减少快速 relaunch 时 Arduino 被 DTR 复位的概率。
+2. 等待 `arduino_reset_wait_s`，默认 2.0s。
+3. 调用 `reset_input_buffer()` 并清空本地 RX buffer，丢弃启动期间积累的半帧和 Arduino boot timeout 帧。
+4. 立即发送一次当前默认指令 `[0,0,0]`，随后按 `send_rate_hz=20Hz` 周期刷新。
+
+日志约定：
+
+| 类型 | 日志级别 | 说明 |
+|---|---|---|
+| 串口打开 / 节点启动 / boot frame | INFO | 正常状态变化 |
+| Arduino `ERR,...` / checksum mismatch / 无帧头垃圾字节 | WARN + throttle | 数据异常但节点继续工作 |
+| 串口断开 / OS error / RX buffer overflow | ERROR + close serial | 需要重连或人工检查的链路异常 |
+
+超时保护不变：ROS2 侧 20Hz 重发最新气动指令；Arduino 固件 200ms 内收不到有效指令则全关。
+
+
+## v0.7 — 忽略 Arduino println 换行残留（2026-06-07）
+
+Arduino INO 使用 `HOST_SERIAL.println(">")` 结束帧，实际串口流为 `<...>\r\n`。ROS2 端按 `<` / `>` 成功提取完整帧后，缓冲区会留下 `\r\n` 两个字节。
+
+从 v0.7 起，`arm_arduino_node` 会静默丢弃纯 whitespace 残留；只有非空白、且不属于 `<...>` 帧的字节才按 WARN 记录为 `Discarding N non-frame bytes`。这类 WARN 表示串口中确实出现了协议外数据，不包括正常的 Arduino 换行。

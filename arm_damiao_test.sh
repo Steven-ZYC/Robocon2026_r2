@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # ============================================================================
 # Arm Damiao test — 直接发目标位置，电机 POS_VEL 内部规划轨迹，无步进。
-#   测试1 (窗口4): motor 5 0° → -90° → 0°
-#   测试2 (窗口5): motor 5 → -90°, motor 6 尾端旋转 90°, 双双归位
-# Pipeline: arm/joint_navigation → arm_ctrl_node → arm/damiao_ctrl → damiao_ctrl
+#   测试1 (窗口7): motor 5 0° → -90° → 0°
+#   测试2 (窗口8): motor 5 → -90° → 0°（m6 保持 0°）
+#   气动测试 (窗口6): gripper / lift / stopper 开关序列
+# Motor pipeline: arm/joint_navigation → arm_ctrl_node → arm/damiao_ctrl → damiao_ctrl
+# Pneu pipeline:  arm/pneu_navigation → arm_ctrl_node → arm/pneu_ctrl → arm_arduino_node
 # ============================================================================
 
 WS=~/Robocon2026_r2/2026R2_ws
 TOOLS=$WS/tools
 DAMIAO_CAN_DEVICE="${DAMIAO_CAN_DEVICE:-/dev/damiao_can}"
 DAMIAO_GEAR_RATIO="${DAMIAO_GEAR_RATIO:-19.227}"
+PNEU_ARDUINO_PORT="${PNEU_ARDUINO_PORT:-/dev/arm_arduino}"
+PNEU_BAUD_RATE="${PNEU_BAUD_RATE:-115200}"
 XDG_RUNTIME_DIR_VAL="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 WAYLAND_DISPLAY_VAL="${WAYLAND_DISPLAY:-wayland-0}"
 PLOT_DEBUG_HEADLESS="${PLOT_DEBUG_HEADLESS:-0}"
@@ -35,6 +39,12 @@ if [ ! -e "$DAMIAO_CAN_DEVICE" ]; then
   echo ""
 fi
 
+if [ ! -e "$PNEU_ARDUINO_PORT" ]; then
+  echo "[arm_damiao_test] WARNING: $PNEU_ARDUINO_PORT 不存在，arm_arduino_node 可能无法连接气动 Arduino。"
+  echo "[arm_damiao_test] 可用 PNEU_ARDUINO_PORT=/dev/xxx 覆盖。"
+  echo ""
+fi
+
 if ! command -v gnome-terminal >/dev/null 2>&1; then
   echo "[arm_damiao_test] ERROR: 找不到 gnome-terminal。"
   echo "[arm_damiao_test] 这是 GNOME 桌面测试脚本；headless/SSH 请改用: bash tmux_test.sh arm"
@@ -54,6 +64,7 @@ sleep 0.5
 echo "[arm_damiao_test] motor 5 (shoulder): $ARM_M5_ID"
 echo "[arm_damiao_test] motor 6 (wrist):   $ARM_M6_ID"
 echo "[arm_damiao_test] USB-CAN: $DAMIAO_CAN_DEVICE"
+echo "[arm_damiao_test] pneu Arduino: $PNEU_ARDUINO_PORT @ $PNEU_BAUD_RATE"
 echo "[arm_damiao_test] plot_debug headless: $PLOT_DEBUG_HEADLESS"
 echo ""
 
@@ -109,8 +120,10 @@ sleep 0.8
 gnome-terminal --geometry=100x20+800+0 -- bash -c "
 source $WS/install/setup.bash
 echo '=== 窗口3: arm_ctrl_node ==='
-echo 'subscribe: /arm/joint_navigation'
-echo 'publish:   /arm/damiao_ctrl @ 20Hz'
+echo 'joint input: /arm/joint_navigation'
+echo 'pneu input:  /arm/pneu_navigation (String name:value)'
+echo 'motor out:   /arm/damiao_ctrl @ 20Hz'
+echo 'pneu out:    /arm/pneu_ctrl @ 20Hz'
 echo 'max_speed_rad_s: 1.0 (arm_ctrl_node 默认限速)'
 echo 'gear_ratio: 1.0 (damiao_ctrl 负责真实换算)'
 echo 'Ctrl+C 退出'
@@ -125,21 +138,75 @@ ros2 run arm arm_ctrl_node --ros-args \\
   -p republish_rate_hz:=20.0
 "
 
-# 窗口4: arm/damiao_ctrl 控制信号监听
+# 窗口4: arm Arduino 气动桥接
 sleep 0.5
-gnome-terminal --geometry=100x20+0+420 -- bash -c "
+gnome-terminal --geometry=100x22+0+420 -- bash -c "
 source $WS/install/setup.bash
-echo '=== 窗口4: /arm/damiao_ctrl (控制信号) ==='
+echo '=== 窗口4: arm_arduino_node (气动桥接) ==='
+echo 'serial: $PNEU_ARDUINO_PORT @ $PNEU_BAUD_RATE'
+echo 'subscribe: /arm/pneu_ctrl'
+echo 'publish:   /arm/pneu_ack, /arm/ir_status, /arm/pneu_raw_frame'
+echo 'Ctrl+C 退出'
+echo ''
+ros2 launch arm_arduino_praser arm_arduino.launch.py \
+  port:=$PNEU_ARDUINO_PORT \
+  baud_rate:=$PNEU_BAUD_RATE
+"
+
+# 窗口5: arm/damiao_ctrl 控制信号监听
+sleep 0.5
+gnome-terminal --geometry=100x20+800+420 -- bash -c "
+source $WS/install/setup.bash
+echo '=== 窗口5: /arm/damiao_ctrl (控制信号) ==='
 echo '格式: [motor_id, mode, speed, position?]'
 echo ''
 ros2 topic echo /arm/damiao_ctrl
 "
 
-# 窗口5: motor 5 直接发目标，0° → -90° → 0°
+# 窗口6: 气动 topic 监听 + 指令序列
 sleep 0.3
-gnome-terminal --geometry=100x22+800+420 -- bash -c "
+gnome-terminal --geometry=110x28+0+840 -- bash -c "
 source $WS/install/setup.bash
-echo '=== 窗口5: motor 5 直接定位 + /damiao_feedback ==='
+echo '=== 窗口6: pneu 控制测试 ==='
+echo '输入: /arm/pneu_navigation std_msgs/String name:value'
+echo '输出: /arm/pneu_ctrl std_msgs/Int8MultiArray [gripper,lift,stopper]'
+echo '反馈: /arm/pneu_ack, /arm/ir_status'
+echo ''
+
+ros2 topic echo /arm/pneu_ctrl &
+CTRL_PID=\$!
+ros2 topic echo /arm/pneu_ack &
+ACK_PID=\$!
+ros2 topic echo /arm/ir_status &
+IR_PID=\$!
+sleep 0.5
+
+pub_pneu() {
+  echo \">>> /arm/pneu_navigation: \$1\"
+  ros2 topic pub --once /arm/pneu_navigation std_msgs/String \"{data: '\$1'}\"
+}
+
+pub_pneu 'arm_gripper:1,arm_lift:0,arm_stopper:0'
+sleep 1.0
+pub_pneu 'arm_gripper:1,arm_lift:1,arm_stopper:0'
+sleep 1.0
+pub_pneu 'arm_gripper:0,arm_lift:1,arm_stopper:1'
+sleep 1.0
+pub_pneu 'arm_gripper:0,arm_lift:0,arm_stopper:0'
+sleep 1.0
+
+echo ''
+echo '气动测试完成。'
+kill \$CTRL_PID \$ACK_PID \$IR_PID 2>/dev/null
+wait \$CTRL_PID \$ACK_PID \$IR_PID 2>/dev/null
+read -p '按 Enter 关闭...'
+"
+
+# 窗口7: motor 5 直接发目标，0° → -90° → 0°
+sleep 0.3
+gnome-terminal --geometry=100x22+800+840 -- bash -c "
+source $WS/install/setup.bash
+echo '=== 窗口7: motor 5 直接定位 + /damiao_feedback ==='
 echo '字段: motor_id, q_rad, dq_rad_s, tau_nm, enabled'
 echo 'motor 5: 0° → -${MAX_DEG}° → 0°（直接目标）'
 echo ''
@@ -168,11 +235,11 @@ kill \$ECHO_PID 2>/dev/null; wait \$ECHO_PID 2>/dev/null
 read -p '按 Enter 关闭...'
 "
 
-# 窗口6: motor 5 直接发目标，0° → -90° → 0°（m6 暂不动）
+# 窗口8: motor 5 直接发目标，0° → -90° → 0°（m6 暂不动）
 sleep 0.3
-gnome-terminal --geometry=100x24+800+840 -- bash -c "
+gnome-terminal --geometry=100x24+800+1080 -- bash -c "
 source $WS/install/setup.bash
-echo '=== 窗口6: motor 5 直接定位 + /damiao_feedback ==='
+echo '=== 窗口8: motor 5 直接定位 + /damiao_feedback ==='
 echo 'motor 5: 0° → -${MAX_DEG}° → 0°（直接目标，m6 保持 0°）'
 echo '字段: motor_id, q_rad, dq_rad_s, tau_nm, enabled'
 echo ''
@@ -210,9 +277,11 @@ echo ""
 echo "  窗口1: plot_debug 实时可视化"
 echo "  窗口2: damiao_ctrl (/arm/damiao_ctrl -> USB-CAN -> motor 5/6)"
 echo "  窗口3: arm_ctrl_node (/arm/joint_navigation -> /arm/damiao_ctrl @ 20Hz)"
-echo "  窗口4: /arm/damiao_ctrl 控制信号监听"
-echo "  窗口5: motor 5 直接定位 0° → -${MAX_DEG}° → 0° + /damiao_feedback"
-echo "  窗口6: motor 5 重复定位测试"
+echo "  窗口4: arm_arduino_node (/arm/pneu_ctrl -> Arduino 气动阀)"
+echo "  窗口5: /arm/damiao_ctrl 控制信号监听"
+echo "  窗口6: pneu 控制测试 (/arm/pneu_navigation -> /arm/pneu_ctrl)"
+echo "  窗口7: motor 5 直接定位 0° → -${MAX_DEG}° → 0° + /damiao_feedback"
+echo "  窗口8: motor 5 重复定位测试"
 echo ""
 echo "  M5_SPEED=0.4 M6_SPEED=0.3 MAX_DEG=45 bash arm_damiao_test.sh"
 echo "  全部退出: bash $TOOLS/cleanup_ros2.sh --check"
