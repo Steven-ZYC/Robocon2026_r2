@@ -18,6 +18,7 @@ import rclpy
 from rclpy.node import Node
 from joystick_msgs.msg import Joystick
 from evdev import InputDevice, ecodes
+from rclpy.executors import ExternalShutdownException
 
 
 # --- 按键/轴映射常量 (evdev code -> 语义名称) ---
@@ -45,6 +46,12 @@ AXIS_MAP = {
     ecodes.ABS_Z: "l2",
     ecodes.ABS_RZ: "r2",
 }
+
+STICK_AXES = {"lx", "ly", "rx", "ry"}
+TRIGGER_AXES = {"l2", "r2"}
+HAT_AXES = {"dx", "dy"}
+CANONICAL_STICK_MAX = 32767
+CANONICAL_TRIGGER_MAX = 255
 
 # 按钮初始状态
 DEFAULT_BUTTONS = {
@@ -84,6 +91,7 @@ class JoystickPublisher(Node):
         # 线程控制
         self._running = True
         self._gamepad = None
+        self._axis_absinfo = {}
         self._lock = threading.Lock()
 
         # 后台读取线程
@@ -116,22 +124,55 @@ class JoystickPublisher(Node):
         """
         if self._device_path:
             if os.path.exists(self._device_path):
-                return self._device_path
-            self.get_logger().warn(f'指定路径不存在: {self._device_path}')
+                try:
+                    dev = InputDevice(self._device_path)
+                    dev.close()
+                    return self._device_path
+                except OSError as exc:
+                    self.get_logger().warn(
+                        f'指定路径不是 evdev event 设备: {self._device_path} ({exc}); '
+                        '改用 device_name 自动扫描 /dev/input/event*'
+                    )
+                except PermissionError:
+                    self.get_logger().error(
+                        f'权限不足，无法访问 {self._device_path}。请将用户加入 input 组: '
+                        'sudo usermod -a -G input $USER && sudo reboot'
+                    )
+                    return None
+            else:
+                self.get_logger().warn(f'指定路径不存在: {self._device_path}')
 
         keyword = self._device_name.lower()
         perm_error = False
+        joystick_candidates = []
         for path in self._scan_event_devices():
             try:
                 dev = InputDevice(path)
-                if keyword in dev.name.lower():
+                if keyword and keyword in dev.name.lower():
                     dev.close()
                     return path
+
+                if self._looks_like_joystick(dev):
+                    joystick_candidates.append((path, dev.name))
                 dev.close()
             except PermissionError:
                 perm_error = True
             except OSError:
                 continue
+
+        if len(joystick_candidates) == 1:
+            path, name = joystick_candidates[0]
+            self.get_logger().warn(
+                f'没有找到名称包含 "{self._device_name}" 的设备；'
+                f'自动选择唯一 joystick-like event 设备: {path} — "{name}"'
+            )
+            return path
+
+        if len(joystick_candidates) > 1:
+            self.get_logger().warn(
+                '找到多个 joystick-like event 设备，请通过 device_path 或 device_name 指定: '
+                + ', '.join(f'{path}="{name}"' for path, name in joystick_candidates)
+            )
 
         if perm_error:
             self.get_logger().error(
@@ -139,6 +180,18 @@ class JoystickPublisher(Node):
                 'sudo usermod -a -G input $USER && sudo reboot'
             )
         return None
+
+    @staticmethod
+    def _looks_like_joystick(dev):
+        """Return True when an event device exposes joystick axes and buttons."""
+        caps = dev.capabilities()
+        abs_caps = caps.get(ecodes.EV_ABS, [])
+        key_caps = caps.get(ecodes.EV_KEY, [])
+        abs_codes = {entry[0] if isinstance(entry, tuple) else entry for entry in abs_caps}
+        key_codes = {entry[0] if isinstance(entry, tuple) else entry for entry in key_caps}
+        has_sticks = ecodes.ABS_X in abs_codes and ecodes.ABS_Y in abs_codes
+        has_buttons = any(code in key_codes for code in BUTTON_MAP)
+        return has_sticks and has_buttons
 
     def _print_available_devices(self):
         """打印当前可用的所有输入设备，方便调试。"""
@@ -170,6 +223,9 @@ class JoystickPublisher(Node):
 
         try:
             self._gamepad = InputDevice(path)
+            with self._lock:
+                self._load_axis_metadata_locked(self._gamepad)
+                self._seed_axis_states_locked(self._gamepad)
             self.get_logger().info(f'已连接: {self._gamepad.name} ({path})')
             return True
         except PermissionError:
@@ -181,6 +237,67 @@ class JoystickPublisher(Node):
         except Exception as e:
             self.get_logger().error(f'连接手柄失败: {e}')
             return False
+
+    def _load_axis_metadata_locked(self, dev):
+        """Read evdev absinfo for each axis so output is device-mode independent.
+
+        joystick_msgs/Joystick keeps int32 fields for compatibility. The driver
+        therefore publishes canonical ranges instead of device-native raw values:
+        sticks -> [-32768, 32767], triggers -> [0, 255], D-pad -> -1/0/1.
+        """
+        self._axis_absinfo = {}
+        parts = []
+        for code, axis in AXIS_MAP.items():
+            try:
+                info = dev.absinfo(code)
+            except OSError:
+                continue
+            self._axis_absinfo[code] = info
+            parts.append(f'{axis}:{info.min}..{info.max}')
+        if parts:
+            self.get_logger().info(
+                'Axis normalization metadata: ' + ', '.join(parts)
+            )
+
+    def _seed_axis_states_locked(self, dev):
+        """Publish correct neutral/current axis values before the first event arrives."""
+        for code, axis in AXIS_MAP.items():
+            info = self._axis_absinfo.get(code)
+            if info is None:
+                continue
+            self.axis_states[axis] = self._normalize_axis_value(code, info.value)
+
+    def _normalize_axis_value(self, code, raw_value):
+        axis = AXIS_MAP.get(code)
+        info = self._axis_absinfo.get(code)
+        if axis is None:
+            return int(raw_value)
+
+        if axis in HAT_AXES or info is None:
+            return int(raw_value)
+
+        minimum = float(info.min)
+        maximum = float(info.max)
+        if maximum <= minimum:
+            return int(raw_value)
+
+        value = max(min(float(raw_value), maximum), minimum)
+
+        if axis in TRIGGER_AXES:
+            norm = (value - minimum) / (maximum - minimum)
+            return int(round(norm * CANONICAL_TRIGGER_MAX))
+
+        # Stick axes are centered using the evdev-reported range. This supports
+        # both signed [-32768, 32767] and unsigned [0, 65535] joystick modes.
+        center = (minimum + maximum) / 2.0
+        half_range = (maximum - minimum) / 2.0
+        if half_range <= 0.0:
+            return 0
+        norm = (value - center) / half_range
+        norm = max(-1.0, min(1.0, norm))
+        if norm < 0.0:
+            return int(round(norm * abs(-32768)))
+        return int(round(norm * CANONICAL_STICK_MAX))
 
     # ------------------------------------------------------------------
     # 后台读取线程
@@ -212,7 +329,9 @@ class JoystickPublisher(Node):
                         axis = AXIS_MAP.get(event.code)
                         if axis is not None:
                             with self._lock:
-                                self.axis_states[axis] = event.value
+                                self.axis_states[axis] = self._normalize_axis_value(
+                                    event.code, event.value
+                                )
 
             except OSError:
                 self.get_logger().warn('手柄断线，尝试重连...')
@@ -233,6 +352,7 @@ class JoystickPublisher(Node):
             except Exception:
                 pass
             self._gamepad = None
+            self._axis_absinfo = {}
 
     # ------------------------------------------------------------------
     # 定时发布
@@ -284,11 +404,12 @@ def main(args=None):
     node = JoystickPublisher()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

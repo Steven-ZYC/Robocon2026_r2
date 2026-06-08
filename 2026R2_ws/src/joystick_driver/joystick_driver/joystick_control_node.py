@@ -21,10 +21,11 @@ joystick_control_node: 手柄直驱控制节点
 - l1/r1:      关节 0 正反转 (按住移动，松开停止)
 - l2/r2:      关节 1 模拟量控制 (扳机行程映射速度)
 - A/B/X:      气动切换 — A=夹爪, B=升降, X=止动 (按一次切换)
+- Y:          手动启动/停止 motor 5,6 torque sensing (关节空闲时有效)
 - start:      全部归零 / 安全停止
 
 速度平滑:
-- 空间曲线: speed ∝ stick_mag ** speed_curve_power (默认 2.0, 低段细腻)
+- 空间曲线: speed ∝ stick_mag ** speed_curve_power (默认 3.0, 前 30% 更细腻)
 - 时间平滑: EMA 低通滤波 (smoothing_alpha=0.6, 越小越平滑, 1=无平滑)
 """
 
@@ -53,7 +54,7 @@ DEFAULT_STICK_DEADZONE = 0.05        # 摇杆死区 (归一化值)
 DEFAULT_TRIGGER_DEADZONE = 0.05
 DEFAULT_PUBLISH_RATE_HZ = 50.0
 DEFAULT_INPUT_TIMEOUT_S = 0.5
-DEFAULT_SPEED_CURVE_POWER = 2.0     # 速度曲线幂次 (>1 低段细腻, 1=线性)
+DEFAULT_SPEED_CURVE_POWER = 3.0     # 速度曲线幂次 (>1 低段细腻, 1=线性)
 DEFAULT_SMOOTHING_ALPHA = 0.6       # 速度平滑系数 (0~1, 越小越平滑, 1=无平滑)
 DEFAULT_SPEED_FLOOR_CM_S = 0.01     # 过死区后最低速度 (cm/s), =0.0001 m/s
 
@@ -126,6 +127,10 @@ class JoystickControlNode(Node):
         self._pneu_state = [0, 0, 0]   # [gripper, lift, stopper]
         self._prev_buttons = {"a": False, "b": False, "x": False}
 
+        # Torque sensing toggle (Y button, rising edge, arm idle only)
+        self._torque_sensing = False
+        self._prev_y = False
+
         # ---- 订阅 ----
         self.joy_sub = self.create_subscription(
             Joystick, "joystick_input", self._joy_callback, 10
@@ -140,6 +145,9 @@ class JoystickControlNode(Node):
         )
         self.pneu_pub = self.create_publisher(
             Int8MultiArray, "arm/pneu_ctrl", 10
+        )
+        self.torque_sense_pub = self.create_publisher(
+            Float32MultiArray, "arm/damiao_torque_sense", 10
         )
 
         # ---- 定时控制循环 ----
@@ -183,6 +191,8 @@ class JoystickControlNode(Node):
             self._pub_zero_joints()
             self._smooth_speed = 0.0
             self._smooth_omega = 0.0
+            if self._torque_sensing:
+                self._torque_sensing = False
             return
 
         joy = self._latest_joy
@@ -192,7 +202,7 @@ class JoystickControlNode(Node):
             self._pub_zero_joints()
             return
 
-        # start 按钮 → 安全停止 (底盘+关节归零, 气动归零)
+        # start 按钮 → 安全停止 (底盘+关节归零, 气动归零, torque sense 关闭)
         if joy.start:
             self._pub_zero_driving()
             self._pub_zero_joints()
@@ -200,7 +210,38 @@ class JoystickControlNode(Node):
             self._pub_pneu()
             self._smooth_speed = 0.0
             self._smooth_omega = 0.0
+            if self._torque_sensing:
+                self._torque_sensing = False
+                self.get_logger().info("Torque sense OFF (safety stop)")
             return
+
+        # ---- Y 按钮: 手动切换 torque sensing (关节空闲时有效) ----
+        y_now = bool(joy.y)
+        if y_now and not self._prev_y:                      # rising edge
+            if self._torque_sensing:
+                self._torque_sensing = False
+                self.get_logger().info("Torque sense OFF")
+            else:
+                # Only activate when arm motors are idle
+                if not joy.l1 and not joy.r1:
+                    l2_n = apply_deadzone(norm_trigger(joy.l2), self.trigger_deadzone)
+                    r2_n = apply_deadzone(norm_trigger(joy.r2), self.trigger_deadzone)
+                    if l2_n == 0.0 and r2_n == 0.0:
+                        self._torque_sensing = True
+                        self.get_logger().info("Torque sense ON (motor 5+6, pos=0)")
+        self._prev_y = y_now
+
+        # 任何 arm 输入激活时自动退出 torque sensing
+        if self._torque_sensing:
+            if joy.l1 or joy.r1:
+                self._torque_sensing = False
+                self.get_logger().info("Torque sense OFF (arm control resumed)")
+            else:
+                l2c = apply_deadzone(norm_trigger(joy.l2), self.trigger_deadzone)
+                r2c = apply_deadzone(norm_trigger(joy.r2), self.trigger_deadzone)
+                if l2c != 0.0 or r2c != 0.0:
+                    self._torque_sensing = False
+                    self.get_logger().info("Torque sense OFF (arm control resumed)")
 
         # ---- 底盘: 左摇杆 → direction + speed; 右摇杆 rx → omega ----
         lx_norm = apply_deadzone(norm_stick(joy.lx), self.stick_deadzone)
@@ -213,7 +254,8 @@ class JoystickControlNode(Node):
 
         # 速度曲线: magnitude ** power，摇杆小幅度更细腻
         curved_mag = stick_mag ** self.speed_curve_power
-        omega_raw = math.copysign(abs(rx_norm) ** self.speed_curve_power, rx_norm)
+        # Match driver convention: positive joystick rx should produce negative chassis yaw.
+        omega_raw = -math.copysign(abs(rx_norm) ** self.speed_curve_power, rx_norm)
 
         raw_speed = curved_mag * self.max_speed_cm_s
         raw_omega = omega_raw * self.max_omega_rad_s
@@ -229,19 +271,29 @@ class JoystickControlNode(Node):
 
         self._pub_driving(direction_rad, self._smooth_speed, self._smooth_omega)
 
-        # ---- 关节 0: l1 / r1 按住控制 ----
-        joint_0_speed = 0.0
-        if joy.l1:
-            joint_0_speed -= self.joint_speed_rad_s
-        if joy.r1:
-            joint_0_speed += self.joint_speed_rad_s
+        # ---- 关节控制: torque sense 或正常指令 ----
+        if self._torque_sensing:
+            # 发送 torque sense 消息 (20Hz refresh 维持 50Hz dither)
+            msg5 = Float32MultiArray()
+            msg5.data = [5.0, 0.0]
+            self.torque_sense_pub.publish(msg5)
+            msg6 = Float32MultiArray()
+            msg6.data = [6.0, 0.0]
+            self.torque_sense_pub.publish(msg6)
+        else:
+            # ---- 关节 0: l1 / r1 按住控制 ----
+            joint_0_speed = 0.0
+            if joy.l1:
+                joint_0_speed -= self.joint_speed_rad_s
+            if joy.r1:
+                joint_0_speed += self.joint_speed_rad_s
 
-        # ---- 关节 1: l2 / r2 模拟量扳机 ----
-        l2_norm = apply_deadzone(norm_trigger(joy.l2), self.trigger_deadzone)
-        r2_norm = apply_deadzone(norm_trigger(joy.r2), self.trigger_deadzone)
-        joint_1_speed = (r2_norm - l2_norm) * self.joint_speed_rad_s
+            # ---- 关节 1: l2 / r2 模拟量扳机 ----
+            l2_norm = apply_deadzone(norm_trigger(joy.l2), self.trigger_deadzone)
+            r2_norm = apply_deadzone(norm_trigger(joy.r2), self.trigger_deadzone)
+            joint_1_speed = (r2_norm - l2_norm) * self.joint_speed_rad_s
 
-        self._pub_joint_cmd([joint_0_speed, joint_1_speed])
+            self._pub_joint_cmd([joint_0_speed, joint_1_speed])
 
         # ---- 气动: A/B/X 切换 (上升沿触发) ----
         self._update_pneu_toggles(joy)

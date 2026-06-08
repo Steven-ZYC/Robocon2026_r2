@@ -82,10 +82,10 @@ Joystick input driver for ROS 2. 通过 evdev 读取游戏手柄输入并发布�
 
 | 参数 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `max_speed_cm_s` | float | 60.0 | 最大平移速度 (cm/s) |
-| `max_omega_rad_s` | float | 2.0 | 最大旋转角速度 (rad/s) |
+| `max_speed_cm_s` | float | 8.0 | 最大平移速度 (cm/s，当前源码默认) |
+| `max_omega_rad_s` | float | 1.5 | 最大旋转角速度 (rad/s，当前源码默认) |
 | `joint_speed_rad_s` | float | 3.0 | 关节固定速度 (rad/s) |
-| `stick_deadzone` | float | 0.08 | 摇杆死区 (归一化值) |
+| `stick_deadzone` | float | 0.05 | 摇杆死区 (归一化值，当前源码默认) |
 | `trigger_deadzone` | float | 0.05 | 扳机死区 (归一化值) |
 | `publish_rate_hz` | float | 50.0 | 控制循环频率 |
 | `input_timeout_s` | float | 0.5 | 手柄输入超时 (秒) |
@@ -326,3 +326,289 @@ sudo usermod -a -G input $USER
 
 - 手柄 A/B/X 按钮的物理功能不变 (A=夹爪, B=升降, X=止动)
 - 发布 topic 名称变更，依赖 `arm/pneu_navigation` 的上层节点需同步更新
+
+## v8 joystick.sh 气动链路补全（2026-06-06）
+
+`joystick_control_node` 当前直接发布 `/arm/pneu_ctrl`，消息类型为 `std_msgs/Int8MultiArray`，格式为 `[arm_gripper, arm_lift, arm_stopper]`。因此手柄气动链路不经过 `arm_ctrl_node`：
+
+```text
+joystick_node
+  -> joystick_control_node
+  -> /arm/pneu_ctrl
+  -> arm_arduino_praser/arm_arduino_node
+  -> Arduino 气动阀
+```
+
+`joystick.sh` 已移到仓库根目录，并补充启动 `arm_arduino_node`；脚本支持以下环境变量：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `PNEU_ARDUINO_PORT` | `/dev/arm_arduino` | arm Arduino 串口设备路径 |
+| `PNEU_BAUD_RATE` | `115200` | 串口波特率 |
+
+手柄按钮映射保持不变：A=gripper，B=lift，X=stopper，按一次 toggle。Start 会把底盘、关节和气动全部归零。
+
+> 注意：`joystick.sh` 当前仍未启动 `arm_ctrl_node`，所以手柄的 `arm/joint_navigation` 只有在另行启动 arm 控制节点时才会实际控制 Damiao arm motor。气动不依赖 `arm_ctrl_node`，可直接通过 `/arm/pneu_ctrl` 控制。
+
+## v9 joystick.sh 移到根目录并复用 cleanup_ros2.sh（2026-06-06）
+
+`joystick.sh` 已从 `2026R2_ws/joystick.sh` 移到仓库根目录，与 `arm_damiao_test.sh` 放在同一层，方便现场直接运行：
+
+```bash
+bash joystick.sh
+```
+
+启动前清理逻辑改为复用 `2026R2_ws/tools/cleanup_ros2.sh --force`，与 `arm_damiao_test.sh` 一致，不再在脚本内手写 `pkill` 匹配串。
+
+## v10 joystick_black event symlink 修复（2026-06-07）
+
+问题：`joystick_publisher_node` 使用 Python `evdev.InputDevice`，只能打开 `/dev/input/event*` 设备；旧 udev 规则 `SUBSYSTEM=="input"` 可能把 `/dev/input/joystick_black` 指到 `/dev/input/js0`。`js0` 属于 Linux joystick API，不是 evdev event 设备，打开会报 `OSError: Invalid argument`，导致 joystick node 一直连接失败。
+
+修复：
+
+- `99-robocon-r2.rules` 的黑/白手柄规则增加 `KERNEL=="event*"`，确保 `joystick_black` / `joystick_white` 指向 event 设备。
+- `joystick_publisher_node` 在 `device_path` 存在但不是 evdev event 设备时，会 warn 并 fallback 到 `device_name` 自动扫描 `/dev/input/event*`。
+
+重新安装 udev 规则后执行：
+
+```bash
+sudo cp 99-robocon-r2.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+ls -l /dev/input/joystick_black
+```
+
+期望输出应指向 `eventN`，不是 `js0`。
+
+## v11 joystick-like event 自动兜底（2026-06-07）
+
+黑色 8BitDo 在 Xbox 模式下，evdev 设备名可能显示为 `Generic X-Box pad`，不是 `8BitDo`。因此当 `device_path` 无效且 `device_name` 匹配不到时，`joystick_publisher_node` 会扫描 `/dev/input/event*`，自动选择唯一具备摇杆轴与按钮能力的 event 设备。
+
+现场诊断命令：
+
+```bash
+python3 - <<'PY'
+from evdev import InputDevice
+for path in ['/dev/input/joystick_black', '/dev/input/event5']:
+    try:
+        dev = InputDevice(path)
+        print(path, dev.name)
+        dev.close()
+    except Exception as exc:
+        print(path, type(exc).__name__, exc)
+PY
+```
+
+如果 `/dev/input/joystick_black` 仍指向 `js0`，新节点会 warn 后自动选中唯一 joystick-like `eventN`；但长期仍建议重新安装 udev 规则，让 symlink 直接指向 `eventN`。
+
+## v12 joystick.launch.py 与 joystick.sh launch 化（2026-06-07）
+
+新增 `joystick_driver/launch/joystick.launch.py`，统一启动手柄输入节点与手动控制节点：
+
+```bash
+ros2 launch joystick_driver joystick.launch.py device_path:=/dev/input/joystick_black
+```
+
+启动内容：
+
+| Node | 可执行文件 | 说明 |
+|---|---|---|
+| `joystick_publisher_node` | `joystick_node` | 读取 evdev 手柄并发布 `joystick_input` |
+| `joystick_control_node` | `joystick_control_node` | 发布 `/local_driving`、`arm/joint_navigation`、`arm/pneu_ctrl` |
+
+`joystick.sh` 现在优先使用 launch：
+
+```text
+ros2 launch joystick_driver joystick.launch.py
+ros2 launch base_omniwheel_r2_600 base.launch.py
+ros2 launch damiao_ctrl damiao_ctrl.launch.py
+ros2 launch arm_arduino_praser arm_arduino.launch.py
+```
+
+从 v13 起，`joystick.sh` 已默认启动 `arm.launch.py`，手柄的 `arm/joint_navigation` 会经 `arm_ctrl_node` 控制 Damiao arm motor 5/6。气动链路仍不需要 `arm_ctrl_node`。
+
+
+## v13 joystick.sh 启动 arm_ctrl 与 Damiao torque plot（2026-06-07）
+
+`joystick.sh` 现在会启动完整 arm motor 控制链路：
+
+```text
+joystick_driver/joystick_control_node
+  -> arm/joint_navigation
+  -> arm/arm_ctrl_node
+  -> arm/damiao_ctrl
+  -> damiao_ctrl/damiao_node
+  -> Damiao motor 5/6
+```
+
+气动链路仍然保持手柄直发：
+
+```text
+joystick_driver/joystick_control_node
+  -> arm/pneu_ctrl
+  -> arm_arduino_praser/arm_arduino_node
+  -> Arduino 气动阀
+```
+
+脚本同时启动 `plot_debug_node`，并只显示 Damiao torque feedback 图：
+
+```bash
+ros2 run plot_debug plot_debug_node --ros-args \
+  -p show_pose2d:=false \
+  -p show_target_error:=false \
+  -p show_driving:=false \
+  -p show_damiao:=false \
+  -p show_damiao_feedback:=true
+```
+
+可用环境变量：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `PLOT_DEBUG_HEADLESS` | `0` | 设为 `1` 时使用 Agg headless，只采集并保存 CSV/PNG |
+| `PLOT_MAX_HISTORY` | `600` | plot_debug 历史点数量 |
+| `PLOT_UPDATE_RATE_HZ` | `10.0` | plot_debug 更新频率 |
+| `PLOT_SAVE_DIR` | `/home/robotics/Robocon2026_r2/log_plot_debug` | CSV/PNG 保存目录 |
+| `PNEU_ARDUINO_PORT` | `/dev/arm_arduino` | arm Arduino 串口路径 |
+| `PNEU_BAUD_RATE` | `115200` | arm Arduino 串口波特率 |
+
+当前 `joystick.sh` active 启动项：
+
+```text
+plot_debug_node (only damiao_feedback torque for M5/M6)
+joystick_driver/joystick.launch.py
+base_omniwheel_r2_600/base.launch.py
+damiao_ctrl/damiao_ctrl.launch.py
+arm/arm.launch.py
+arm_arduino_praser/arm_arduino.launch.py
+```
+
+
+## v14 joystick_node 按 evdev absinfo 归一化发布（2026-06-07）
+
+`joystick_publisher_node` 现在连接 evdev 设备后会读取每个 ABS 轴的 `absinfo.min/max/value`，再发布到现有 `joystick_msgs/Joystick` 的 canonical int32 范围。消息字段类型不变，因此下游 `joystick_control_node` 不需要同步改接口。
+
+归一化规则：
+
+| 输入轴 | evdev 原始范围示例 | 发布范围 | 说明 |
+|---|---|---|---|
+| `ABS_X/ABS_Y/ABS_RX/ABS_RY` | `-32768..32767` 或 `0..65535` | `-32768..32767` | 根据 `min/max` 计算中心和半幅，兼容不同手柄模式 |
+| `ABS_Z/ABS_RZ` | `0..255` 或 `0..1023` | `0..255` | 修正 Xbox 模式下 L2/R2 为 `0..1023` 导致 25% 行程即满量程的问题 |
+| `ABS_HAT0X/ABS_HAT0Y` | `-1..1` | `-1..1` | D-pad 保持原始离散值 |
+
+启动连接时会用 `absinfo.value` 初始化当前轴状态，所以静止状态不再依赖第一条 evdev 事件才更新。
+
+当前黑色手柄 Xbox 模式实测：
+
+```text
+name: Generic X-Box pad
+ID_MODEL=8BitDo_Ultimate_3mode_Xbox
+ABS_X/ABS_Y/ABS_RX/ABS_RY: -32768..32767
+ABS_Z/ABS_RZ: 0..1023 -> joystick_msgs l2/r2: 0..255
+```
+
+超时保护不变：`joystick_control_node` 若超过 `input_timeout_s` 未收到 `joystick_input`，会发布零底盘和零关节指令。
+
+
+## v15 joystick 底盘自转方向修正（2026-06-07）
+
+`joystick_control_node` 的右摇杆 X 轴自转方向已反向：
+
+```text
+omega_raw = -sign(rx_norm) * abs(rx_norm) ** speed_curve_power
+```
+
+原因：当前底盘链路中 joystick 右摇杆自转方向与实车期望相反。平移方向、速度曲线、死区和平滑参数不变。
+
+
+## v16 joystick 低速曲线压低（2026-06-07）
+
+底盘平移与自转的默认速度曲线从二次改为三次：
+
+```text
+speed_curve_power: 2.0 -> 3.0
+output = input ** speed_curve_power
+```
+
+效果对比：
+
+| 摇杆归一化幅度 | 二次曲线输出 | 三次曲线输出 |
+|---|---:|---:|
+| 10% | 1.0% | 0.1% |
+| 20% | 4.0% | 0.8% |
+| 30% | 9.0% | 2.7% |
+| 50% | 25.0% | 12.5% |
+| 100% | 100.0% | 100.0% |
+
+因此摇杆前 30% 的低速段会明显更细，满推速度仍保持 `max_speed_cm_s` 与 `max_omega_rad_s` 不变。死区、EMA 平滑、自转方向修正不变。
+
+
+## v17 joystick.sh 只显示 M5/M6 torque（2026-06-07）
+
+`joystick.sh` 启动 `plot_debug_node` 时传入：
+
+```bash
+-p feedback_motor_ids:='[5,6]'
+```
+
+因此实时 torque 图只显示 arm motor 5 和 6，不再显示底盘 M1-M4。`damiao_feedback` topic 本身没有变化，底层仍可发布全部电机反馈。
+
+## v18 joystick_tmux.sh 竖屏 tmux 手柄启动器（2026-06-07）
+
+根目录新增 `joystick_tmux.sh`，用于 9:16 竖屏现场调试。它不启动 `plot_debug_node`，所有 launch 与 topic echo 都在同一个 tmux session 内启动，避免多个 gnome-terminal 窗口在竖屏上重叠。
+
+启动方式：
+
+```bash
+cd ~/Robocon2026_r2
+./joystick_tmux.sh
+```
+
+也可以指定 session 名：
+
+```bash
+./joystick_tmux.sh r2_joy_test
+```
+
+默认 session 名：`r2_joy`。
+
+窗口布局按竖屏阅读设计：
+
+| window | pane | 内容 |
+|---|---|---|
+| `drive` | 0 | `ros2 launch damiao_ctrl damiao_ctrl.launch.py` |
+| `drive` | 1 | `ros2 launch base_omniwheel_r2_600 base.launch.py` |
+| `drive` | 2 | `ros2 launch joystick_driver joystick.launch.py device_path:=/dev/input/joystick_black` |
+| `arm` | 0 | `ros2 launch arm arm.launch.py` |
+| `arm` | 1 | `ros2 launch arm_arduino_praser arm_arduino.launch.py` |
+| `feedback` | 0 | `ros2 topic echo /damiao_feedback damiao_msgs/msg/DamiaoFeedback` |
+| `help` | 0 | tmux 快捷键提示 |
+
+可用环境变量：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `JOYSTICK_DEVICE` | `/dev/input/joystick_black` | 手柄 evdev 路径 |
+| `PNEU_ARDUINO_PORT` | `/dev/arm_arduino` | arm Arduino 串口路径 |
+| `PNEU_BAUD_RATE` | `115200` | arm Arduino 串口波特率 |
+| `WS` | `~/Robocon2026_r2/2026R2_ws` | ROS2 workspace 路径 |
+
+超时保护不变：`joystick_control_node` 保持 `input_timeout_s` 手柄输入超时保护；`local_navigation_node` 保持 `/local_driving` 超时后发布零轮速；`damiao_ctrl/damiao_node` 保持 `command_timeout` 分组 watchdog。`joystick_tmux.sh` 只改变启动方式，不改变任何 topic 或 node 参数默认值。
+
+常用 tmux 命令：
+
+```bash
+tmux attach -t r2_joy      # 回到会话
+tmux kill-session -t r2_joy # 结束整套手柄链路
+```
+
+常用快捷键：
+
+```text
+Ctrl+B 0/1/2/3     切换到指定 window
+Ctrl+B n / p       下一个 / 上一个 window
+Ctrl+B 上下方向键  切换 pane
+Ctrl+B d           detach，后台继续运行
+Ctrl+B c           新建 window
+Ctrl+B x           关闭当前 pane
+```
