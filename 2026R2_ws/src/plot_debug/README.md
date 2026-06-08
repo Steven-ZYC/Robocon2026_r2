@@ -255,3 +255,20 @@ sudo apt install python3-gi-cairo
 ```bash
 PLOT_SHOW_POSE2D=true PLOT_SHOW_DRIVING=true bash arm_damiao_test.sh
 ```
+
+
+### v10 — Damiao feedback torque 支持指定电机 ID（2026-06-07）
+
+新增参数 `feedback_motor_ids`，用于限制 torque 图显示哪些 `damiao_feedback.motor_id`。默认值保持 `[1, 2, 3, 4, 5, 6]`，因此旧脚本行为不变。
+
+```bash
+ros2 run plot_debug plot_debug_node --ros-args \
+  -p show_pose2d:=false \
+  -p show_target_error:=false \
+  -p show_driving:=false \
+  -p show_damiao:=false \
+  -p show_damiao_feedback:=true \
+  -p feedback_motor_ids:='[5,6]'
+```
+
+`joystick.sh` 现在使用该参数，只显示 arm motor 5/6 的 torque 曲线。CSV 保存仍保留 M1-M6 全部反馈列，方便事后排查。

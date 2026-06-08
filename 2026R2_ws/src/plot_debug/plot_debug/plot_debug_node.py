@@ -87,6 +87,7 @@ class PlotDebugNode(Node):
         self.declare_parameter('show_damiao', True)
         self.declare_parameter('show_damiao_feedback', True)
         self.declare_parameter('show_target_error', True)
+        self.declare_parameter('feedback_motor_ids', [1, 2, 3, 4, 5, 6])
         self.declare_parameter('save_dir', './plot_debug_logs')
 
         self.max_history = max(1, self.get_parameter('max_history').value)
@@ -96,6 +97,10 @@ class PlotDebugNode(Node):
         self.show_damiao = self.get_parameter('show_damiao').value
         self.show_damiao_feedback = self.get_parameter('show_damiao_feedback').value
         self.show_target_error = self.get_parameter('show_target_error').value
+        self.feedback_motor_ids = self._sanitize_feedback_motor_ids(
+            self.get_parameter('feedback_motor_ids').value
+        )
+        self.feedback_motor_indices = [motor_id - 1 for motor_id in self.feedback_motor_ids]
         self.save_dir = self.get_parameter('save_dir').value
 
         # 文件名时间戳（节点启动时刻）
@@ -168,8 +173,33 @@ class PlotDebugNode(Node):
             f'(max_history={self.max_history}, update_rate={self.update_rate_hz}Hz, '
             f'pose2d={self.show_pose2d}, driving={self.show_driving}, damiao={self.show_damiao}, '
             f'damiao_feedback={self.show_damiao_feedback}, '
+            f'feedback_motor_ids={self.feedback_motor_ids}, '
             f'target_error={self.show_target_error}, save_dir={self.save_dir})'
         )
+
+    def _sanitize_feedback_motor_ids(self, raw_ids):
+        """Return sorted unique motor IDs in [1, MAX_MOTORS] for torque plotting."""
+        selected = []
+        try:
+            values = list(raw_ids)
+        except TypeError:
+            values = []
+
+        for value in values:
+            try:
+                motor_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= motor_id <= self.MAX_MOTORS and motor_id not in selected:
+                selected.append(motor_id)
+
+        if selected:
+            return selected
+
+        self.get_logger().warn(
+            'feedback_motor_ids is empty or invalid; fallback to [1, 2, 3, 4, 5, 6]'
+        )
+        return list(range(1, self.MAX_MOTORS + 1))
 
     # ==================================================================
     # 时间工具
@@ -489,16 +519,20 @@ class PlotDebugNode(Node):
             gs_fb = gs[row_idx].subgridspec(1, 1, wspace=0.2)
 
             self._ax_fb_tau = self._fig.add_subplot(gs_fb[0])
-            self._ax_fb_tau.set_title('Motor Torque (damiao_feedback, output-side Nm)')
+            motor_label = ', '.join([f'M{motor_id}' for motor_id in self.feedback_motor_ids])
+            self._ax_fb_tau.set_title(
+                f'Motor Torque ({motor_label}, damiao_feedback, output-side Nm)'
+            )
             self._ax_fb_tau.set_xlabel('Time (s)')
             self._ax_fb_tau.set_ylabel('Torque (Nm)')
             self._ax_fb_tau.grid(True, alpha=0.3)
             self._ax_fb_tau.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-            self._lines_fb_tau = []
-            for i in range(6):
-                (line,) = self._ax_fb_tau.plot([], [], color=self.MOTOR_COLORS[i],
-                                               linewidth=1, label=f'M{i+1}')
-                self._lines_fb_tau.append(line)
+            self._lines_fb_tau = {}
+            for motor_id in self.feedback_motor_ids:
+                idx = motor_id - 1
+                (line,) = self._ax_fb_tau.plot([], [], color=self.MOTOR_COLORS[idx],
+                                               linewidth=1, label=f'M{motor_id}')
+                self._lines_fb_tau[motor_id] = line
             self._ax_fb_tau.legend(loc='upper right', fontsize=7)
             self._text_fb_tau = self._ax_fb_tau.text(
                 0.02, 0.98, '', transform=self._ax_fb_tau.transAxes,
@@ -654,21 +688,25 @@ class PlotDebugNode(Node):
             with self._data_lock:
                 if not self._feedback_t:
                     fb_t = None
-                    tau_snapshots = [None] * 6
+                    tau_snapshots = {}
                 else:
                     fb_t = list(self._feedback_t)
-                    tau_snapshots = [list(self._feedback_torques[i]) for i in range(6)]
+                    tau_snapshots = {
+                        motor_id: list(self._feedback_torques[motor_id - 1])
+                        for motor_id in self.feedback_motor_ids
+                    }
 
             if fb_t:
-                for i in range(6):
-                    self._lines_fb_tau[i].set_data(fb_t, tau_snapshots[i])
-                    artists.append(self._lines_fb_tau[i])
+                for motor_id in self.feedback_motor_ids:
+                    self._lines_fb_tau[motor_id].set_data(fb_t, tau_snapshots[motor_id])
+                    artists.append(self._lines_fb_tau[motor_id])
                 self._ax_fb_tau.relim()
                 self._ax_fb_tau.autoscale_view()
 
                 tau_text = ' | '.join(
-                    [f'M{i+1}={self._feedback_torques[i][-1]:.2f}' for i in range(6)
-                     if self._feedback_torques[i]])
+                    [f'M{motor_id}={self._feedback_torques[motor_id - 1][-1]:.2f}'
+                     for motor_id in self.feedback_motor_ids
+                     if self._feedback_torques[motor_id - 1]])
                 if tau_text:
                     self._text_fb_tau.set_text(tau_text)
                     artists.append(self._text_fb_tau)

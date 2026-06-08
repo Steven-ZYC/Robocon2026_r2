@@ -38,3 +38,4 @@
 - [ ] v8：在机器人系统安装 python3-gi-cairo，使 GTK3Agg/GTK4Agg 可弹实时窗口
 
 - [x] v9：arm_damiao_test.sh 窗口6显式写出 plot_debug_node 全部可选参数，方便手动 true/false
+- [x] v10：新增 `feedback_motor_ids` 参数，支持 torque 图只显示指定 Damiao 电机
