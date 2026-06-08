@@ -9,14 +9,20 @@ SUBSYSTEM=="tty", ENV{ID_USB_SERIAL_SHORT}=="00000000050C", SYMLINK+="damiao_can
 # Arm 大喵 USB-CAN 适配器：插上第二块板后，用 `udevadm info` 查实际 serial 再取消注释。
 # SUBSYSTEM=="tty", ENV{ID_USB_SERIAL_SHORT}=="ARM_USB_CAN_SERIAL_HERE", SYMLINK+="arm_damiao_can"
 
-# 传感器 Arduino (Mega 2560 R3, IMU+Encoder, SN=55838323935351014241)
+# 传感器 Arduino (Mega 2560 R3, IMU+Encoder)
+# 匹配优先级：ID_USB_SERIAL_SHORT > ID_USB_VENDOR > ID_USB_SERIAL
+# 当前板上 USB 固件未写入短序列号，靠 VENDOR 区分
 SUBSYSTEM=="tty", ENV{ID_USB_SERIAL_SHORT}=="55838323935351014241", SYMLINK+="sensor_arduino"
+SUBSYSTEM=="tty", ENV{ID_USB_VENDOR}=="Arduino_mega2560", SYMLINK+="sensor_arduino"
+SUBSYSTEM=="tty", ENV{ID_USB_SERIAL}=="Arduino_mega2560_Arduino_Uno̔2017", SYMLINK+="sensor_arduino"
 
-# Arm Arduino (Mega 2560 R3, Joint Encoder/Pneu/IR, SN=857343234303518001A1)
+# Arm Arduino (Mega 2560 R3, Pneu/IR/Encoder)
+# 匹配优先级：ID_USB_SERIAL_SHORT > ID_USB_MODEL
 SUBSYSTEM=="tty", ENV{ID_USB_SERIAL_SHORT}=="857343234303518001A1", SYMLINK+="arm_arduino"
+SUBSYSTEM=="tty", ENV{ID_USB_VENDOR}=="Arduino__www.arduino.cc_", SYMLINK+="arm_arduino"
 
 # 白色手柄: 8BitDo Ultimate Wireless Controller for PC (2.4GHz)
-SUBSYSTEM=="input", ATTRS{idVendor}=="2dc8", ATTRS{idProduct}=="3106", SYMLINK+="input/joystick_white"
+KERNEL=="event*", SUBSYSTEM=="input", ATTRS{idVendor}=="2dc8", ATTRS{idProduct}=="3106", SYMLINK+="input/joystick_white"
 
 # 黑色手柄: 8BitDo Ultimate 3mode Xbox (SN=000093BB74BE15F3)
-SUBSYSTEM=="input", ATTRS{idVendor}=="2dc8", ATTRS{idProduct}=="200f", SYMLINK+="input/joystick_black"
+KERNEL=="event*", SUBSYSTEM=="input", ATTRS{idVendor}=="2dc8", ATTRS{idProduct}=="200f", SYMLINK+="input/joystick_black"

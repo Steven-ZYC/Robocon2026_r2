@@ -141,3 +141,5 @@
 - [ ] 标注硬件连接图（Arduino 引脚 → 编码器/IMU）
 - [ ] 补充机械参数测量方法（如何测量编码器轮半径）
 - [ ] 提供故障排查流程图（决策树：无数据 → CRC 失败 → Odometry 异常）
+- [x] parser 静默丢弃帧间 CR/LF 空白，避免 `Discarding 2 bytes without frame start` 正常换行刷屏
+- [x] 非空白协议外字节 WARN 加 1s throttle，保留真实串口异常提示

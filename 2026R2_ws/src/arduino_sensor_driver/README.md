@@ -755,3 +755,28 @@ arduino_sensor_driver/
 
 ## 未来改进方向
 见 `TODO.md`
+
+## v0.4.0 — 帧间 CRLF 日志降噪（2026-06-08）
+
+`arduino_sensor_parser` 的串口帧解析仍以 `<` 和 `>` 作为唯一有效帧边界。实测 Arduino 使用 `Serial.println()` 输出时，每个完整帧后会留下 `\r\n` 两个 ASCII 空白字节；旧逻辑会在下一次 100 Hz 串口读取中把这 2 字节记录为：
+
+```text
+Discarding 2 bytes without frame start
+```
+
+这不是 CRC 失败，也不是 navigation FSM 崩溃。若同时看到 `CRC stats ... OK=100.0%, FAIL=0`，说明有效数据帧持续正常到达。
+
+从 v0.4.0 起：
+
+- 纯 ASCII whitespace（CR/LF/space/tab）会作为正常帧间分隔符静默丢弃。
+- 非空白的协议外字节仍会 WARN，并使用 1s throttle，避免真实串口垃圾刷屏。
+- 超时保护不变：`timeout_sec=1.0s` 串口无数据或 `crc_timeout_sec=0.5s` 无有效 CRC 时，发布零速度 Odometry 且不发布 `/state_pose2d`，让下游 navigation 触发 pose timeout 停车。
+
+临时判断方法：
+
+```bash
+ros2 launch navigation navigation.launch.py
+ros2 topic echo /state_pose2d --once
+```
+
+如果 `/state_pose2d` 能持续 echo，且 CRC OK 接近 100%，这些旧 WARN 本质是日志噪声。

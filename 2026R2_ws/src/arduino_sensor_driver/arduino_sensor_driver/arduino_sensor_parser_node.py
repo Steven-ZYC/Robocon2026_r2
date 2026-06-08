@@ -367,16 +367,26 @@ class ArduinoSensorParser(Node):
                     # 查找帧头 '<'
                     start = self._line_buffer.find(b'<')
                     if start == -1:
-                        # 无帧头，丢弃全部缓冲区（都是垃圾）
+                        # Arduino Serial.println() commonly leaves CRLF after
+                        # each framed payload. Treat pure ASCII whitespace as a
+                        # normal separator, not as protocol damage.
                         if len(self._line_buffer) > 0:
-                            self.get_logger().warn(
-                                f'Discarding {len(self._line_buffer)} bytes without frame start'
-                            )
+                            if self._line_buffer.strip():
+                                self.get_logger().warn(
+                                    f'Discarding {len(self._line_buffer)} bytes without frame start',
+                                    throttle_duration_sec=1.0,
+                                )
                         self._line_buffer = b''
                         break
 
                     # 丢弃 '<' 之前的垃圾字节
                     if start > 0:
+                        prefix = self._line_buffer[:start]
+                        if prefix.strip():
+                            self.get_logger().warn(
+                                f'Discarding {len(prefix)} bytes before frame start',
+                                throttle_duration_sec=1.0,
+                            )
                         self._line_buffer = self._line_buffer[start:]
 
                     # 查找帧尾 '>'
