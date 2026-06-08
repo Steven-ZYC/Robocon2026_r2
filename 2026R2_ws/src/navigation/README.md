@@ -406,6 +406,7 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-08 | v0.13 — 新增 `routes/red_area_torque_test.yaml`，red area 底盘导航 + 手臂力矩触发测试；修复 global_navigation_node 对 `/damiao_feedback` 的订阅类型（Float32MultiArray → DamiaoFeedback） |
 | 2026-05-24 | v0.11 — plot_node → mission_viz_node，使用 RViz Marker/MarkerArray 渲染，支持场地 YAML 与红蓝镜像 |
 | 2026-05-23 | v0.10 — XY 分立模式新增 I/D 参数 (`k_i_x`, `k_i_y`, `k_d_x`, `k_d_y`)，默认 0.0 向后兼容 |
 | 2026-05-23 | v0.9 — 新增 plot_node 实时底盘位置可视化节点 |
@@ -751,3 +752,138 @@ omega = max(alpha, 0.3) × omega_raw
 | k_heading 硬编码 | `tracker.py:56` 写死 2.0，未参数化到 profile YAML | 不同路段无法独立调节朝向收敛速度 |
 | omega alpha 下限硬编码 | `mission_executor.py:258` 写死 0.3 | 某些需要精确末端朝向的场景无法调高 |
 | CTE 与 heading 独立控制 | 两者无协调——CTE 向线段拉，heading 向目标 yaw 转 | 在终点附近可能产生"横向拉锯"现象 |
+
+## v0.12 — weapon_head_pickup：IR 检测与双搜索策略（2026-06-06）
+
+`navigation` 新增 `weapon_head_pickup` stage，用于 weapon head rack 的 IR 检测、底盘搜索、停车与 arm 抓取序列。该 stage 保持全车上层控制在 `global_navigation_node` / `MissionExecutor` 内，`arm_ctrl_node` 仍只负责把语义化 arm 指令转换到底层电机与气动 topic。
+
+### Stage 用途与适用范围
+
+适用于底盘到达第一个 weapon head 检测位置后，需要根据 IR 反馈寻找实际 weapon head，并执行夹爪闭合、等待、lift 抬升、yaw 复位等抓取动作的任务段。搜索参数、IR 字段、抓取动作均由 mission YAML 配置，Python 中不写死比赛坐标或执行器数值。
+
+### YAML 接口
+
+```yaml
+- id: pickup_weapon_head
+  type: weapon_head_pickup
+  search_mode: scan_until_ir        # scan_until_ir 或 step_0p2m
+  ir_topic: /arduino/raw_sensor_data
+  ir_field: weapon_head_detected
+  ir_timeout_s: 0.5
+  require_crc_valid: true
+  slot_count: 6
+  slot_spacing_m: 0.2
+  on_miss: advance                  # advance 或 terminate
+
+  scan:
+    direction_rad: 0.0              # 机体 +X
+    speed_mps: 0.05
+    max_distance_m: 1.0
+    timeout_s: 5.0
+
+  step:
+    profile: slow
+    settle_s: 0.15
+    pos_tolerance: 0.03
+    yaw_tolerance: 0.1
+
+  pickup_sequence:
+    - type: arm
+      arm_gripper: close
+    - type: wait
+      duration_s: 0.1
+    - type: arm
+      arm_lift: high
+      arm_yaw_motor: front
+```
+
+### 两种搜索策略
+
+| `search_mode` | 行为 |
+|---|---|
+| `scan_until_ir` | IR=false 时沿机体方向 `scan.direction_rad` 低速连续移动；IR=true 后立即发布零 `/local_driving` 并执行 `pickup_sequence` |
+| `step_0p2m` | IR=false 时按 `slot_spacing_m` 生成动态目标，最多检查 `slot_count` 个槽位；每次到位后等待 `step.settle_s` 再重新检测 IR |
+
+`red_area.yaml` 当前示例默认使用 `scan_until_ir`，如需实车比较步进方案，只需把 `search_mode` 改为 `step_0p2m`。
+
+### Topic 展开
+
+`pickup_sequence` 中的 `arm` step 复用现有 arm 接口：
+
+| 输出 topic | 类型 | 内容 |
+|---|---|---|
+| `arm/joint_navigation` | `std_msgs/Float32MultiArray` | `[motor_id, position_rad, speed_rad_s, ...]` |
+| `arm/pneu_navigation` | `std_msgs/String` | `"name:value,name:value"` |
+
+示例：`arm_yaw_motor: front` 会按 `actuators.arm_yaw_motor.motor_id` 与 `positions.front` 展开为 joint triplet；`arm_gripper: close` 会按 `states` index 展开为 `"arm_gripper:1"`。
+
+### 超时与失效保护
+
+- IR 数据缺失、超过 `ir_timeout_s` 未更新、或 `require_crc_valid: true` 且最新包 CRC 无效时，`weapon_head_pickup` 会发布零 `/local_driving` 并保持当前 stage，不继续移动。
+- `scan_until_ir` 超过 `scan.timeout_s` 或 `scan.max_distance_m` 后会发布零 `/local_driving`，记录 warn，并按 `on_miss` 处理：默认 `advance`，也可配置 `terminate`。
+- `/state_pose2d` 超时仍由 `global_navigation_node.pose_timeout_s` 负责安全停车。
+```
+ros2 topic echo /arduino/raw_sensor_data
+ros2 topic echo /local_driving
+ros2 topic echo arm/joint_navigation
+ros2 topic echo arm/pneu_navigation
+```
+
+---
+
+## v0.13 — Red Area Torque Test Mission + DamiaoFeedback 类型修复（2026-06-08）
+
+### 新增文件
+
+| 文件 | 用途 |
+|---|---|
+| `routes/red_area_torque_test.yaml` | Red area 底盘导航 + 手臂力矩触发测试 mission |
+
+### 测试序列
+
+1. 底盘 (0,0) → (0.36, 0.875)，同时 m5=-90deg, gripper open
+2. 等 1s → gripper close → 等 0.2s
+3. lift=high + m5=0deg → m6=-90deg
+4. 力矩监控: m5 torque < -0.75 Nm → 立即 gripper open（conditional self-loop，50Hz 持续检测）
+
+### Bug 修复: `/damiao_feedback` 订阅类型
+
+`global_navigation_node` 原先以 `Float32MultiArray` 类型订阅 `/damiao_feedback`，但 `damiao_ctrl` 发布的实际类型为 `damiao_msgs/msg/DamiaoFeedback`。ROS2 类型不匹配导致 callback 永远不被调用，conditional stage 的力矩条件无法触发。
+
+**修复内容**:
+- `_setup_sensor_subs()`: 订阅类型改为 `DamiaoFeedback`（含 try/except ImportError 保护）
+- `_damiao_feedback_callback()`: 使用 `msg.motor_id` / `msg.tau_nm` / `msg.q_rad` / `msg.dq_rad_s` 字段，仅追踪 motor 5 数据
+- 模块 docstring 同步更新
+
+### 力矩监控机制
+
+Mission YAML 使用 conditional stage 的 self-loop 实现持续力矩监控：
+
+```yaml
+- id: monitor_torque
+  type: conditional
+  condition:
+    topic: /damiao_feedback
+    field: motor_5_tau
+    op: lt
+    value: -0.75
+  then: trigger_open
+  else: monitor_torque    # 自循环，50Hz 持续检测
+```
+
+`arm_ctrl_node` 的 20Hz republish timer 保证 arm 电机持续接收 POS_VEL 命令，damiao_ctrl 每次收到命令后发布新反馈，因此 torque 数据保持新鲜。
+
+### 启动方式
+
+```bash
+# 一键启动（tmux 多窗口）
+bash red_area_torque_test.sh
+
+# 或手动启动 global_navigation_node
+ros2 run navigation global_navigation_node --ros-args \
+  -p mission_file:=routes/red_area_torque_test.yaml
+```
+
+### damiao_ctrl 超时配置
+
+测试脚本中 damiao_ctrl 使用 `command_timeout:=0.0` 禁用 watchdog 超时停止，避免力矩监控阶段（无新 arm 命令）电机被意外停止。正常比赛 mission 中应恢复合理超时值。

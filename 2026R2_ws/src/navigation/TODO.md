@@ -29,3 +29,12 @@
 - [ ] 添加 parallel stage 真实并行等待（当前为 fire-and-forget）
 - [ ] 支持多 mission 文件热切换
 - [ ] 与 r2_launch 集成全系统启动
+- [x] 新增 `weapon_head_pickup` stage，支持 IR 检测后执行 YAML 内抓取序列
+- [x] 支持 `search_mode: step_0p2m`，按 `slot_spacing_m` 检查最多 `slot_count` 个槽位
+- [x] 支持 `search_mode: scan_until_ir`，低速连续扫描直到 IR=true
+- [x] 在 README 说明 IR 缺失/超时/CRC 无效时的停车保护
+- [x] 在 `red_area.yaml` 增加 weapon head pickup 示例
+- [x] 新增 `routes/red_area_torque_test.yaml`，red area 底盘导航 + 手臂力矩触发测试
+- [x] 修复 global_navigation_node 对 `/damiao_feedback` 的订阅类型（Float32MultiArray → DamiaoFeedback）
+- [ ] 实车验证 IR=true 时底盘停车距离与夹爪时序是否满足抓取要求
+- [ ] 实车验证 red_area_torque_test.yaml 完整序列 + 力矩触发

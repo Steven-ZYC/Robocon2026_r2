@@ -129,6 +129,36 @@ stages:
     arm_gripper: open
     arm_stopper: low
 
+  # --- IR 检测 weapon head，并按 YAML 内封装的抓取序列执行 ---
+  - id: pickup_weapon_head
+    type: weapon_head_pickup
+    search_mode: scan_until_ir  # 可切换为 step_0p2m
+    ir_topic: /arduino/raw_sensor_data
+    ir_field: weapon_head_detected
+    ir_timeout_s: 0.5
+    require_crc_valid: true
+    slot_count: 6
+    slot_spacing_m: 0.2
+    on_miss: advance
+    scan:
+      direction_rad: 0.0
+      speed_mps: 0.05
+      max_distance_m: 1.0
+      timeout_s: 5.0
+    step:
+      profile: slow
+      settle_s: 0.15
+      pos_tolerance: 0.03
+      yaw_tolerance: 0.1
+    pickup_sequence:
+      - type: arm
+        arm_gripper: close
+      - type: wait
+        duration_s: 0.1
+      - type: arm
+        arm_lift: high
+        arm_yaw_motor: front
+
   # --- 任务结束 ---
   - id: done
     type: terminate

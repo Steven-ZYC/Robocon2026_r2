@@ -91,6 +91,18 @@ class MissionExecutor:
         self.sensor_cache = {}
         self._condition_result = None
 
+        # Weapon head pickup state
+        self._weapon_stage_id = None
+        self._weapon_state = 'idle'
+        self._weapon_slot_index = 0
+        self._weapon_pickup_step_index = 0
+        self._weapon_step_target_pose = None
+        self._weapon_scan_start_pose = None
+        self._weapon_scan_start_time = 0.0
+        self._weapon_wait_start = 0.0
+        self._weapon_warned_missing_ir = False
+        self._weapon_warned_ir_timeout = False
+
         # Publishers (set after init by global_navigation_node)
         self.pub_driving = None
         self.pub_joint = None   # arm/joint_navigation
@@ -220,6 +232,18 @@ class MissionExecutor:
                             if key not in self.actuators:
                                 self.logger.warn(f"[{sid}] actuator '{key}' not defined")
 
+            elif stype == 'weapon_head_pickup':
+                mode = s.get('search_mode', 'scan_until_ir')
+                if mode not in ('scan_until_ir', 'step_0p2m'):
+                    self.logger.warn(f"[{sid}] unknown search_mode '{mode}'")
+                for step in s.get('pickup_sequence', []):
+                    if step.get('type') == 'arm':
+                        for key in step:
+                            if key == 'type':
+                                continue
+                            if key not in self.actuators:
+                                self.logger.warn(f"[{sid}] actuator '{key}' not defined")
+
     # ------------------------------------------------------------------
     # Main update loop (called at control rate, e.g. 50Hz)
     # ------------------------------------------------------------------
@@ -253,6 +277,8 @@ class MissionExecutor:
             self._update_parallel(stage)
         elif stype == 'conditional':
             self._update_conditional(stage)
+        elif stype == 'weapon_head_pickup':
+            self._update_weapon_head_pickup(stage)
         elif stype == 'wait':
             self._update_wait(stage)
         elif stype == 'terminate':
@@ -637,6 +663,293 @@ class MissionExecutor:
             self._advance_stage()
 
     # ------------------------------------------------------------------
+    # Stage: weapon_head_pickup
+    # ------------------------------------------------------------------
+
+    def _update_weapon_head_pickup(self, stage):
+        """Search weapon head rack with IR, then run YAML-defined pickup steps.
+
+        This stage belongs in navigation because it must coordinate chassis
+        motion, sensor feedback, and arm actions in one ordered whole-robot
+        decision. Arm details still stay parameterized in the YAML actuators and
+        pickup_sequence blocks.
+        """
+        stage_id = stage.get('id', 'weapon_head_pickup')
+        if self.current_pose is None:
+            self._pub_zero_driving()
+            return
+
+        if self._weapon_stage_id != stage_id:
+            self._begin_weapon_head_pickup(stage_id)
+
+        if self._weapon_state == 'checking':
+            self._update_weapon_checking(stage)
+        elif self._weapon_state == 'step_move':
+            self._update_weapon_step_move(stage)
+        elif self._weapon_state == 'scan':
+            self._update_weapon_scan(stage)
+        elif self._weapon_state == 'pickup':
+            self._update_weapon_pickup_sequence(stage)
+        else:
+            self.logger.warn(f"Unknown weapon pickup state '{self._weapon_state}', stopping")
+            self._finish_weapon_pickup(stage, success=False)
+
+    def _begin_weapon_head_pickup(self, stage_id):
+        """Initialize per-stage search state for a new weapon pickup stage."""
+        self._clear_navigation_state()
+        self._weapon_stage_id = stage_id
+        self._weapon_state = 'checking'
+        self._weapon_slot_index = 0
+        self._weapon_pickup_step_index = 0
+        self._weapon_step_target_pose = None
+        self._weapon_scan_start_pose = None
+        self._weapon_scan_start_time = 0.0
+        self._weapon_wait_start = 0.0
+        self._weapon_warned_missing_ir = False
+        self._weapon_warned_ir_timeout = False
+        self.logger.info(f"Weapon pickup [{stage_id}] started")
+
+    def _update_weapon_checking(self, stage):
+        """Check the current rack slot and choose the configured search mode."""
+        ir_value = self._read_weapon_ir(stage)
+        if ir_value is None:
+            self._pub_zero_driving()
+            return
+
+        if ir_value:
+            self._pub_zero_driving()
+            self._weapon_state = 'pickup'
+            self._weapon_pickup_step_index = 0
+            self._weapon_wait_start = 0.0
+            self.logger.info(
+                f"Weapon head detected at slot {self._weapon_slot_index + 1}; running pickup_sequence"
+            )
+            return
+
+        mode = stage.get('search_mode', 'scan_until_ir')
+        if mode == 'step_0p2m':
+            self._start_next_weapon_step(stage)
+        elif mode == 'scan_until_ir':
+            self._start_weapon_scan(stage)
+        else:
+            self.logger.warn(f"Unknown weapon search_mode '{mode}'")
+            self._finish_weapon_pickup(stage, success=False)
+
+    def _start_next_weapon_step(self, stage):
+        """Create a dynamic pose target one slot spacing ahead in body +X."""
+        slot_count = int(stage.get('slot_count', 6))
+        if self._weapon_slot_index >= max(slot_count - 1, 0):
+            self.logger.warn(f"No weapon head found after checking {slot_count} slots")
+            self._finish_weapon_pickup(stage, success=False)
+            return
+
+        spacing = float(stage.get('slot_spacing_m', 0.2))
+        yaw = self.current_pose['yaw']
+        self._weapon_step_target_pose = {
+            'x': self.current_pose['x'] + spacing * math.cos(yaw),
+            'y': self.current_pose['y'] + spacing * math.sin(yaw),
+            'yaw': yaw,
+        }
+        self._weapon_slot_index += 1
+        self._weapon_state = 'step_move'
+        self._weapon_wait_start = 0.0
+        self._clear_navigation_state()
+        self.logger.info(
+            f"IR false; stepping to weapon slot {self._weapon_slot_index + 1} "
+            f"(+{spacing:.3f} m body X)"
+        )
+
+    def _update_weapon_step_move(self, stage):
+        """Drive to the dynamic step target, then settle and re-check IR."""
+        step_cfg = stage.get('step', {}) or {}
+        profile_name = step_cfg.get('profile', 'slow')
+        profile = self.profiles.get(profile_name, {})
+        pos_tol = float(step_cfg.get('pos_tolerance', stage.get('step_pos_tolerance', 0.03)))
+        yaw_tol = float(step_cfg.get('yaw_tolerance', stage.get('step_yaw_tolerance', 0.1)))
+
+        settle_s = float(step_cfg.get('settle_s', 0.15))
+        if self._weapon_wait_start != 0.0:
+            self._pub_zero_driving()
+            if time.time() - self._weapon_wait_start >= settle_s:
+                self._weapon_wait_start = 0.0
+                self._weapon_state = 'checking'
+            return
+
+        arrived = self._drive_to_dynamic_pose(
+            f"{stage.get('id', 'weapon_head_pickup')}_slot_{self._weapon_slot_index}",
+            self._weapon_step_target_pose,
+            profile,
+            pos_tol,
+            yaw_tol,
+        )
+        if arrived:
+            self._pub_zero_driving()
+            self._weapon_wait_start = time.time()
+
+    def _start_weapon_scan(self, stage):
+        """Begin continuous low-speed scan until IR detects a weapon head."""
+        self._weapon_scan_start_pose = dict(self.current_pose)
+        self._weapon_scan_start_time = time.time()
+        self._weapon_state = 'scan'
+        self.logger.info("IR false; scanning forward until weapon head is detected")
+
+    def _update_weapon_scan(self, stage):
+        """Move slowly while watching IR, timeout, and max scan distance."""
+        ir_value = self._read_weapon_ir(stage)
+        if ir_value is None:
+            self._pub_zero_driving()
+            return
+
+        if ir_value:
+            self._pub_zero_driving()
+            self._weapon_state = 'pickup'
+            self._weapon_pickup_step_index = 0
+            self._weapon_wait_start = 0.0
+            self.logger.info("Weapon head detected during scan; running pickup_sequence")
+            return
+
+        scan_cfg = stage.get('scan', {}) or {}
+        timeout_s = float(scan_cfg.get('timeout_s', 5.0))
+        max_distance_m = float(scan_cfg.get('max_distance_m', stage.get('slot_spacing_m', 0.2) * max(int(stage.get('slot_count', 6)) - 1, 1)))
+        elapsed = time.time() - self._weapon_scan_start_time
+        moved = get_distance(self.current_pose, self._weapon_scan_start_pose)
+        if elapsed > timeout_s or moved > max_distance_m:
+            self.logger.warn(
+                f"Weapon scan failed: elapsed={elapsed:.2f}s/{timeout_s:.2f}s, "
+                f"distance={moved:.3f}m/{max_distance_m:.3f}m"
+            )
+            self._finish_weapon_pickup(stage, success=False)
+            return
+
+        direction = float(scan_cfg.get('direction_rad', 0.0))
+        speed = float(scan_cfg.get('speed_mps', 0.05))
+        vx_body = speed * math.cos(direction)
+        vy_body = speed * math.sin(direction)
+        self._pub_driving_body(vx_body, vy_body, 0.0)
+
+    def _update_weapon_pickup_sequence(self, stage):
+        """Execute YAML pickup_sequence with arm and wait steps."""
+        sequence = stage.get('pickup_sequence', [])
+        if not sequence:
+            self.logger.warn("weapon_head_pickup has no pickup_sequence; finishing")
+            self._finish_weapon_pickup(stage, success=True)
+            return
+
+        if self._weapon_pickup_step_index >= len(sequence):
+            self._finish_weapon_pickup(stage, success=True)
+            return
+
+        step = sequence[self._weapon_pickup_step_index]
+        stype = step.get('type', 'wait')
+        if stype == 'arm':
+            self._execute_arm(step)
+            self._weapon_pickup_step_index += 1
+            self._weapon_wait_start = 0.0
+        elif stype == 'wait':
+            duration = float(step.get('duration_s', 0.0))
+            if self._weapon_wait_start == 0.0:
+                self._weapon_wait_start = time.time()
+                return
+            if time.time() - self._weapon_wait_start >= duration:
+                self._weapon_wait_start = 0.0
+                self._weapon_pickup_step_index += 1
+        else:
+            self.logger.warn(f"Unknown pickup_sequence step type '{stype}', skipping")
+            self._weapon_pickup_step_index += 1
+            self._weapon_wait_start = 0.0
+
+    def _read_weapon_ir(self, stage):
+        """Read configured IR boolean from the cached sensor topic.
+
+        Returns True/False when the value is fresh enough, or None when the
+        sensor data is missing/stale/CRC-invalid and the chassis must not move.
+        """
+        topic = stage.get('ir_topic', '/arduino/raw_sensor_data')
+        field = stage.get('ir_field', 'weapon_head_detected')
+        sensor_data = self.sensor_cache.get(topic)
+        if sensor_data is None:
+            if not self._weapon_warned_missing_ir:
+                self.logger.warn(f"No IR sensor data on {topic}; weapon pickup is holding position")
+                self._weapon_warned_missing_ir = True
+            return None
+
+        require_crc_valid = bool(stage.get('require_crc_valid', True))
+        if require_crc_valid and not bool(sensor_data.get('crc_valid', False)):
+            if not self._weapon_warned_ir_timeout:
+                self.logger.warn("Latest IR packet is CRC-invalid; weapon pickup is holding position")
+                self._weapon_warned_ir_timeout = True
+            return None
+
+        stamp = sensor_data.get('_stamp')
+        timeout_s = float(stage.get('ir_timeout_s', 0.5))
+        if stamp is not None and time.monotonic() - float(stamp) > timeout_s:
+            if not self._weapon_warned_ir_timeout:
+                self.logger.warn(f"IR sensor timeout ({timeout_s:.2f}s); weapon pickup is holding position")
+                self._weapon_warned_ir_timeout = True
+            return None
+
+        self._weapon_warned_missing_ir = False
+        self._weapon_warned_ir_timeout = False
+        return bool(sensor_data.get(field, False))
+
+    def _drive_to_dynamic_pose(self, stage_id, target_pose, profile, pos_tol, yaw_tol):
+        """Small-pose PID used by step_0p2m dynamic slot targets."""
+        if target_pose is None or self.current_pose is None:
+            self._pub_zero_driving()
+            return False
+
+        dist = get_distance(self.current_pose, target_pose)
+        yaw_err_signed = normalize_angle(target_pose.get('yaw', self.current_pose['yaw']) - self.current_pose['yaw'])
+        if dist < pos_tol and abs(yaw_err_signed) < yaw_tol:
+            self.arrived_counter += 1
+        else:
+            self.arrived_counter = 0
+
+        if self.arrived_counter >= self.arrived_stable_count:
+            self.arrived_counter = 0
+            self._clear_navigation_state()
+            return True
+
+        self._begin_navigate_stage({'id': stage_id}, target_pose, profile)
+        self._pub_target_pose(target_pose)
+
+        cos_yaw = math.cos(self.current_pose['yaw'])
+        sin_yaw = math.sin(self.current_pose['yaw'])
+        ex_w = target_pose['x'] - self.current_pose['x']
+        ey_w = target_pose['y'] - self.current_pose['y']
+        ex_body = ex_w * cos_yaw + ey_w * sin_yaw
+        ey_body = -ex_w * sin_yaw + ey_w * cos_yaw
+
+        k_p_x = float(profile.get('k_p_x', DEFAULT_K_P_X))
+        k_p_y = float(profile.get('k_p_y', DEFAULT_K_P_Y))
+        vx_body = k_p_x * ex_body
+        vy_body = k_p_y * ey_body
+
+        max_body_x = float(profile.get('max_body_x_mps', DEFAULT_MAX_LATERAL_MPS))
+        max_body_y = float(profile.get('max_body_y_mps', DEFAULT_MAX_LATERAL_MPS))
+        vx_body = max(-max_body_x, min(max_body_x, vx_body))
+        vy_body = max(-max_body_y, min(max_body_y, vy_body))
+
+        k_heading = float(profile.get('k_heading_p', TRACKER_K_HEADING_P))
+        max_omega = float(profile.get('yaw_rate_rps', 1.5))
+        omega = max(-max_omega, min(max_omega, k_heading * yaw_err_signed))
+        self._pub_driving_body(vx_body, vy_body, omega)
+        return False
+
+    def _finish_weapon_pickup(self, stage, success):
+        """Stop chassis and leave the weapon pickup stage."""
+        self._pub_zero_driving()
+        if success:
+            self.logger.info("Weapon pickup sequence complete")
+        else:
+            self.logger.warn("Weapon pickup finished without detection/pickup")
+            if stage.get('on_miss') == 'terminate':
+                self._execute_terminate()
+                return
+        self._clear_weapon_state()
+        self._advance_stage()
+
+    # ------------------------------------------------------------------
     # Stage: conditional
     # ------------------------------------------------------------------
 
@@ -678,6 +991,7 @@ class MissionExecutor:
                 self._parallel_active = []
                 self._wait_duration = 0.0
                 self._clear_navigation_state()
+                self._clear_weapon_state()
                 self.logger.info(f"Jumped to [{stage_id}]")
                 return
         self.logger.warn(f"Stage '{stage_id}' not found, skipping")
@@ -733,6 +1047,7 @@ class MissionExecutor:
 
     def _advance_stage(self):
         self._clear_navigation_state()
+        self._clear_weapon_state()
         self.stage_index += 1
 
     def _clear_navigation_state(self):
@@ -742,6 +1057,19 @@ class MissionExecutor:
         self._nav_from_pose = None
         self._active_nav_stage_id = None
         self.arrived_counter = 0
+
+    def _clear_weapon_state(self):
+        """Clear per-stage weapon pickup state when leaving or jumping stages."""
+        self._weapon_stage_id = None
+        self._weapon_state = 'idle'
+        self._weapon_slot_index = 0
+        self._weapon_pickup_step_index = 0
+        self._weapon_step_target_pose = None
+        self._weapon_scan_start_pose = None
+        self._weapon_scan_start_time = 0.0
+        self._weapon_wait_start = 0.0
+        self._weapon_warned_missing_ir = False
+        self._weapon_warned_ir_timeout = False
 
     def set_pose(self, pose):
         self.current_pose = pose
@@ -754,3 +1082,4 @@ class MissionExecutor:
         self._parallel_active = []
         self._wait_duration = 0.0
         self._clear_navigation_state()
+        self._clear_weapon_state()

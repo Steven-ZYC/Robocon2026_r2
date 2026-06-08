@@ -1,0 +1,121 @@
+version: 1
+frame_id: map
+
+# ===== Red Area Torque Test: 底盘导航 + 手臂力矩触发测试 =====
+# 序列: nav+arm_init → wait → gripper_close → wait → lift+m5_home → m6_down → monitor_torque → trigger_open
+# 力矩检测: motor 5 torque < -0.75 Nm → 立即 open gripper
+
+# ===== 坐标 (m, rad) =====
+waypoints:
+  wp_start:      { pose: { x: 0.0, y: 0.0, yaw: 0.0 } }
+  wp_red_target: { pose: { x: 0.36, y: 0.875, yaw: 0.0 } }
+
+# ===== 导航预设 (XY 分立 PID) =====
+profiles:
+  medium:
+    speed_mps: 0.4
+    yaw_rate_rps: 0.3
+    start_radius_m: 0.0
+    end_radius_m: 0.0
+    min_speed_scale: 0.0
+    k_p_x: 0.044729
+    k_p_y: 0.104020
+    k_d_x: 0.001560
+    k_d_y: 0.001040
+    k_heading_p: 0.06
+    k_heading_d: 0.0
+    max_body_x_mps: 1.0
+    max_body_y_mps: 1.0
+
+# ===== 执行器语义映射 =====
+actuators:
+  arm_yaw_motor:
+    type: motor
+    motor_id: 5
+    speed: 3.0
+    positions:
+      front: 0.0
+      back:  3.14
+      mid:   1.57
+      right: 1.57
+      neg_90: -1.57
+
+  arm_roll_motor:
+    type: motor
+    motor_id: 6
+    speed: 3.0
+    positions:
+      up:    0.0
+      down: -1.57
+      mid:  -0.78
+      right: 1.57
+
+  arm_gripper:
+    type: pneumatic
+    states: [open, close]
+
+  arm_lift:
+    type: pneumatic
+    states: [low, high]
+
+# ===== 任务脚本 =====
+stages:
+  # --- Step 1: arm motor 5 → -90deg + gripper open (先发手臂命令，瞬时执行) ---
+  - id: arm_init
+    type: arm
+    arm_yaw_motor: neg_90
+    arm_gripper: open
+
+  # --- Step 1b: 底盘从 (0,0) 移动到 (0.36, 0.875) (与手臂运动同时进行) ---
+  - id: nav_to_target
+    type: navigate
+    to: wp_red_target
+    profile: medium
+
+  # --- Step 2: 等待 1s ---
+  - id: wait_1s
+    type: wait
+    duration_s: 1.0
+
+  # --- Step 3: Gripper close ---
+  - id: gripper_close
+    type: arm
+    arm_gripper: close
+
+  # --- Step 4: 等待 0.2s ---
+  - id: wait_0.2s
+    type: wait
+    duration_s: 0.2
+
+  # --- Step 5: Lift → high + motor 5 → 0deg ---
+  - id: lift_and_m5_home
+    type: arm
+    arm_lift: high
+    arm_yaw_motor: front
+
+  # --- Step 6: Motor 6 → -90deg ---
+  - id: m6_neg90
+    type: arm
+    arm_roll_motor: down
+
+  # --- Step 7: 力矩监控循环 (50Hz 持续检测 motor 5 torque) ---
+  # 条件: motor_5_tau < -0.75 Nm → 跳到 trigger_open
+  # 否则自循环，持续检测
+  - id: monitor_torque
+    type: conditional
+    condition:
+      topic: /damiao_feedback
+      field: motor_5_tau
+      op: lt
+      value: -0.75
+    then: trigger_open
+    else: monitor_torque
+
+  # --- Step 8: 力矩触发 → Gripper open ---
+  - id: trigger_open
+    type: arm
+    arm_gripper: open
+
+  # --- 任务结束 ---
+  - id: done
+    type: terminate
