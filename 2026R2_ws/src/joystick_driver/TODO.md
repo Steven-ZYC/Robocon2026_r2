@@ -8,6 +8,9 @@
 - [x] 适配 8BitDo Ultimate 的 LT/RT 模拟量：按 evdev `absinfo.min/max` 归一化 ABS_Z/ABS_RZ
 
 ## 已完成
+- [x] `joystick_nav_torque_test.sh` 默认气动状态改为 gripper close / lift low / stopper high，并同步 joystick 内部 toggle 初始值
+- [x] `joystick_control_node` 增加 `publish_pneu_continuous` 参数，用于 hybrid joystick + Navigation torque release
+- [x] 新增根目录 `joystick_nav_torque_test.sh`，手柄控制整车，Navigation 监听 motor 5 torque 自动打开 gripper
 - [x] 明确本 package 为备用上层控制节点，主链路由 `navigation/global_navigation_node` (FSM) 负责 (2026-06-03)
 - [x] v1 初始实现: evdev 读取 8BitDo 手柄，发布 joystick_msgs/Joystick (20 Hz)
 - [x] v2 自动设备发现: 通过 device_name 参数模糊匹配，无需每次指定 event 编号

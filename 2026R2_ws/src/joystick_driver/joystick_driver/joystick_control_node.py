@@ -57,6 +57,8 @@ DEFAULT_INPUT_TIMEOUT_S = 0.5
 DEFAULT_SPEED_CURVE_POWER = 3.0     # 速度曲线幂次 (>1 低段细腻, 1=线性)
 DEFAULT_SMOOTHING_ALPHA = 0.6       # 速度平滑系数 (0~1, 越小越平滑, 1=无平滑)
 DEFAULT_SPEED_FLOOR_CM_S = 0.01     # 过死区后最低速度 (cm/s), =0.0001 m/s
+DEFAULT_PUBLISH_PNEU_CONTINUOUS = True  # 默认保持旧行为：每个控制周期刷新气动状态
+DEFAULT_INITIAL_PNEU_STATE = [0, 0, 0]  # [gripper, lift, stopper]
 
 
 def norm_stick(raw):
@@ -113,6 +115,11 @@ class JoystickControlNode(Node):
         self.speed_floor_cm_s = float(
             self.declare_parameter("speed_floor_cm_s", DEFAULT_SPEED_FLOOR_CM_S).value
         )
+        self.publish_pneu_continuous = bool(
+            self.declare_parameter(
+                "publish_pneu_continuous", DEFAULT_PUBLISH_PNEU_CONTINUOUS
+            ).value
+        )
 
         # ---- 平滑状态 (EMA 滤波器内部状态) ----
         self._smooth_speed = 0.0
@@ -124,7 +131,10 @@ class JoystickControlNode(Node):
         self._joy_timeout_warned = False
 
         # 气动切换状态 (toggle on button press)
-        self._pneu_state = [0, 0, 0]   # [gripper, lift, stopper]
+        initial_pneu_param = self.declare_parameter(
+            "initial_pneu_state", DEFAULT_INITIAL_PNEU_STATE
+        ).value
+        self._pneu_state = self._normalize_pneu_state(initial_pneu_param)
         self._prev_buttons = {"a": False, "b": False, "x": False}
 
         # Torque sensing toggle (Y button, rising edge, arm idle only)
@@ -159,6 +169,7 @@ class JoystickControlNode(Node):
             f"max_omega={self.max_omega_rad_s}rad/s, "
             f"curve_power={self.speed_curve_power}, "
             f"smoothing_alpha={self.smoothing_alpha}, "
+            f"pneu_continuous={self.publish_pneu_continuous}, "
             f"timeout={self.input_timeout_s}s"
         )
 
@@ -337,13 +348,39 @@ class JoystickControlNode(Node):
     # 气动发布
     # ------------------------------------------------------------------
 
+    def _normalize_pneu_state(self, values):
+        """Normalize initial pneumatic state to [gripper, lift, stopper] 0/1."""
+        state = [0, 0, 0]
+        try:
+            raw = list(values)
+        except TypeError:
+            self.get_logger().warn(
+                f"Invalid initial_pneu_state={values}; using {state}"
+            )
+            return state
+
+        for i in range(min(3, len(raw))):
+            state[i] = 1 if int(raw[i]) > 0 else 0
+        if len(raw) != 3:
+            self.get_logger().warn(
+                f"initial_pneu_state expects 3 values, got {len(raw)}; normalized to {state}"
+            )
+        return state
+
     def _pub_pneu(self):
         msg = Int8MultiArray()
         msg.data = list(self._pneu_state)
         self.pneu_pub.publish(msg)
 
     def _update_pneu_toggles(self, joy):
-        """检测 A/B/X 按钮上升沿，翻转对应气动状态。"""
+        """检测 A/B/X 按钮上升沿，翻转对应气动状态。
+
+        Hybrid joystick + Navigation scripts can set publish_pneu_continuous=false
+        so an automatic Navigation-side release is not overwritten by the last
+        joystick gripper state on every control tick. Button edges still publish
+        immediately, so manual gripper/lift/stopper control remains responsive.
+        """
+        changed = False
         mapping = {"a": 0, "b": 1, "x": 2}
         for btn, idx in mapping.items():
             cur = getattr(joy, btn, False)
@@ -351,11 +388,14 @@ class JoystickControlNode(Node):
             if cur and not prev:
                 # 上升沿: 翻转状态
                 self._pneu_state[idx] = 1 if self._pneu_state[idx] < 1 else 0
+                changed = True
                 self.get_logger().info(
-                    f"Pneu[{idx}] toggled → {self._pneu_state[idx]}"
+                    f"Pneu[{idx}] toggled -> {self._pneu_state[idx]}"
                 )
             self._prev_buttons[btn] = cur
-        self._pub_pneu()
+
+        if changed or self.publish_pneu_continuous:
+            self._pub_pneu()
 
     # ------------------------------------------------------------------
     # 超时保护

@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 红区测试: 从(0,0)走到(0.36,0.875)，同时 arm motor 5 转到 -90deg，gripper open
+# 红区测试: weapon head rack 搜索 + 抓取 + R1 handoff pipeline
 # 启动链路: Arduino sensor → global navigation → local/arm control → Damiao/Arduino actuators
 # ============================================================================
 
 WS=~/Robocon2026_r2/2026R2_ws
 TOOLS=$WS/tools
 DAMIAO_GEAR_RATIO=19.227
-DISPLAY_VAL="${DISPLAY:-:0}"
-XAUTHORITY_VAL="${XAUTHORITY:-}"
 CHASSIS_CAN_DEVICE="${CHASSIS_CAN_DEVICE:-/dev/chassis_damiao_can}"
 ARM_ARDUINO_PORT="${ARM_ARDUINO_PORT:-/dev/arm_arduino}"
+PLOT_DEBUG_HEADLESS="${PLOT_DEBUG_HEADLESS:-0}"
+PLOT_MAX_HISTORY="${PLOT_MAX_HISTORY:-600}"
+PLOT_UPDATE_RATE_HZ="${PLOT_UPDATE_RATE_HZ:-10.0}"
+PLOT_SAVE_DIR="${PLOT_SAVE_DIR:-/home/robotics/Robocon2026_r2/log_plot_debug}"
+R1_HANDOFF_X="${R1_HANDOFF_X:-0.33}"
+R1_HANDOFF_Y="${R1_HANDOFF_Y:--0.675}"
 MISSION_FILE=/tmp/red_area_mission.yaml
 FIELD_FILE=$WS/src/navigation/routes/red_field.yaml
 MIRROR_Y=false
-
-if [ -z "$XAUTHORITY_VAL" ] && [ -r "$HOME/.Xauthority" ]; then
-  XAUTHORITY_VAL="$HOME/.Xauthority"
-fi
 
 if [ ! -e "$CHASSIS_CAN_DEVICE" ] && [ "$CHASSIS_CAN_DEVICE" = "/dev/chassis_damiao_can" ] && [ -e "/dev/damiao_can" ]; then
   CHASSIS_CAN_DEVICE="/dev/damiao_can"
@@ -25,8 +25,8 @@ fi
 
 source "$WS/install/setup.bash"
 
-echo "[red_area] 机器人将从 (0,0) 走到 (0.36,0.875)。"
-echo "[red_area] 同步动作: arm motor 5 从 0 到 -90deg，gripper open。"
+echo "[red_area] weapon head rack pipeline: rack -> head1..head6 IR scan -> grab -> head2 -> R1 handoff。"
+echo "[red_area] handoff waypoint: x=$R1_HANDOFF_X, y=$R1_HANDOFF_Y"
 echo "[red_area] chassis USB-CAN: $CHASSIS_CAN_DEVICE"
 echo "[red_area] arm Arduino: $ARM_ARDUINO_PORT"
 echo ""
@@ -46,6 +46,8 @@ fi
 echo "[red_area] 清理残留进程..."
 bash "$TOOLS/cleanup_ros2.sh" --force 2>&1 | grep -E "killed|完成|空闲|残留|无相关" || true
 sleep 0.5
+# cleanup 会 stop daemon；提前 restart 避免 ros2 run 首次 discovery 太慢
+ros2 daemon start 2>/dev/null || true
 echo ""
 
 cat > "$MISSION_FILE" <<EOF
@@ -53,15 +55,44 @@ version: 1
 frame_id: map
 angle_unit: deg
 
-# Red area test: (0,0) -> (0.36,0.875), arm M5 -> -90deg, gripper open.
+# Red area test: rack/head scan pipeline.
+# Coordinates are in metres. Head slots follow x = 0.130 + 0.200n, y = -0.85.
 waypoints:
   wp_start:
     pose: { x: 0.0, y: 0.0, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
-  wp_xy_red:
-    pose: { x: 0.36, y: 0.875, yaw: 0.0 }
+  wp_rack:
+    pose: { x: 0.0, y: 0.85, yaw: 0.0 }
     pos_tolerance: 0.01
+    yaw_tolerance_deg: 1.0
+  wp_head_1:
+    pose: { x: 0.13, y: 0.85, yaw: 0.0 }
+    pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
+  wp_head_2:
+    pose: { x: 0.33, y: 0.85, yaw: 0.0 }
+    pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
+  wp_head_3:
+    pose: { x: 0.53, y: 0.85, yaw: 0.0 }
+    pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
+  wp_head_4:
+    pose: { x: 0.73, y: 0.85, yaw: 0.0 }
+    pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
+  wp_head_5:
+    pose: { x: 0.93, y: 0.85, yaw: 0.0 }
+    pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
+  wp_head_6:
+    pose: { x: 1.13, y: 0.85, yaw: 0.0 }
+    pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
+  wp_r1_handoff:
+    pose: { x: $R1_HANDOFF_X, y: $R1_HANDOFF_Y, yaw: 0.0 }
+    pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
 
 profiles:
@@ -71,14 +102,33 @@ profiles:
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
-    k_p_x: 0.044729
-    k_p_y: 0.104020
-    k_d_x: 0.001560
-    k_d_y: 0.001040
+    k_p_x: 0.081
+    k_p_y: 0.115
+    k_i_y: 0.0
+    k_i_x: 0.0
+    k_d_x: 0.00156
+    k_d_y: 0.25
     k_heading_p: 0.06
     k_heading_d: 0.0
     max_body_x_mps: 1.0
     max_body_y_mps: 1.0
+    curve: cubic_ease
+  head_step:
+    speed_mps: 0.2
+    yaw_rate_rps: 0.25
+    start_radius_m: 0.0
+    end_radius_m: 0.0
+    min_speed_scale: 0.0
+    k_p_x: 0.081
+    k_p_y: 0.115
+    k_i_y: 0.0
+    k_i_x: 0.0
+    k_d_x: 0.00156
+    k_d_y: 0.25
+    k_heading_p: 0.06
+    k_heading_d: 0.0
+    max_body_x_mps: 0.35
+    max_body_y_mps: 0.35
     curve: cubic_ease
 
 actuators:
@@ -87,22 +137,137 @@ actuators:
     motor_id: 5
     speed: 1.0
     positions:
-      zero: 0.0
-      minus_90deg: -1.5708
+      front: 0.0
+      left: -1.5708
+      right: 1.5708
+
+  arm_roll_motor:
+    type: motor
+    motor_id: 6
+    speed: 1.0
+    positions:
+      up: 0.0
+      right_90deg: 1.5708
 
   arm_gripper:
     type: pneumatic
-    states: [close, open]
+    states: [open, close]
+
+  arm_lift:
+    type: pneumatic
+    states: [low, high]
+
+  arm_stopper:
+    type: pneumatic
+    states: [low, high]
 
 stages:
-  - id: arm_start_move
+  - id: arm_start_pose
     type: arm
-    arm_yaw_motor: minus_90deg
+    arm_yaw_motor: front
+    arm_roll_motor: up
     arm_gripper: open
-  - id: stage_xy_red
+    arm_lift: low
+    arm_stopper: low
+
+  - id: move_to_rack
     type: navigate
-    to: wp_xy_red
+    to: wp_rack
     profile: red_area
+
+  - id: move_to_head_1
+    type: navigate
+    to: wp_head_1
+    profile: red_area
+
+  - id: scan_and_grab_weapon_head
+    type: weapon_head_pickup
+    search_mode: step_0p2m
+    ir_topic: /arduino/raw_sensor_data
+    ir_field: weapon_head_detected
+    ir_timeout_s: 0.5
+    require_crc_valid: true
+    slot_count: 6
+    slot_spacing_m: 0.2
+    on_miss: terminate
+    step:
+      profile: head_step
+      settle_s: 0.15
+      pos_tolerance: 0.02
+      yaw_tolerance: 0.05
+    pickup_sequence:
+      - type: arm
+        arm_gripper: close
+        arm_lift: low
+        arm_stopper: low
+      - type: wait
+        duration_s: 0.15
+      - type: arm
+        arm_gripper: close
+        arm_lift: high
+        arm_stopper: low
+      - type: wait
+        duration_s: 0.20
+
+  - id: return_to_head_2_for_handoff
+    type: navigate
+    to: wp_head_2
+    profile: red_area
+
+  # Important order before forward handoff: lift first, yaw front, roll right_90deg, gripper closed.
+  - id: handoff_lift_first
+    type: arm
+    arm_gripper: close
+    arm_lift: high
+    arm_stopper: low
+
+  - id: handoff_yaw_ahead
+    type: arm
+    arm_yaw_motor: front
+    arm_roll_motor: up
+    arm_gripper: close
+    arm_lift: low
+    arm_stopper: low
+
+  - id: handoff_roll_right_90deg
+    type: arm
+    arm_yaw_motor: front
+    arm_roll_motor: right_90deg
+    arm_gripper: close
+    arm_lift: low
+    arm_stopper: low
+
+  - id: move_forward_to_r1_handoff
+    type: navigate
+    to: wp_r1_handoff
+    profile: head_step
+
+  - id: hold_handoff_pose
+    type: arm
+    arm_yaw_motor: front
+    arm_roll_motor: right_90deg
+    arm_gripper: close
+    arm_lift: low
+    arm_stopper: high
+
+  - id: monitor_r1_handoff_torque
+    type: conditional
+    condition:
+      topic: /damiao_feedback
+      field: motor_5_tau
+      op: gt
+      value: 1.0
+    then: release_weapon_head_to_r1
+    else: monitor_r1_handoff_torque
+
+  - id: release_weapon_head_to_r1
+    type: arm
+    arm_yaw_motor: front
+    arm_roll_motor: right_90deg
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: high
+
 EOF
 
 echo "[red_area] mission: $MISSION_FILE"
@@ -130,7 +295,7 @@ ros2 run damiao_ctrl damiao_node --ros-args \
 "
 
 # 窗口2: 运动学反解
-sleep 0.3
+sleep 0.2
 gnome-terminal --geometry=100x20+800+0 -- bash -c "
 source $WS/install/setup.bash
 echo '=== 窗口2: local_navigation_node (运动学反解) ==='
@@ -141,7 +306,7 @@ ros2 run base_omniwheel_r2_600 local_navigation_node
 "
 
 # 窗口3: arm_ctrl_node
-sleep 0.3
+sleep 0.5
 gnome-terminal --geometry=100x20+1600+0 -- bash -c "
 source $WS/install/setup.bash
 echo '=== 窗口3: arm_ctrl_node (M5/M6 + pneu 转发) ==='
@@ -179,76 +344,47 @@ sleep 0.3
 gnome-terminal --geometry=100x20+0+420 -- bash -c "
 source $WS/install/setup.bash
 echo '=== 窗口5: navigation + Arduino sensor ==='
-echo '先直接发布一次 /arm/pneu_ctrl=[1,0,0]，确保 gripper open 使用 Int8MultiArray 接口。'
+echo '先直接发布一次 /arm/pneu_ctrl=[0,0,0]，确保 gripper/lift/stopper 初始为低状态。'
 echo 'Ctrl+C 退出 (自动清理两节点)'
 echo ''
 sleep 1
-ros2 topic pub --once /arm/pneu_ctrl std_msgs/msg/Int8MultiArray \"{data: [1, 0, 0]}\"
+ros2 topic pub --once /arm/pneu_ctrl std_msgs/msg/Int8MultiArray \"{data: [0, 0, 0]}\"
 sleep 0.2
 ros2 launch navigation navigation.launch.py mission_file:=$MISSION_FILE
 "
 
-# 窗口6: plot_debug 实时可视化
-sleep 0.2
+# 窗口6: plot_debug 实时可视化（对齐 joystick.sh 的 headless 切换逻辑）
+sleep 0.1
+XDG_RUNTIME_DIR_VAL="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+WAYLAND_DISPLAY_VAL="${WAYLAND_DISPLAY:-wayland-0}"
 gnome-terminal --geometry=100x12+0+850 -- bash -c "
 source $WS/install/setup.bash
+export WAYLAND_DISPLAY=\${WAYLAND_DISPLAY:-$WAYLAND_DISPLAY_VAL}
+export XDG_RUNTIME_DIR=\${XDG_RUNTIME_DIR:-$XDG_RUNTIME_DIR_VAL}
+export GDK_BACKEND=wayland
+if [ \"$PLOT_DEBUG_HEADLESS\" = \"1\" ]; then
+  unset WAYLAND_DISPLAY
+  export MPLBACKEND=Agg
+fi
 echo '=== 窗口6: plot_debug (matplotlib 实时可视化) ==='
-echo 'DISPLAY: $DISPLAY_VAL'
-echo 'XAUTHORITY: $XAUTHORITY_VAL'
-echo 'MPLBACKEND: TkAgg'
+echo 'PLOT_DEBUG_HEADLESS: $PLOT_DEBUG_HEADLESS'
+echo 'MPLBACKEND: '\$MPLBACKEND
+echo 'save_dir: /home/robotics/Robocon2026_r2/log_plot_debug'
 echo '关闭所有绘图窗口即退出'
 echo ''
-export DISPLAY=\"$DISPLAY_VAL\"
-if [ -n \"$XAUTHORITY_VAL\" ]; then export XAUTHORITY=\"$XAUTHORITY_VAL\"; fi
-export MPLBACKEND=TkAgg
-export QT_QPA_PLATFORM=xcb
-ros2 run plot_debug plot_debug_node --ros-args -p show_damiao:=false -p show_damiao_feedback:=false -p save_dir:=/home/robotics/Robocon2026_r2/log_plot_debug 2>&1
+ros2 run plot_debug plot_debug_node --ros-args \
+  -p show_pose2d:=false \
+  -p show_target_error:=true \
+  -p show_driving:=false \
+  -p show_damiao:=false \
+  -p show_damiao_feedback:=false \
+  -p feedback_motor_ids:='[5,6]' \
+  -p max_history:=$PLOT_MAX_HISTORY \
+  -p update_rate_hz:=$PLOT_UPDATE_RATE_HZ \
+  -p save_dir:=$PLOT_SAVE_DIR
 echo ''
 echo '=== plot_debug 已退出 ==='
 read -p '按 Enter 关闭此窗口...'
-"
-
-# 窗口7: /state_pose2d 监听
-sleep 0.1
-gnome-terminal --geometry=100x20+800+420 -- bash -c "
-source $WS/install/setup.bash
-echo '=== 窗口7: /state_pose2d 监听 ==='
-echo 'Ctrl+C 退出'
-echo ''
-ros2 topic echo /state_pose2d
-"
-
-# 窗口8: /local_driving 监听
-sleep 0.1
-gnome-terminal --geometry=100x20+800+850 -- bash -c "
-source $WS/install/setup.bash
-echo '=== 窗口8: /local_driving 监听 ==='
-echo '格式: [direction_rad, speed_mps, omega_rad_s]'
-echo ''
-sleep 2
-ros2 topic echo /local_driving
-"
-
-# 窗口9: arm 指令监听
-sleep 0.1
-gnome-terminal --geometry=100x20+1600+850 -- bash -c "
-source $WS/install/setup.bash
-echo '=== 窗口9: arm/joint_navigation 监听 ==='
-echo '应看到 motor 5 目标约 -1.5708 rad'
-echo ''
-sleep 2
-ros2 topic echo /arm/joint_navigation
-"
-
-# 窗口10: /global_nav/status 监听
-sleep 0.1
-gnome-terminal --geometry=100x20+0+1180 -- bash -c "
-source $WS/install/setup.bash
-echo '=== 窗口10: /global_nav/status 监听 ==='
-echo '看到 DONE 表示 navigation 认为已到达'
-echo ''
-sleep 2
-ros2 topic echo /global_nav/status
 "
 
 echo "[red_area] 所有窗口已启动"
@@ -259,16 +395,14 @@ echo "  窗口3: arm_ctrl_node"
 echo "  窗口4: arm_arduino_node"
 echo "  窗口5: navigation + Arduino sensor"
 echo "  窗口6: plot_debug (matplotlib 单窗口多子图)"
-echo "  窗口7: /state_pose2d 监听"
-echo "  窗口8: /local_driving 监听"
-echo "  窗口9: /arm/joint_navigation 监听"
-echo "  窗口10: /global_nav/status 监听"
 echo ""
 echo "  路径与动作:"
-echo "    导航目标: X=0.36m, Y=0.875m"
-echo "    arm motor 5: 0 -> -1.5708 rad (-90deg)"
-echo "    gripper: /arm/pneu_ctrl [1,0,0] open"
+echo "    rack: (0.000, 0.850), head slots: x=0.130+0.200n, y=0.850"
+echo "    IR scan: head1 -> head6, detected 后 close gripper + lift high"
+echo "    handoff: return head2, yaw front -> roll right_90deg -> move to R1"
+echo "    release: motor 5 torque > 1.0Nm 后 gripper open，传给 R1"
+echo "    R1 handoff waypoint 可用 R1_HANDOFF_X/R1_HANDOFF_Y 覆盖"
 echo ""
-echo "  重点观察: /state_pose2d x→0.36 且 y→0.875，/arm/joint_navigation 出现 motor 5 -1.5708 rad"
+echo "  重点观察: /global_nav/status、/state_pose2d、weapon_head_detected、/damiao_feedback motor_5_tau"
 echo "  全部退出后验证: bash $TOOLS/cleanup_ros2.sh --check"
 echo ""

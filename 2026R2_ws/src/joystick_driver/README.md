@@ -19,6 +19,7 @@ Joystick input driver for ROS 2. 通过 evdev 读取游戏手柄输入并发布�
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-10 | v19 新增 hybrid joystick + Navigation torque release 测试脚本；`joystick_control_node` 增加 `publish_pneu_continuous` 参数 |
 | 2026-06-03 | v7 气动 topic 兼容性修复: arm/pneu_navigation → arm/pneu_ctrl，数据顺序对齐 arm_arduino [gripper, lift, stopper] |
 | 2026-06-03 | 明确本 package 为备用上层控制节点，主链路由 `navigation/global_navigation_node` (FSM) 负责 |
 | 2026-05-24 | v6 双摇杆设备绑定（白/黑手柄 udev symlink） |
@@ -89,6 +90,8 @@ Joystick input driver for ROS 2. 通过 evdev 读取游戏手柄输入并发布�
 | `trigger_deadzone` | float | 0.05 | 扳机死区 (归一化值) |
 | `publish_rate_hz` | float | 50.0 | 控制循环频率 |
 | `input_timeout_s` | float | 0.5 | 手柄输入超时 (秒) |
+| `publish_pneu_continuous` | bool | `true` | 是否每个控制周期持续刷新 `/arm/pneu_ctrl`；hybrid torque release 脚本设为 `false`，只在 A/B/X 边沿发布 |
+| `initial_pneu_state` | int list | `[0,0,0]` | joystick 内部气动初始状态 `[gripper,lift,stopper]`；hybrid 脚本设为 `[1,0,1]` |
 
 #### 超时保护
 
@@ -612,3 +615,42 @@ Ctrl+B d           detach，后台继续运行
 Ctrl+B c           新建 window
 Ctrl+B x           关闭当前 pane
 ```
+
+## v19 hybrid joystick + Navigation torque release（2026-06-10）
+
+新增根目录脚本 `joystick_nav_torque_test.sh`，用于把手柄直驱和 Navigation 条件监测组合在一起：
+
+```text
+joystick_node -> joystick_control_node -> /local_driving -> local_navigation_node -> /base/damiao_control
+                                      -> arm/joint_navigation -> arm_ctrl_node -> /arm/damiao_ctrl
+                                      -> /arm/pneu_ctrl -> arm_arduino_node
+
+damiao_ctrl/damiao_node -> /damiao_feedback -> navigation/global_navigation_node
+navigation/global_navigation_node -> /arm/pneu_navigation -> arm_ctrl_node -> /arm/pneu_ctrl
+```
+
+用途：
+- 手柄继续控制整车：底盘、gripper、lift、stopper、arm motor 5/6。
+- Navigation 只加载一个 torque-only mission，不执行导航路径；它监听 `/damiao_feedback.motor_5_tau`。
+- 当 `motor_5_tau > TORQUE_THRESHOLD_NM`（默认 `1.0 Nm`）时，Navigation 发布 `arm_gripper: open`，用于把 weapon head 交给 R1。
+
+关键参数：
+- `joystick_control_node` 新增 `publish_pneu_continuous`，默认 `true` 保持旧 joystick 行为。
+- `joystick_nav_torque_test.sh` 启动 joystick control 时设置 `publish_pneu_continuous:=false`，A/B/X 仍然可以手动切换气动，但不会每 20ms 用旧 gripper 状态覆盖 Navigation 的自动 release。
+- hybrid 脚本将默认气动初始化为 `[1,0,1]`，即 `arm_gripper: close`、`arm_lift: low`、`arm_stopper: high`，并同步传入 `initial_pneu_state:=[1,0,1]`，保证手柄 toggle 状态与实际输出一致。
+- Navigation torque watcher 使用 `pose_timeout_s:=999999.0`，避免没有定位输入时向 `/local_driving` 发布零速度抢掉手柄底盘控制。
+
+启动：
+
+```bash
+./joystick_nav_torque_test.sh
+
+# 调整 torque 阈值
+TORQUE_THRESHOLD_NM=1.2 ./joystick_nav_torque_test.sh
+```
+
+超时与失效保护：
+- 手柄输入超过 `input_timeout_s`（默认 `0.5s`）未更新时，`joystick_control_node` 发布零底盘与零关节指令。
+- `damiao_ctrl/damiao_node` 对 `/base/damiao_control` 与 `/arm/damiao_ctrl` 各自维持 command watchdog。
+- Navigation torque watcher 不控制底盘路径；`pose_timeout_s` 被显式拉长，只用于避免与 joystick 底盘控制冲突。
+- 若 `/damiao_feedback` 没有刷新，torque conditional 不会触发 gripper release，需要检查 arm motor command/feedback 链路。
