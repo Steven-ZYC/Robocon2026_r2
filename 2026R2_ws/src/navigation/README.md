@@ -406,6 +406,7 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-11 | v0.14 — Mission YAML 完整字段参考：所有区块/字段/类型/参数/systematic 文档化 |
 | 2026-06-08 | v0.13 — 新增 `routes/red_area_torque_test.yaml`，red area 底盘导航 + 手臂力矩触发测试；修复 global_navigation_node 对 `/damiao_feedback` 的订阅类型（Float32MultiArray → DamiaoFeedback） |
 | 2026-05-24 | v0.11 — plot_node → mission_viz_node，使用 RViz Marker/MarkerArray 渲染，支持场地 YAML 与红蓝镜像 |
 | 2026-05-23 | v0.10 — XY 分立模式新增 I/D 参数 (`k_i_x`, `k_i_y`, `k_d_x`, `k_d_y`)，默认 0.0 向后兼容 |
@@ -884,6 +885,414 @@ ros2 run navigation global_navigation_node --ros-args \
   -p mission_file:=routes/red_area_torque_test.yaml
 ```
 
-### damiao_ctrl 超时配置
+---
 
-测试脚本中 damiao_ctrl 使用 `command_timeout:=0.0` 禁用 watchdog 超时停止，避免力矩监控阶段（无新 arm 命令）电机被意外停止。正常比赛 mission 中应恢复合理超时值。
+## v0.14 — Mission YAML 完整字段参考（2026-06-11）
+
+本版本将 Mission YAML 所有支持字段按区块系统化整理，作为唯一权威参考（后续新增字段递推更新，旧版本说明仅保留历史设计决策）。
+
+### 顶层字段
+
+| 字段 | 类型 | 必需 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `version` | int | 否 | — | 任务文件版本号（仅注释用途） |
+| `frame_id` | str | 否 | `map` | 坐标系名称 |
+| `angle_unit` | str | 否 | `rad` | 全局角度单位：`deg` / `rad`（兼容别名 `yaw_unit` / `degree(s)` / `radian(s)`） |
+
+`angle_unit` 影响 `waypoints.*.pose.yaw` 和 `yaw_tolerance`。特例：`yaw_tolerance_deg` **始终按 degree 解释**，优先于 `yaw_tolerance`。
+
+---
+
+### 区块一：waypoints
+
+所有导航使用的坐标集中定义在此。
+
+```yaml
+waypoints:
+  wp_name:
+    pose: { x: 0.0, y: 0.0, yaw: 0.0 }
+    pos_tolerance: 0.05      # 到达判定半径 (m)，默认 0.05
+    yaw_tolerance: 0.1       # 到达判定朝向差 (rad 或 deg 取决于 angle_unit)
+    yaw_tolerance_deg: 3.0   # 始终 degree，优先于 yaw_tolerance
+```
+
+| 字段 | 类型 | 必需 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `pose.x` | float | 是 | — | 世界系 X (m) |
+| `pose.y` | float | 是 | — | 世界系 Y (m) |
+| `pose.yaw` | float | 是 | — | 目标朝向 (rad 或 deg) |
+| `pos_tolerance` | float | 否 | 0.05 | 位置容差 (m) |
+| `yaw_tolerance` | float | 否 | 0.1 | 朝向容差 (单位由 angle_unit 决定) |
+| `yaw_tolerance_deg` | float | 否 | — | 朝向容差始终 degree，优先级最高 |
+
+---
+
+### 区块二：profiles
+
+导航参数模板，stage 通过名称引用。
+
+```yaml
+profiles:
+  profile_name:
+    speed_mps: 0.4           # 巡航速度 (m/s)，上限 0.5
+    yaw_rate_rps: 0.3        # 最大角速度 (rad/s)，默认 1.5
+    start_radius_m: 0.3      # 起步缓冲半径 (m)
+    end_radius_m: 0.3        # 刹车缓冲半径 (m)
+    min_speed_scale: 0.2     # 平移 alpha 下限，防起步自锁，0=禁用
+    curve: cubic_ease        # 缓动曲线类型（仅 cubic_ease）
+
+    # 原有 CTE 模式参数
+    k_cte_p: 0.5             # CTE 横向纠偏 P 增益 (1/s)
+    k_heading_p: 1.0         # 朝向修正 P 增益 (1/s)
+    k_heading_d: 0.0         # 朝向修正 D 增益
+    max_lateral_mps: 0.05    # 横向修正最大速度 (m/s)
+
+    # XY 分立模式参数（k_p_x/k_p_y 存在即启用分立模式，优先级高于 CTE 模式）
+    k_p_x: 0.5               # 机体 X 轴 P 增益
+    k_p_y: 0.5               # 机体 Y 轴 P 增益
+    k_i_x: 0.0               # 机体 X 轴 I 增益
+    k_i_y: 0.0               # 机体 Y 轴 I 增益
+    k_d_x: 0.0               # 机体 X 轴 D 增益
+    k_d_y: 0.0               # 机体 Y 轴 D 增益
+    xy_integral_max: 0.0     # I 项抗饱和钳位，0=不钳位
+    max_body_x_mps: 0.05     # 机体系 +X 速度限幅 (m/s)
+    max_body_y_mps: 0.05     # 机体系 +Y 速度限幅 (m/s)
+```
+
+---
+
+### 区块三：actuators
+
+执行器语义映射。`arm` stage 用名称引用此处定义。
+
+#### motor 类型
+
+```yaml
+actuators:
+  arm_yaw_motor:
+    type: motor
+    motor_id: 5
+    speed: 1.0               # 默认速度 (rad/s，输出端)，stage 中每次仍可覆盖
+    positions:
+      front: 0.0             # ← 语义名称: 目标位置 (rad，输出端)
+      minus_90deg: -1.5708
+```
+
+| 字段 | 类型 | 必需 | 说明 |
+|---|---|---|---|
+| `type` | str | 是 | 固定值 `motor` |
+| `motor_id` | int | 是 | 达妙电机 ID |
+| `speed` | float | 否 | 默认速度 rad/s，默认 3.0 |
+| `positions` | dict | 是 | `语义名: 目标位置(rad)` 映射表 |
+
+stage 中使用时：`arm_yaw_motor: front` → motor 5 目标 0.0 rad，速度取 `speed`。
+
+#### pneumatic 类型
+
+```yaml
+  arm_gripper:
+    type: pneumatic
+    states: [open, close]    # 列表顺序 = 0/1 映射
+```
+
+| 字段 | 类型 | 必需 | 说明 |
+|---|---|---|---|
+| `type` | str | 是 | 固定值 `pneumatic` |
+| `states` | list | 是 | `[索引0的语义名, 索引1的语义名]` |
+
+**关键规则**：`states` 是**有序列表**，第一个元素 → index=0 → Arduino 收到 `0`，第二个元素 → index=1 → Arduino 收到 `1`。
+
+stage 中使用时：`arm_gripper: open` → `states.index('open')` → 0 或 1 → 经 pipeline 发到 Arduino。
+
+**Arduino 硬件映射（pneu_ir_jun11.ino）**：
+
+| 列表位置 | 元件 | 引脚 | 电平 | Arduino 1= |
+|---|---|---|---|---|
+| `[0]` | Gripper | D5 | active HIGH | close |
+| `[1]` | Lift | D6 | active LOW | high |
+| `[2]` | Stopper | D8 | active HIGH | high |
+
+YAML `states` 顺序必须与此表匹配。例如 new firmware 期望 `0=open`，则 `states` 第一项必须是 `open`。
+
+---
+
+### 区块四：stages
+
+按数组顺序执行。
+
+#### 4.1 navigate — 底盘导航
+
+```yaml
+- id: nav_to_pickup
+  type: navigate
+  to: wp_pickup             # waypoint 名称
+  profile: slow              # profile 名称
+```
+
+| 字段 | 类型 | 必需 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `id` | str | 是 | — | 唯一 stage ID（用于 conditional 跳转） |
+| `type` | str | 是 | — | 固定值 `navigate` |
+| `to` | str | 是 | — | 目标 waypoint 名 |
+| `profile` | str | 否 | `normal` | 导航 profile 名 |
+
+执行逻辑：Tracker 或 XY 分立 PID 控制底盘行驶至目标位姿。到达条件：位置误差 < `pos_tolerance` 且朝向误差 < `yaw_tolerance`，稳定 `arrived_stable_count` 周期后推进。
+
+---
+
+#### 4.2 arm — 执行器指令
+
+```yaml
+- id: arm_ready
+  type: arm
+  arm_yaw_motor: minus_90deg
+  arm_roll_motor: up
+  arm_gripper: open
+  arm_lift: low
+  arm_stopper: low
+```
+
+| 字段 | 类型 | 必需 | 说明 |
+|---|---|---|---|
+| `id` | str | 是 | 唯一 stage ID |
+| `type` | str | 是 | 固定值 `arm` |
+| `{name}` | str | 否 | actuator 名称: 语义值 |
+
+**只写需要改变的 actuator**。未列出的不发送命令（arm_ctrl_node 内部会 republish 最后一次收到的状态）。motor 输出到 `/arm/joint_navigation` (triplet: `[motor_id, pos, speed]`)；pneumatic 输出到 `/arm/pneu_navigation` (String: `"name:0,name:1"`)。
+
+---
+
+#### 4.3 wait — 等待
+
+```yaml
+- id: pause
+  type: wait
+  duration_s: 0.5
+```
+
+| 字段 | 类型 | 必需 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `id` | str | 是 | — | 唯一 stage ID |
+| `type` | str | 是 | — | 固定值 `wait` |
+| `duration_s` | float | 是 | 0.0 | 等待秒数 |
+
+---
+
+#### 4.4 conditional — 条件分支
+
+```yaml
+- id: check_ir
+  type: conditional
+  condition:
+    topic: /arm/ir_status      # sensor_cache 的 key
+    field: ir                   # 取哪个字段
+    op: gt                      # 比较操作符
+    value: 0                    # 阈值
+  then: gripper_close           # 条件成立 → 跳到此 id
+  else: wait_ir                 # 条件不成立 → 跳到此 id
+```
+
+**condition 字段**：
+
+| 字段 | 类型 | 必需 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `topic` | str | 是 | — | 数据来源 topic（sensor_cache key） |
+| `field` | str | 是 | — | 从缓存中取哪个字段 |
+| `op` | str | 是 | — | 比较操作符（见下表） |
+| `value` | float | 是 | — | 比较阈值 |
+
+**支持的 `op` 操作符**：
+
+| op | 表达式 | 说明 | 适用场景 |
+|---|---|---|---|
+| `gt` | `actual > value` | 大于 | IR 检测 (ir > 0) |
+| `lt` | `actual < value` | 小于 | 负向扭矩触发 (torque < -0.75) |
+| `gte` | `actual >= value` | 大于等于 | — |
+| `lte` | `actual <= value` | 小于等于 | — |
+| `abs_gt` | `abs(actual) > value` | 绝对值大于 | 双向扭矩超限 |
+| `abs_gte` | `abs(actual) >= value` | 绝对值≥ | 双向扭矩含等于 |
+
+**分支字段**：
+
+| 字段 | 类型 | 必需 | 说明 |
+|---|---|---|---|
+| `then` | str | 是 | 条件成立时跳转的 stage id |
+| `else` | str | 是 | 条件不成立时跳转的 stage id |
+
+**Self-loop 模式**：`else` 设为自己的 `id` 即可实现 50Hz 轮询等待，例如 `else: check_ir`。
+
+**可用的 sensor_cache 数据源**：
+
+| topic key | 来源节点 | 可用字段 |
+|---|---|---|
+| `/arm/ir_status` | arm_arduino_node → global_navigation_node | `ir` (bool) |
+| `/damiao_feedback` | damiao_ctrl → global_navigation_node | `motor_5_tau` (Nm), `motor_5_q` (rad), `motor_5_dq` (rad/s) |
+| `/arduino/raw_sensor_data` | arduino_sensor_parser → global_navigation_node | `weapon_head_detected` (bool), `imu_heading_deg`, `enc_x_counts`, `enc_y_counts`, `crc_valid` |
+
+---
+
+#### 4.5 terminate — 停止任务
+
+```yaml
+- id: emergency_stop
+  type: terminate
+```
+
+| 字段 | 类型 | 必需 | 说明 |
+|---|---|---|---|
+| `id` | str | 是 | 唯一 stage ID |
+| `type` | str | 是 | 固定值 `terminate` |
+
+行为：发布零 `/local_driving`，将所有 motor 命令设为 position=0 speed=0，将所有 pneumatic 设为 0 (OFF)，设置 `phase='terminated'`。
+
+---
+
+#### 4.6 sequential — 顺序执行子步骤
+
+```yaml
+- id: pickup_chain
+  type: sequential
+  steps:
+    - type: arm
+      arm_gripper: close
+      arm_yaw_motor: minus_90deg
+    - type: wait
+      duration_s: 0.5
+    - type: arm
+      arm_lift: high
+```
+
+| 字段 | 类型 | 必需 | 说明 |
+|---|---|---|---|
+| `id` | str | 是 | 唯一 stage ID |
+| `type` | str | 是 | 固定值 `sequential` |
+| `steps` | list | 是 | 子 step 列表，每个 step 支持 `arm` 或 `wait` 类型 |
+
+---
+
+#### 4.7 parallel — 并发执行动作
+
+```yaml
+- id: fire_all
+  type: parallel
+  actions:
+    - type: arm
+      arm_gripper: open
+      arm_yaw_motor: front
+  wait_until: all_complete
+```
+
+| 字段 | 类型 | 必需 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `id` | str | 是 | — | 唯一 stage ID |
+| `type` | str | 是 | — | 固定值 `parallel` |
+| `actions` | list | 是 | — | 并发 arm 动作列表 |
+| `wait_until` | str | 否 | `all_complete` | 仅 `all_complete` |
+
+注意：arm 动作是瞬时发布，不等待执行完成，因此 `all_complete` 在当前实现中等价于"全部发布后立即推进"。
+
+---
+
+#### 4.8 weapon_head_pickup — 武器头搜索与抓取
+
+```yaml
+- id: pickup_weapon_head
+  type: weapon_head_pickup
+  search_mode: scan_until_ir        # scan_until_ir 或 step_0p2m
+  ir_topic: /arduino/raw_sensor_data
+  ir_field: weapon_head_detected
+  ir_timeout_s: 0.5
+  require_crc_valid: true
+  slot_count: 6
+  slot_spacing_m: 0.2
+  on_miss: advance                  # advance 或 terminate
+
+  scan:
+    direction_rad: 0.0              # 机体 +X 方向
+    speed_mps: 0.05
+    max_distance_m: 1.0
+    timeout_s: 5.0
+
+  step:
+    profile: slow
+    settle_s: 0.15
+    pos_tolerance: 0.03
+    yaw_tolerance: 0.1
+
+  pickup_sequence:
+    - type: arm
+      arm_gripper: close
+    - type: wait
+      duration_s: 0.1
+    - type: arm
+      arm_lift: high
+      arm_yaw_motor: front
+```
+
+**顶层字段**：
+
+| 字段 | 类型 | 必需 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `search_mode` | str | 否 | `scan_until_ir` | `scan_until_ir` / `step_0p2m` |
+| `ir_topic` | str | 否 | `/arduino/raw_sensor_data` | IR 数据来源 topic |
+| `ir_field` | str | 否 | `weapon_head_detected` | IR 字段名 |
+| `ir_timeout_s` | float | 否 | 0.5 | IR 数据超时 (s) |
+| `require_crc_valid` | bool | 否 | true | 是否要求 CRC 有效 |
+| `slot_count` | int | 否 | 6 | step_0p2m 模式最大槽位数 |
+| `slot_spacing_m` | float | 否 | 0.2 | 槽间距 (m) |
+| `on_miss` | str | 否 | `advance` | 搜索失败策略：`advance` / `terminate` |
+
+**两种搜索策略**：
+
+| search_mode | 行为 |
+|---|---|
+| `scan_until_ir` | IR=false → 沿 `scan.direction_rad` 低速连续移动；IR=true → 停车 → pickup_sequence；超时/超距 → `on_miss` |
+| `step_0p2m` | IR=false → 步进 `slot_spacing_m` 到下一个槽位，到位后等待 `settle_s` 再重检 IR；最多查 `slot_count` 个槽 |
+
+---
+
+### 完整 stage 类型速查表
+
+| type | 说明 | 推进逻辑 |
+|---|---|---|
+| `navigate` | 底盘导航 | 到达目标并稳定后推进 |
+| `arm` | 执行器指令 | 瞬时发布后立即推进 |
+| `wait` | 等待 | `duration_s` 秒后推进 |
+| `conditional` | 条件分支 | 跳转到 `then` 或 `else` |
+| `sequential` | 顺序子步骤 | 全部 step 完成后推进 |
+| `parallel` | 并发动作 | 全部 action 发布后推进 |
+| `weapon_head_pickup` | 武器头搜索 | 检测成功或 `on_miss` 决策后推进 |
+| `terminate` | 停止任务 | 不推进，终止 mission |
+
+### Topic 汇总
+
+| 方向 | Topic | 类型 | 说明 |
+|---|---|---|---|
+| Sub | `/state_pose2d` | `Pose2D` | 机器人位姿，theta 单位 deg |
+| Sub | `/arduino/raw_sensor_data` | `ArduinoSensorData` | 用于 conditional 条件评估 |
+| Sub | `/damiao_feedback` | `DamiaoFeedback` | 电机扭矩/位置反馈，仅追踪 motor 5 |
+| Sub | `/arm/ir_status` | `Bool` | arm 侧 IR 传感器 |
+| Pub | `/local_driving` | `Float32MultiArray` | `[direction_rad, speed_m_s, omega_rad_s]` |
+| Pub | `arm/joint_navigation` | `Float32MultiArray` | `[motor_id, pos, speed, ...]` triplet |
+| Pub | `arm/pneu_navigation` | `String` | `"name:val,name:val"` |
+| Pub | `/global_nav/status` | `String` | 当前 stage id 与状态 |
+| Pub | `/global_nav/target_pose` | `Pose2D` | 当前 navigate 目标位姿 |
+
+### 超时保护
+
+| 超时条件 | 触发参数 | 行为 |
+|---|---|---|
+| `/state_pose2d` 超时 | `pose_timeout_s` (默认 0.5s) | 发布零 `/local_driving`，mission 停滞 |
+| IR 数据缺失 (weapon_head_pickup) | `ir_timeout_s` (默认 0.5s) | 发布零 `/local_driving`，不移动 |
+| IR 数据 CRC 无效 | `require_crc_valid: true` | 同上 |
+
+> **注意**：当 `pose_timeout_s` 设为较大值（如 999.0）时，FSM 可以在无 `/state_pose2d` 的情况下运行 arm/pneu/conditional stage，但不能执行 navigate。weapon_pickup_test.sh 即使用此模式。
+
+### 参数（global_navigation_node）
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `mission_file` | `""` | mission YAML 路径 |
+| `control_rate_hz` | 50.0 | FSM 控制频率 |
+| `arrived_stable_count` | 5 | 到达稳定计数 |
+| `pose_timeout_s` | 0.5 | 位姿超时 (s) |
