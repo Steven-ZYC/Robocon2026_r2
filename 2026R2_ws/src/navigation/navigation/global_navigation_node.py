@@ -48,7 +48,16 @@ class GlobalNavigationNode(Node):
         self.mission.arrived_stable_count = self.get_parameter('arrived_stable_count').value
 
         if mission_file:
-            self.mission.load(mission_file)
+            try:
+                self.mission.load(mission_file)
+            except Exception as e:
+                self.get_logger().error(
+                    f'Failed to load mission file: {mission_file} — {e}'
+                )
+                self.get_logger().error(
+                    'Mission executor will be idle. Check YAML syntax (list items '
+                    'must use "- key: value" with a space after the dash).'
+                )
         else:
             self.get_logger().warn('No mission_file parameter set. Mission executor is idle.')
 
@@ -101,6 +110,20 @@ class GlobalNavigationNode(Node):
                 'arduino_sensor_msgs not available; sensor conditions will not work'
             )
 
+        # Arm Arduino IR sensor (for conditional branching)
+        try:
+            from std_msgs.msg import Bool
+            self.arm_ir_sub = self.create_subscription(
+                Bool,
+                '/arm/ir_status',
+                self._arm_ir_callback,
+                10,
+            )
+        except ImportError:
+            self.get_logger().warn(
+                'std_msgs not available; arm IR conditions will not work'
+            )
+
         # Damiao motor 5 torque feedback (for torque-triggered FSM stages)
         try:
             from damiao_msgs.msg import DamiaoFeedback
@@ -129,6 +152,12 @@ class GlobalNavigationNode(Node):
             'packet_id': msg.packet_id,
             '_stamp': time.monotonic(),
             'crc_valid': msg.crc_valid,
+        }
+
+    def _arm_ir_callback(self, msg):
+        """Cache arm-side IR sensor status for conditional stage evaluation."""
+        self.mission.sensor_cache['/arm/ir_status'] = {
+            'ir': bool(msg.data),
         }
 
     def _damiao_feedback_callback(self, msg):

@@ -127,8 +127,53 @@ class MissionExecutor:
             from ament_index_python.packages import get_package_share_directory
             pkg_dir = get_package_share_directory('navigation')
             filepath = os.path.join(pkg_dir, filepath)
-        with open(filepath, 'r') as f:
-            data = yaml.safe_load(f) or {}
+
+        try:
+            with open(filepath, 'r') as f:
+                raw_text = f.read()
+        except FileNotFoundError:
+            self.logger.error(f"Mission file not found: {filepath}")
+            raise
+        except OSError as e:
+            self.logger.error(f"Cannot read mission file: {filepath} ({e})")
+            raise
+
+        try:
+            data = yaml.safe_load(raw_text) or {}
+        except yaml.YAMLError as e:
+            self.logger.error(f"YAML parse error in mission file: {filepath}")
+            if hasattr(e, 'problem_mark') and e.problem_mark is not None:
+                m = e.problem_mark
+                lines = raw_text.split('\n')
+                ctx_start = max(m.line - 2, 0)
+                ctx_end = min(m.line + 3, len(lines))
+                self.logger.error(
+                    f"  Line {m.line + 1}, column {m.column + 1}: {e.problem}"
+                )
+                self.logger.error(f"  Context ({ctx_start + 1}-{ctx_end}):")
+                for i in range(ctx_start, ctx_end):
+                    marker = '>>>' if i == m.line else '   '
+                    self.logger.error(f"  {marker} {i + 1}: {lines[i]}")
+            else:
+                self.logger.error(f"  {e}")
+            raise
+
+        # 显式类型校验，防 YAML 静默解析为意外类型
+        if not isinstance(data.get('stages', []), list):
+            self.logger.error(
+                f"Mission 'stages' must be a list, got {type(data.get('stages')).__name__}. "
+                f"Check YAML indentation — a missing leading '- ' often causes this."
+            )
+            raise ValueError("stages is not a list")
+        if not isinstance(data.get('waypoints', {}), dict):
+            self.logger.error(f"Mission 'waypoints' must be a dict, got {type(data.get('waypoints')).__name__}")
+            raise ValueError("waypoints is not a dict")
+        if not isinstance(data.get('profiles', {}), dict):
+            self.logger.error(f"Mission 'profiles' must be a dict, got {type(data.get('profiles')).__name__}")
+            raise ValueError("profiles is not a dict")
+        if not isinstance(data.get('actuators', {}), dict):
+            self.logger.error(f"Mission 'actuators' must be a dict, got {type(data.get('actuators')).__name__}")
+            raise ValueError("actuators is not a dict")
 
         self.angle_unit = self._read_angle_unit(data)
         self.waypoints = self._normalize_waypoints(

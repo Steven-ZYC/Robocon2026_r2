@@ -37,6 +37,7 @@ import rclpy
 from rclpy.node import Node
 
 from std_msgs.msg import Bool
+from std_msgs.msg import Float32MultiArray
 from std_msgs.msg import Int8MultiArray
 from std_msgs.msg import String
 
@@ -88,6 +89,7 @@ class ArmArduinoNode(Node):
         # 20 Hz sends every 50 ms, safely faster than 200 ms.
         self.declare_parameter("send_rate_hz", 20.0)
         self.declare_parameter("read_rate_hz", 100.0)
+        self.declare_parameter("stats_interval_s", 5.0)
 
         # Match the original INO default: all pneumatics OFF.
         self.declare_parameter("default_pneu", [0, 0, 0])
@@ -97,6 +99,7 @@ class ArmArduinoNode(Node):
         self.arduino_reset_wait_s = float(
             self.get_parameter("arduino_reset_wait_s").value
         )
+        self.stats_interval_s = float(self.get_parameter("stats_interval_s").value)
 
         command_topic = str(self.get_parameter("command_topic").value)
         pneu_ack_topic = str(self.get_parameter("pneu_ack_topic").value)
@@ -115,6 +118,15 @@ class ArmArduinoNode(Node):
         self.serial_port: Optional[serial.Serial] = None
         self.rx_buffer = bytearray()
 
+        # 帧统计（每 N 秒汇总打印一次准确率，参考 arduino_sensor_parser_node 模式）
+        self._stat_frames_total = 0
+        self._stat_checksum_ok = 0
+        self._stat_checksum_fail = 0
+        self._stat_no_checksum = 0
+        self._stat_boot = 0
+        self._stat_err = 0
+        self._stat_parse_fail = 0
+
         self.pneu_ack_pub = self.create_publisher(
             Int8MultiArray,
             pneu_ack_topic,
@@ -122,6 +134,9 @@ class ArmArduinoNode(Node):
         )
         self.ir_status_pub = self.create_publisher(Bool, ir_status_topic, 10)
         self.raw_frame_pub = self.create_publisher(String, raw_frame_topic, 10)
+        self.health_pub = self.create_publisher(
+            Float32MultiArray, "arm/pneu_health", 10
+        )
 
         self.command_sub = self.create_subscription(
             Int8MultiArray,
@@ -140,12 +155,16 @@ class ArmArduinoNode(Node):
             1.0 / read_rate_hz,
             self.read_serial,
         )
+        self.stats_timer = self.create_timer(
+            self.stats_interval_s, self.stats_callback
+        )
         self.reconnect_timer = self.create_timer(1.0, self.reconnect_if_needed)
 
         self.get_logger().info(
             "arm_arduino_interface started. "
             f"Subscribe: {command_topic}. "
             f"Publish: {pneu_ack_topic}, {ir_status_topic}, {raw_frame_topic}. "
+            f"Health: arm/pneu_health (every {self.stats_interval_s}s). "
             f"Default command: {self.current_cmd}. "
             f"Serial: {self.port} @ {self.baud_rate}."
         )
@@ -352,8 +371,24 @@ class ArmArduinoNode(Node):
         if payload is None:
             return
 
+        if BOOT_RE.match(payload):
+            self._stat_boot += 1
+            self.get_logger().info("Arduino boot frame received.")
+            return
+
+        if ERR_RE.match(payload):
+            reason = ERR_RE.match(payload).group(1)
+            self._stat_err += 1
+            self.get_logger().warn(
+                f"Arduino error frame: {reason}",
+                throttle_duration_sec=2.0,
+            )
+            return
+
         state_match = STATE_RE.match(payload)
         if state_match:
+            self._stat_checksum_ok += 1
+            self._stat_frames_total += 1
             pneu_bits = [
                 int(state_match.group(2)),
                 int(state_match.group(3)),
@@ -372,28 +407,19 @@ class ArmArduinoNode(Node):
 
         ack_match = ACK_RE.match(payload)
         if ack_match:
-            # The original INO has ACK_EACH_VALID_COMMAND = false.
-            # Parser remains here in case ACK is enabled later.
+            self._stat_checksum_ok += 1
+            self._stat_frames_total += 1
             return
 
-        err_match = ERR_RE.match(payload)
-        if err_match:
-            reason = err_match.group(1)
-            self.get_logger().warn(
-                f"Arduino error frame: {reason}",
-                throttle_duration_sec=2.0,
-            )
-            return
-
-        if BOOT_RE.match(payload):
-            self.get_logger().info("Arduino boot frame received.")
-            return
-
+        self._stat_parse_fail += 1
+        self._stat_frames_total += 1
         self.get_logger().warn(f"Unknown Arduino frame payload: {payload}")
 
     def extract_and_verify_payload(self, frame: str) -> Optional[str]:
         """Return payload if the Arduino frame wrapper and XOR checksum are valid."""
         if not frame.startswith("<") or not frame.endswith(">"):
+            self._stat_no_checksum += 1
+            self._stat_frames_total += 1
             self.get_logger().warn(
                 f"Invalid frame wrapper: {frame}",
                 throttle_duration_sec=2.0,
@@ -403,6 +429,8 @@ class ArmArduinoNode(Node):
         body = frame[1:-1]
 
         if ",*" not in body:
+            self._stat_no_checksum += 1
+            self._stat_frames_total += 1
             self.get_logger().warn(
                 f"Frame has no checksum separator: {frame}",
                 throttle_duration_sec=2.0,
@@ -414,6 +442,8 @@ class ArmArduinoNode(Node):
         try:
             received_lrc = int(checksum_text, 16)
         except ValueError:
+            self._stat_no_checksum += 1
+            self._stat_frames_total += 1
             self.get_logger().warn(
                 f"Invalid checksum text: {checksum_text}",
                 throttle_duration_sec=2.0,
@@ -423,6 +453,8 @@ class ArmArduinoNode(Node):
         calculated_lrc = self.calc_xor_lrc(payload)
 
         if calculated_lrc != received_lrc:
+            self._stat_checksum_fail += 1
+            self._stat_frames_total += 1
             self.get_logger().warn(
                 "Checksum mismatch. "
                 f"payload={payload}, "
@@ -440,6 +472,58 @@ class ArmArduinoNode(Node):
         for ch in payload:
             lrc ^= ord(ch)
         return lrc & 0xFF
+
+    # ------------------------------------------------------------------
+    # 帧统计 — 定期汇报串口链路健康度，参考 arduino_sensor_parser_node 模式
+    # ------------------------------------------------------------------
+
+    def stats_callback(self) -> None:
+        total = self._stat_frames_total
+        ok = self._stat_checksum_ok
+        fail = self._stat_checksum_fail
+        nocrc = self._stat_no_checksum
+        parse_fail = self._stat_parse_fail
+        boot = self._stat_boot
+        err = self._stat_err
+
+        if total == 0:
+            self.get_logger().info(
+                "Serial stats: no frames received in this interval"
+            )
+            self.publish_health(0.0, 0, 0, 0)
+            return
+
+        rate = ok / total * 100.0 if total > 0 else 0.0
+        self.get_logger().info(
+            f"Serial stats ({self.stats_interval_s:.0f}s): {total} frames, "
+            f"OK={ok} ({rate:.1f}%), FAIL={fail}, NoChecksum={nocrc}, "
+            f"ParseFail={parse_fail}, BOOT={boot}, ERR={err}"
+        )
+        self.publish_health(rate, total, ok, fail)
+
+        # 重置计数器
+        self._stat_frames_total = 0
+        self._stat_checksum_ok = 0
+        self._stat_checksum_fail = 0
+        self._stat_no_checksum = 0
+        self._stat_parse_fail = 0
+        self._stat_boot = 0
+        self._stat_err = 0
+
+    def publish_health(
+        self, ok_rate: float, total: int, ok: int, fail: int
+    ) -> None:
+        """Publish serial link health to arm/pneu_health.
+
+        data: [ok_rate_pct, total_frames, ok_frames, fail_frames]
+        """
+        msg = Float32MultiArray()
+        msg.data = [float(ok_rate), float(total), float(ok), float(fail)]
+        self.health_pub.publish(msg)
+
+    # ------------------------------------------------------------------
+    # Serial lifecycle
+    # ------------------------------------------------------------------
 
     def close_serial(self) -> None:
         if self.serial_port is not None:
