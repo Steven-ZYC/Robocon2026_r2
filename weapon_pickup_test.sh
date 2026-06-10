@@ -25,7 +25,7 @@ fi
 source "$WS/install/setup.bash"
 
 echo "[weapon_pickup] 假设底盘已在 Position 1（第一个 Weapon Hand 前方）。"
-echo "[weapon_pickup] 序列: M5→-90° → gripper open → 等 IR → gripper close → lift high → M5→0° → stopper high → M6→+90°"
+echo "[weapon_pickup] 序列: M5→-90° → gripper open → 等 IR → gripper close → lift high → M5→0° → M6→+90° → stopper high → 等 torque >|1.3| → gripper open 释放"
 echo "[weapon_pickup] chassis USB-CAN: $CHASSIS_CAN_DEVICE"
 echo "[weapon_pickup] arm Arduino:    $ARM_ARDUINO_PORT"
 echo ""
@@ -188,9 +188,34 @@ stages:
     arm_lift: low
     arm_stopper: high
 
-  - id: wait_1s
+  - id: wait_0_5s
     type: wait
-    duration_s: 1.0
+    duration_s: 0.5
+
+  # 扭矩检测: M5 torque > |1.3| Nm → 松开 gripper
+  # 支持的 op 字段: gt(大于) lt(小于) gte(≥) lte(≤) abs_gt(绝对值大于) abs_gte(绝对值≥)
+  # 数据来源: /damiao_feedback → motor_5_tau (Nm)，由 global_navigation_node 缓存到 sensor_cache
+  - id: check_torque
+    type: conditional
+    condition:
+      topic: /damiao_feedback
+      field: motor_5_tau
+      op: abs_gt
+      value: 1.3
+    then: release_gripper
+    else: check_torque
+
+  - id: release_gripper
+    type: arm
+    arm_yaw_motor: front
+    arm_roll_motor: right_90deg
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+
+  - id: wait_0_5s
+    type: wait
+    duration_s: 0.5
 
   # 终点
   - id: done

@@ -1020,6 +1020,10 @@ class MissionExecutor:
             result = actual >= threshold
         elif op == 'lte':
             result = actual <= threshold
+        elif op == 'abs_gt':
+            result = abs(actual) > threshold
+        elif op == 'abs_gte':
+            result = abs(actual) >= threshold
         else:
             self.logger.warn(f"Unknown op '{op}'")
             return
