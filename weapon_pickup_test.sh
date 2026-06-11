@@ -217,6 +217,14 @@ stages:
     type: wait
     duration_s: 0.5
 
+  - id: arm_init_pose
+    type: arm
+    arm_yaw_motor: front
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+
   # 终点
   - id: done
     type: wait
@@ -286,7 +294,7 @@ read -p '按 Enter 关闭此窗口...'
 "
 
 # ---- 窗口5: /global_nav/status 监听 ----
-sleep 0.2
+sleep 0.1
 gnome-terminal --geometry=100x20+0+850 -- bash -c "
 source $WS/install/setup.bash
 echo '=== 窗口5: /global_nav/status 监听 ==='
