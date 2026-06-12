@@ -19,14 +19,17 @@ profiles:
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
-    k_p_x: 0.044729
-    k_p_y: 0.104020
-    k_d_x: 0.001560
-    k_d_y: 0.001040
+    k_p_x: 0.081
+    k_p_y: 0.115
+    k_i_x: 0.0
+    k_i_y: 0.0
+    k_d_x: 0.00156
+    k_d_y: 0.25
     k_heading_p: 0.06
     k_heading_d: 0.0
     max_body_x_mps: 1.0
     max_body_y_mps: 1.0
+    curve: cubic_ease
 
   medium:
     speed_mps: 0.4
@@ -34,14 +37,17 @@ profiles:
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
-    k_p_x: 0.044729
-    k_p_y: 0.104020
-    k_d_x: 0.001560
-    k_d_y: 0.001040
+    k_p_x: 0.081
+    k_p_y: 0.115
+    k_i_x: 0.0
+    k_i_y: 0.0
+    k_d_x: 0.00156
+    k_d_y: 0.25
     k_heading_p: 0.06
     k_heading_d: 0.0
     max_body_x_mps: 1.0
     max_body_y_mps: 1.0
+    curve: cubic_ease
 
   fast:
     speed_mps: 0.4
@@ -49,14 +55,17 @@ profiles:
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
-    k_p_x: 0.044729
-    k_p_y: 0.104020
-    k_d_x: 0.001560
-    k_d_y: 0.001040
+    k_p_x: 0.081
+    k_p_y: 0.115
+    k_i_x: 0.0
+    k_i_y: 0.0
+    k_d_x: 0.00156
+    k_d_y: 0.25
     k_heading_p: 0.06
     k_heading_d: 0.0
     max_body_x_mps: 1.0
     max_body_y_mps: 1.0
+    curve: cubic_ease
 
 # ===== 执行器语义映射 =====
 actuators:

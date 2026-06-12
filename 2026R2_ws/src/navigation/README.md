@@ -406,6 +406,7 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-12 | v0.15 — `weapon_head_pickup` 支持 `verify_ir` 抓后复检分支；新增 `routes/point_1_point_2.yaml` 两点测试 |
 | 2026-06-11 | v0.14 — Mission YAML 完整字段参考：所有区块/字段/类型/参数/systematic 文档化 |
 | 2026-06-08 | v0.13 — 新增 `routes/red_area_torque_test.yaml`，red area 底盘导航 + 手臂力矩触发测试；修复 global_navigation_node 对 `/damiao_feedback` 的订阅类型（Float32MultiArray → DamiaoFeedback） |
 | 2026-05-24 | v0.11 — plot_node → mission_viz_node，使用 RViz Marker/MarkerArray 渲染，支持场地 YAML 与红蓝镜像 |
@@ -1410,3 +1411,43 @@ data: "arm_gripper:1,arm_lift:0,arm_stopper:1"
 | weapon_head_pickup | `require_crc_valid: true` | CRC 无效 | 同上（不移动，等待有效数据） |
 | arm_arduino | `COMMAND_TIMEOUT_MS=200` | 200ms 无新命令 | Arduino 自行关断全部气动 |
 | damiao_ctrl | `command_timeout` | CAN 命令超时 | 电机失能 (disabled) |
+
+---
+
+## v0.15 — weapon_head_pickup 抓后 IR 复检与 point 1/2 测试（2026-06-12）
+
+### 变更内容
+
+`weapon_head_pickup.pickup_sequence` 新增 `verify_ir` 子步骤，用于在夹爪闭合、lift 提升之后再次读取 IR Sensor。该逻辑用于确认这一次夹取是否真的夹到 weapon head，并把失败恢复流程留在 mission YAML 中配置。
+
+新增 `routes/point_1_point_2.yaml`：仅测试 weapon head rack 的 point 1 和 point 2。mission 假设机器人和 Arm 已经在 point 1 对齐；point 1 抓后复检为 `False` 时，会把 Arm 回到 open/low 安全姿态，导航到 point 2，然后执行同一套完整 pipeline。
+
+### verify_ir 子步骤
+
+```yaml
+- type: verify_ir
+  label: point_1_after_lift_has_weapon_head
+  expected: true
+  on_true: continue
+  on_false: prepare_point_2_after_failed_grab
+```
+
+| 字段 | 类型 | 必需 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `type` | str | 是 | — | 固定为 `verify_ir` |
+| `label` | str | 否 | 当前 step index | 日志标签，方便现场判断是哪次复检 |
+| `expected` | bool | 否 | 不检查期望值 | 期望 IR 结果；不匹配且无分支时按失败结束当前 pickup |
+| `on_true` | str | 否 | — | 实际 IR 为 `True` 时执行：`continue` / `advance` / `terminate` / stage id |
+| `on_false` | str | 否 | — | 实际 IR 为 `False` 时执行：`continue` / `advance` / `terminate` / stage id |
+| `on_match` | str | 否 | — | 实际值等于 `expected` 时执行；优先级低于 `on_true/on_false` |
+| `on_mismatch` | str | 否 | — | 实际值不等于 `expected` 时执行；优先级低于 `on_true/on_false` |
+
+### 超时与失效保护
+
+`verify_ir` 复用 `weapon_head_pickup` 原有 IR 保护：如果 `/arduino/raw_sensor_data` 缺失、超过 `ir_timeout_s` 未更新，或 `require_crc_valid: true` 且 CRC 无效，则发布零 `/local_driving` 并停在当前复检 step，不会继续移动到 point 2，也不会误判成功/失败。
+
+### 启动方式
+
+```bash
+ros2 launch navigation navigation.launch.py mission_file:=routes/point_1_point_2.yaml
+```

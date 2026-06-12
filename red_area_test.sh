@@ -113,23 +113,22 @@ profiles:
     max_body_x_mps: 1.0
     max_body_y_mps: 1.0
     curve: cubic_ease
-  head_step:
-    speed_mps: 0.2
-    yaw_rate_rps: 0.25
+  head_rack_speed:
+    speed_mps: 0.1
+    yaw_rate_rps: 0.075
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
     k_p_x: 0.081
     k_p_y: 0.115
-    k_i_y: 0.0
     k_i_x: 0.0
+    k_i_y: 0.0
     k_d_x: 0.00156
     k_d_y: 0.25
     k_heading_p: 0.06
     k_heading_d: 0.0
-    max_body_x_mps: 0.35
-    max_body_y_mps: 0.35
-    curve: cubic_ease
+    max_body_x_mps: 0.25
+    max_body_y_mps: 0.25
 
 actuators:
   arm_yaw_motor:
@@ -191,7 +190,7 @@ stages:
     slot_spacing_m: 0.2
     on_miss: terminate
     step:
-      profile: head_step
+      profile: head_rack_speed
       settle_s: 0.15
       pos_tolerance: 0.02
       yaw_tolerance: 0.05
@@ -240,7 +239,7 @@ stages:
   - id: move_forward_to_r1_handoff
     type: navigate
     to: wp_r1_handoff
-    profile: head_step
+    profile: head_rack_speed
 
   - id: hold_handoff_pose
     type: arm
@@ -262,7 +261,15 @@ stages:
 
   - id: release_weapon_head_to_r1
     type: arm
-    arm_yaw_motor: front
+    arm_yaw_motor: front我刚刚更改了 Red Area Test 和 Point 1、Point 2 两个 test 文件里面的 speed 表述。
+
+你帮我再看一看，我把它们的 speed 完全变成了 1/4 Red Area Speed Profile，这样会让整个 PID 从理论上更加准确。我记得 ROS 里面应该还有其他现成的文件，也请一并这样处理。
+
+目前的逻辑是：
+1. 正常的 Red Area 速度：参考我们 red_areas_test.sh 里面的表述。
+2. 接近 REC 的追踪速度：即 1/4 Red Area Profile 的速度。
+
+你看看其他有没有类似的文件，也需要一并以 Red Area 为参照。处理完之后再帮我 commit 一下，这次更改的重点是统一这个 profile 的口径。
     arm_roll_motor: right_90deg
     arm_gripper: open
     arm_lift: low

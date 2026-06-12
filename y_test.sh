@@ -56,16 +56,18 @@ waypoints:
     yaw_tolerance_deg: 1.0
 
 profiles:
-  y_2m_2_0mps:
+  red_area:
     speed_mps: 0.4
     yaw_rate_rps: 0.3
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
-    k_p_x: 0.044729
-    k_p_y: 0.104020
-    k_d_x: 0.001560
-    k_d_y: 0.001040
+    k_p_x: 0.081
+    k_p_y: 0.115
+    k_i_x: 0.0
+    k_i_y: 0.0
+    k_d_x: 0.00156
+    k_d_y: 0.25
     k_heading_p: 0.06
     k_heading_d: 0.0
     max_body_x_mps: 1.0
@@ -78,7 +80,7 @@ stages:
   - id: y_2m_3_0mps
     type: navigate
     to: wp_y_2m
-    profile: y_2m_2_0mps
+    profile: red_area
 EOF
 
 echo "[y_2m_3_0mps] mission: $MISSION_FILE"

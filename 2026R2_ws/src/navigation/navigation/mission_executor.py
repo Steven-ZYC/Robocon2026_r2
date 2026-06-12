@@ -288,6 +288,11 @@ class MissionExecutor:
                                 continue
                             if key not in self.actuators:
                                 self.logger.warn(f"[{sid}] actuator '{key}' not defined")
+                    elif step.get('type') == 'verify_ir':
+                        for branch_key in ('on_true', 'on_false', 'on_match', 'on_mismatch'):
+                            target_id = step.get(branch_key)
+                            if target_id and target_id not in ('continue', 'advance', 'terminate') and target_id not in stage_ids:
+                                self.logger.warn(f"[{sid}] {branch_key} stage '{target_id}' not found")
 
     # ------------------------------------------------------------------
     # Main update loop (called at control rate, e.g. 50Hz)
@@ -873,7 +878,7 @@ class MissionExecutor:
         self._pub_driving_body(vx_body, vy_body, 0.0)
 
     def _update_weapon_pickup_sequence(self, stage):
-        """Execute YAML pickup_sequence with arm and wait steps."""
+        """Execute YAML pickup_sequence with arm, wait, and IR verification steps."""
         sequence = stage.get('pickup_sequence', [])
         if not sequence:
             self.logger.warn("weapon_head_pickup has no pickup_sequence; finishing")
@@ -898,10 +903,64 @@ class MissionExecutor:
             if time.time() - self._weapon_wait_start >= duration:
                 self._weapon_wait_start = 0.0
                 self._weapon_pickup_step_index += 1
+        elif stype == 'verify_ir':
+            self._update_weapon_verify_ir_step(stage, step)
         else:
             self.logger.warn(f"Unknown pickup_sequence step type '{stype}', skipping")
             self._weapon_pickup_step_index += 1
             self._weapon_wait_start = 0.0
+
+    def _update_weapon_verify_ir_step(self, stage, step):
+        """Re-check IR during pickup_sequence and optionally branch the mission.
+
+        This keeps point-specific recovery in YAML: the executor only reads the
+        configured IR field, applies the same timeout/CRC protection as the
+        search phase, and follows the branch target selected by the mission.
+        """
+        ir_value = self._read_weapon_ir(stage)
+        if ir_value is None:
+            self._pub_zero_driving()
+            return
+
+        expected_raw = step.get('expected')
+        matched = True
+        if expected_raw is not None:
+            matched = bool(ir_value) == bool(expected_raw)
+
+        target = step.get('on_true' if ir_value else 'on_false')
+        if target is None:
+            target = step.get('on_match' if matched else 'on_mismatch')
+
+        label = step.get('label', f"pickup_step_{self._weapon_pickup_step_index}")
+        self.logger.info(
+            f"Weapon IR verify [{label}]: actual={bool(ir_value)}, "
+            f"expected={expected_raw if expected_raw is not None else 'any'}, "
+            f"matched={matched}"
+        )
+
+        if target:
+            self._handle_weapon_ir_branch(stage, str(target), matched)
+            return
+
+        if expected_raw is not None and not matched:
+            self.logger.warn(f"Weapon IR verify [{label}] mismatched; finishing pickup as failed")
+            self._finish_weapon_pickup(stage, success=False)
+            return
+
+        self._weapon_pickup_step_index += 1
+        self._weapon_wait_start = 0.0
+
+    def _handle_weapon_ir_branch(self, stage, target, matched):
+        """Apply a verify_ir branch target."""
+        if target == 'continue':
+            self._weapon_pickup_step_index += 1
+            self._weapon_wait_start = 0.0
+        elif target == 'advance':
+            self._finish_weapon_pickup(stage, success=matched)
+        elif target == 'terminate':
+            self._execute_terminate()
+        else:
+            self._jump_to(target)
 
     def _read_weapon_ir(self, stage):
         """Read configured IR boolean from the cached sensor topic.

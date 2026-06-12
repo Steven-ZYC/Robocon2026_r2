@@ -38,3 +38,8 @@
 - [x] 修复 global_navigation_node 对 `/damiao_feedback` 的订阅类型（Float32MultiArray → DamiaoFeedback）
 - [ ] 实车验证 IR=true 时底盘停车距离与夹爪时序是否满足抓取要求
 - [ ] 实车验证 red_area_torque_test.yaml 完整序列 + 力矩触发
+
+- [x] 为 `weapon_head_pickup.pickup_sequence` 新增 `verify_ir` 抓后 IR 复检分支
+- [x] 新增 `routes/point_1_point_2.yaml`，只测试 weapon head point 1 与 point 2
+- [ ] 实车验证 point 1 抓后 IR=False 时能安全回到 open/low 并移动到 point 2
+- [ ] 实车验证 point 1/point 2 抓后 IR=True 时放回与感应脱离时序满足要求
