@@ -123,12 +123,15 @@ actuators:
     states: [low, high]
 
 stages:
+  # ================================================================
+  # 初始化
+  # ================================================================
   # 等下游节点 (arm_ctrl_node) ROS2 发现完成 (跨进程发现需要 3-5s)
   - id: init_wait
     type: wait
     duration_s: 2.0
 
-  # 步骤1-2: M5→-90°, gripper open, lift low, stopper low, M6 up
+  # ---- 手臂初始姿态：M5=front, M6=up, gripper=open, lift=low, stopper=low ----
   - id: arm_start_pose
     type: arm
     arm_yaw_motor: front
@@ -137,6 +140,7 @@ stages:
     arm_lift: low
     arm_stopper: low
 
+  # ---- M5 转到侧面 (minus_90deg = -90°)，对准 rack slot ----
   - id: arm_ready
     type: arm
     arm_yaw_motor: minus_90deg
@@ -145,10 +149,16 @@ stages:
     arm_lift: low
     arm_stopper: low
 
+  # ---- 等待手臂就位后短暂稳定 ----
   - id: point_1_settle
     type: wait
     duration_s: 0.1
 
+  # ================================================================
+  # Point 1: weapon_head_pickup (step_0p2m)
+  #   slot_count=1 表示只检测当前位置，不做步进搜索
+  #   on_miss=advance 表示当前位置没有 weapon head 时跳过，继续后续 stage
+  # ================================================================
   - id: pickup_point_1
     type: weapon_head_pickup
     search_mode: step_0p2m
@@ -164,23 +174,29 @@ stages:
       pos_tolerance: 0.02
       yaw_tolerance: 0.05
     pickup_sequence:
+      # 步骤1: gripper close（夹取）
       - type: arm
         arm_gripper: close
         arm_lift: low
         arm_stopper: low
       - type: wait
         duration_s: 0.15
+      # 步骤2: lift high（提起 weapon head）
       - type: arm
         arm_gripper: close
         arm_lift: high
         arm_stopper: low
       - type: wait
         duration_s: 0.20
+      # 步骤3: verify_ir 复检 —— 确认是否真的抓到了 weapon head
+      #   IR=true  → continue：继续下方释放流程
+      #   IR=false → prepare_point_2_after_failed_grab：跳 point 2 重试
       - type: verify_ir
         label: point_1_after_lift_has_weapon_head
         expected: true
         on_true: continue
         on_false: prepare_point_2_after_failed_grab
+      # 步骤4: lift low, gripper open（放回 rack）
       - type: arm
         arm_gripper: close
         arm_lift: low
@@ -193,18 +209,26 @@ stages:
         arm_stopper: low
       - type: wait
         duration_s: 0.20
+      # 步骤5: lift high, arm 离开 rack（不挂到 rack 上物体）
       - type: arm
         arm_gripper: open
         arm_lift: high
         arm_stopper: low
       - type: wait
         duration_s: 0.20
+      # 步骤6: verify_ir 复检 —— 确认 sensor 已清空（weapon head 已脱离）
+      #   无论 true/false 都跳 point_1_done → terminate
       - type: verify_ir
         label: point_1_after_release_sensor_clear
         expected: false
         on_true: point_1_done
         on_false: point_1_done
 
+  # ================================================================
+  # Point 1 失败恢复路径 (verify_ir on_false 跳转到这里)
+  #   arm 回 open/low 安全姿态 → wait → navigate 到 point 2 → 重试
+  # ================================================================
+  # ---- 失败安全姿态：M5=front, M6=up, gripper=open, lift=low ----
   - id: prepare_point_2_after_failed_grab
     type: arm
     arm_yaw_motor: front
@@ -213,15 +237,18 @@ stages:
     arm_lift: low
     arm_stopper: low
 
+  # ---- 等待安全姿态就位 ----
   - id: wait_before_point_2
     type: wait
     duration_s: 0.2
 
+  # ---- 底盘导航到 point 2（rack 第二个 slot 位置） ----
   - id: move_to_point_2
     type: navigate
     to: wp_point_2
     profile: head_step
 
+  # ---- Point 2 手臂就位：M5=front, M6=up, gripper=open, lift=low ----
   - id: point_2_ready
     type: arm
     arm_yaw_motor: front
@@ -234,6 +261,12 @@ stages:
     type: wait
     duration_s: 0.2
 
+  # ================================================================
+  # Point 2: weapon_head_pickup (step_0p2m)
+  #   与 point 1 完全相同的 pickup_sequence，区别：
+  #   - on_miss=terminate：point 2 是最后一次重试，不再继续
+  #   - verify_ir on_false → point_2_failed_safe_pose → terminate
+  # ================================================================
   - id: pickup_point_2
     type: weapon_head_pickup
     search_mode: step_0p2m
@@ -249,58 +282,58 @@ stages:
       pos_tolerance: 0.02
       yaw_tolerance: 0.05
     pickup_sequence:
+      # 步骤1: gripper close（夹取）
       - type: arm
         arm_gripper: close
         arm_lift: low
         arm_stopper: low
-
       - type: wait
         duration_s: 0.15
-      
+      # 步骤2: lift high（提起）
       - type: arm
         arm_gripper: close
         arm_lift: high
         arm_stopper: low
-      
       - type: wait
         duration_s: 0.20
-      
+      # 步骤3: verify_ir 复检 —— 确认抓取
+      #   IR=true  → continue：继续释放流程
+      #   IR=false → point_2_failed_safe_pose：安全姿态 → terminate
       - type: verify_ir
         label: point_2_after_lift_has_weapon_head
         expected: true
         on_true: continue
         on_false: point_2_failed_safe_pose
-      
+      # 步骤4: lift low, gripper open（放回）
       - type: arm
         arm_gripper: close
         arm_lift: low
         arm_stopper: low
-      
       - type: wait
         duration_s: 0.15
-      
       - type: arm
         arm_gripper: open
         arm_lift: low
         arm_stopper: low
-      
       - type: wait
         duration_s: 0.20
-      
+      # 步骤5: lift high, arm 离开 rack
       - type: arm
         arm_gripper: open
         arm_lift: high
         arm_stopper: low
-      
       - type: wait
         duration_s: 0.20
-      
+      # 步骤6: verify_ir 复检 —— 确认 sensor 清空
       - type: verify_ir
         label: point_2_after_release_sensor_clear
         expected: false
         on_true: point_2_done
         on_false: point_2_done
 
+  # ================================================================
+  # Point 2 失败：arm 回安全姿态 → terminate
+  # ================================================================
   - id: point_2_failed_safe_pose
     type: arm
     arm_yaw_motor: front
@@ -312,11 +345,18 @@ stages:
   - id: point_2_failed_done
     type: terminate
 
+  # ================================================================
+  # 终点 (point 1 成功)
+  # ================================================================
   - id: point_1_done
     type: terminate
 
+  # ================================================================
+  # 终点 (point 2 成功)
+  # ================================================================
   - id: point_2_done
     type: terminate
+
 YAMLEOF
 
 echo "[pt1_pt2] mission: $MISSION_FILE"
