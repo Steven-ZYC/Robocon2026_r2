@@ -102,6 +102,7 @@ class MissionExecutor:
         self._weapon_wait_start = 0.0
         self._weapon_warned_missing_ir = False
         self._weapon_warned_ir_timeout = False
+        self._weapon_ir_timeout_start = 0.0
 
         # Publishers (set after init by global_navigation_node)
         self.pub_driving = None
@@ -757,6 +758,7 @@ class MissionExecutor:
         self._weapon_wait_start = 0.0
         self._weapon_warned_missing_ir = False
         self._weapon_warned_ir_timeout = False
+        self._weapon_ir_timeout_start = 0.0
         self.logger.info(f"Weapon pickup [{stage_id}] started")
 
     def _update_weapon_checking(self, stage):
@@ -764,6 +766,8 @@ class MissionExecutor:
         ir_value = self._read_weapon_ir(stage)
         if ir_value is None:
             self._pub_zero_driving()
+            if self._check_weapon_ir_timeout_fallback(stage):
+                self._finish_weapon_pickup(stage, success=False)
             return
 
         if ir_value:
@@ -920,6 +924,12 @@ class MissionExecutor:
         ir_value = self._read_weapon_ir(stage)
         if ir_value is None:
             self._pub_zero_driving()
+            if self._check_weapon_ir_timeout_fallback(stage):
+                target = step.get('on_false', 'advance')
+                self.logger.warn(
+                    f"Weapon IR verify timeout fallback → {target}"
+                )
+                self._handle_weapon_ir_branch(stage, str(target), matched=False)
             return
 
         expected_raw = step.get('expected')
@@ -988,11 +998,34 @@ class MissionExecutor:
             if not self._weapon_warned_ir_timeout:
                 self.logger.warn(f"IR sensor timeout ({timeout_s:.2f}s); weapon pickup is holding position")
                 self._weapon_warned_ir_timeout = True
+            # Don't reset _weapon_ir_timeout_start here — let _check_weapon_ir_timeout_fallback accumulate
             return None
 
+        # Data is fresh — reset all timeout tracking
         self._weapon_warned_missing_ir = False
         self._weapon_warned_ir_timeout = False
+        self._weapon_ir_timeout_start = 0.0
         return bool(sensor_data.get(field, False))
+
+    def _check_weapon_ir_timeout_fallback(self, stage):
+        """Return True when IR has been timing out continuously long enough to fallback.
+
+        Uses ir_timeout_s as the accumulated grace period: once the sensor has
+        been stale for longer than ir_timeout_s total, the caller should stop
+        holding and fallback (on_miss for checking, on_false for verify_ir).
+        """
+        now = time.monotonic()
+        if self._weapon_ir_timeout_start == 0.0:
+            self._weapon_ir_timeout_start = now
+        timeout_s = float(stage.get('ir_timeout_s', 0.5))
+        elapsed = now - self._weapon_ir_timeout_start
+        if elapsed > timeout_s:
+            self.logger.warn(
+                f"Weapon IR timeout fallback after {elapsed:.1f}s "
+                f"(limit: {timeout_s:.1f}s)"
+            )
+            return True
+        return False
 
     def _drive_to_dynamic_pose(self, stage_id, target_pose, profile, pos_tol, yaw_tol):
         """Small-pose PID used by step_0p2m dynamic slot targets."""

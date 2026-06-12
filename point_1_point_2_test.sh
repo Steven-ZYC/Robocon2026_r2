@@ -140,10 +140,10 @@ stages:
     arm_lift: low
     arm_stopper: low
 
-  # ---- M5 转到侧面 (minus_90deg = -90°)，对准 rack slot ----
+  # ---- M5 转到侧面 (left = -90°)，对准 rack slot ----
   - id: arm_ready
     type: arm
-    arm_yaw_motor: minus_90deg
+    arm_yaw_motor: left
     arm_roll_motor: up
     arm_gripper: open
     arm_lift: low
@@ -164,7 +164,7 @@ stages:
     search_mode: step_0p2m
     ir_topic: /arm/ir_status
     ir_field: ir
-    ir_timeout_s: 0.5
+    ir_timeout_s: 1.0
     slot_count: 1
     slot_spacing_m: 0.2
     on_miss: advance
@@ -174,6 +174,7 @@ stages:
       pos_tolerance: 0.02
       yaw_tolerance: 0.05
     pickup_sequence:
+
       # 步骤1: gripper close（夹取）
       - type: arm
         arm_gripper: close
@@ -181,6 +182,7 @@ stages:
         arm_stopper: low
       - type: wait
         duration_s: 0.15
+    
       # 步骤2: lift high（提起 weapon head）
       - type: arm
         arm_gripper: close
@@ -188,6 +190,7 @@ stages:
         arm_stopper: low
       - type: wait
         duration_s: 0.20
+    
       # 步骤3: verify_ir 复检 —— 确认是否真的抓到了 weapon head
       #   IR=true  → continue：继续下方释放流程
       #   IR=false → prepare_point_2_after_failed_grab：跳 point 2 重试
@@ -196,6 +199,7 @@ stages:
         expected: true
         on_true: continue
         on_false: prepare_point_2_after_failed_grab
+    
       # 步骤4: lift low, gripper open（放回 rack）
       - type: arm
         arm_gripper: close
@@ -209,6 +213,7 @@ stages:
         arm_stopper: low
       - type: wait
         duration_s: 0.20
+    
       # 步骤5: lift high, arm 离开 rack（不挂到 rack 上物体）
       - type: arm
         arm_gripper: open
@@ -216,6 +221,7 @@ stages:
         arm_stopper: low
       - type: wait
         duration_s: 0.20
+    
       # 步骤6: verify_ir 复检 —— 确认 sensor 已清空（weapon head 已脱离）
       #   无论 true/false 都跳 point_1_done → terminate
       - type: verify_ir
@@ -272,7 +278,7 @@ stages:
     search_mode: step_0p2m
     ir_topic: /arm/ir_status
     ir_field: ir
-    ir_timeout_s: 0.5
+    ir_timeout_s: 1.0
     slot_count: 1
     slot_spacing_m: 0.2
     on_miss: terminate
