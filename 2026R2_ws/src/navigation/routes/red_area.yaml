@@ -14,8 +14,9 @@ waypoints:
 # XY 分立 PID 模式（与 y_test.sh 一致的 algo 和 PID 值）
 profiles:
   slow:
-    speed_mps: 0.4
-    yaw_rate_rps: 0.3
+    # Approach/REC tracking profile = 1/4 Red Area profile speed limits.
+    speed_mps: 0.1
+    yaw_rate_rps: 0.075
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
@@ -27,8 +28,8 @@ profiles:
     k_d_y: 0.25
     k_heading_p: 0.06
     k_heading_d: 0.0
-    max_body_x_mps: 1.0
-    max_body_y_mps: 1.0
+    max_body_x_mps: 0.25
+    max_body_y_mps: 0.25
     curve: cubic_ease
 
   medium:

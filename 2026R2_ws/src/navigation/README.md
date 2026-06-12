@@ -406,6 +406,9 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-13 | v0.19 — Red Area 六点循环 FSM：`red_area_weapon_cycle` 处理 1..6 weapon position，成功 5 个后停机 |
+| 2026-06-13 | v0.18 — 统一 Red Area/接近 REC profile 口径；新增根目录 `fast_pid_adjustment.sh` 用 Red Area PID 前进到 `weapon_point_1` 并只显示 target/current 图 |
+| 2026-06-13 | v0.17 — `weapon_head_pickup` 新增 `micro_sweep_10mm` 搜索 policy；`point_1_point_2` 在每个 point 前后 10mm 慢速扫 IR |
 | 2026-06-12 | v0.16 — 修复 `_arm_ir_callback` 缺 `_stamp`/`crc_valid` 导致 timeout/CRC 保护失效；统一所有 mission YAML 的 `ir_topic`/`ir_field` 为 `/arm/ir_status`/`ir`；新增两路 Arduino IR 数据源区别文档 |
 | 2026-06-12 | v0.15 — `weapon_head_pickup` 支持 `verify_ir` 抓后复检分支；新增 `routes/point_1_point_2.yaml` 两点测试 |
 | 2026-06-11 | v0.14 — Mission YAML 完整字段参考：所有区块/字段/类型/参数/systematic 文档化 |
@@ -1484,4 +1487,158 @@ data: "arm_gripper:1,arm_lift:0,arm_stopper:1"
 
 ```bash
 ros2 launch navigation navigation.launch.py mission_file:=routes/point_1_point_2.yaml
+```
+
+> 注：以上为 v0.15 历史记录。v0.17 起不再保留 standalone `routes/point_1_point_2.yaml`；当前实车测试入口为 `bash point_1_point_2_test.sh`，脚本会生成 `/tmp/point_1_point_2_mission.yaml`。
+
+
+---
+
+## v0.17 — point 1/2 微扫搜索 policy（2026-06-13）
+
+### 变更目标
+
+`weapon_head_pickup` 新增 `search_mode: micro_sweep_10mm`。该 policy 适用于以下现场状态：底盘已经导航到某个 weapon head point，mission 已经执行 arm 就位与短等待，但 `/arm/ir_status` 仍为 `False`。此时不直接判定该 point 为空，而是在该 point 前后 10mm 内低速移动，寻找 IR 触发点。
+
+### 执行逻辑
+
+1. 读取 `ir_topic` / `ir_field`。如果 IR 已经为 `True`，立即停车并执行 `pickup_sequence`。
+2. 如果 IR 为 `False`，沿 `micro_sweep.direction_rad` 的反方向先移动 `back_distance_m`，默认 `0.01 m`。
+3. 到达后沿 `direction_rad` 以 `speed_mps` 慢速扫过当前位置，到达 `forward_distance_m` 侧，默认总扫动距离 `0.02 m`。
+4. 扫动过程中一旦 IR 变为 `True`，立即发布零 `/local_driving` 并执行 `pickup_sequence`。
+5. 如果超过 `timeout_s` 或 `max_distance_m` 仍未检测到 IR，则按 `on_miss` 处理：point 1 当前为 `advance`，point 2 当前为 `terminate`。
+
+### YAML 接口
+
+```yaml
+- id: pickup_point_1
+  type: weapon_head_pickup
+  search_mode: micro_sweep_10mm
+  ir_topic: /arm/ir_status
+  ir_field: ir
+  ir_timeout_s: 1.0
+  on_miss: advance
+  micro_sweep:
+    direction_rad: 1.5708        # 当前 point 1 -> point 2 沿 body +Y；方向相反时改为 -1.5708
+    back_distance_m: 0.01        # point 前侧 10mm
+    forward_distance_m: 0.01     # point 后侧 10mm
+    speed_mps: 0.015             # 慢扫速度
+    timeout_s: 2.0
+    profile: head_rack_speed     # 退到前侧 10mm 使用的动态目标 profile
+    pos_tolerance: 0.003
+    yaw_tolerance: 0.05
+```
+
+### 超时与失效保护
+
+- IR 数据缺失或超过 `ir_timeout_s` 未更新时，微扫 policy 会发布零 `/local_driving`，不会继续移动。
+- 微扫过程中如果连续 IR 超时超过 `ir_timeout_s`，按当前 `on_miss` 分支退出，避免无限停在搜索 stage。
+- 微扫自身还有 `timeout_s` 与 `max_distance_m` 保护。默认 `max_distance_m = back_distance_m + forward_distance_m = 0.02 m`，超过任一限制都会停车并按 `on_miss` 处理。
+- `/state_pose2d` 超时仍由 `global_navigation_node.pose_timeout_s` 统一停车保护。
+
+### point_1_point_2 当前配置
+
+`point_1_point_2_test.sh` 的内联 mission 已使用 `micro_sweep_10mm`。当前不保留 standalone `routes/point_1_point_2.yaml`，避免 route 文件和测试脚本出现两份配置漂移：
+
+- point 1：`on_miss: advance`，微扫仍未检测到 IR 时，arm 回到 open/low 安全姿态，再导航到 point 2。
+- point 2：`on_miss: terminate`，最后一次重试失败后进入安全终止。
+- 当前 rack point 方向假设为 body `+Y`，即 `direction_rad: 1.5708`。如果实车 point 2 在相反方向，把两个 pickup stage 的该参数改为 `-1.5708`。
+- 启动方式使用 `bash point_1_point_2_test.sh`，脚本会把内联 mission 写到 `/tmp/point_1_point_2_mission.yaml` 后启动 navigation。
+
+
+---
+
+## v0.18 — Red Area profile 口径统一与 fast PID 调参脚本（2026-06-13）
+
+### profile 口径
+
+当前 Red Area 相关测试统一使用两类速度口径：
+
+- `red_area` / `medium`：正常 Red Area 速度，`speed_mps: 0.4`、`yaw_rate_rps: 0.3`、`max_body_x_mps: 1.0`、`max_body_y_mps: 1.0`。
+- `head_rack_speed` / `slow`：接近 REC 或 weapon head rack 的追踪速度，等于 Red Area 速度上限的 1/4，即 `speed_mps: 0.1`、`yaw_rate_rps: 0.075`、`max_body_x_mps: 0.25`、`max_body_y_mps: 0.25`。PID 增益保持与 Red Area profile 相同，便于只比较速度上限对追踪的影响。
+
+### 相关文件
+
+- `red_area_test.sh`：保留 `red_area` 正常速度，`head_rack_speed` 明确为 1/4 Red Area profile。
+- `point_1_point_2_test.sh`：`head_rack_speed` 修正为真正的 1/4 Red Area profile。
+- `routes/red_area.yaml`：`slow` 修正为 1/4 Red Area profile，`medium` / `fast` 保持正常 Red Area 速度。
+- 根目录 `fast_pid_adjustment.sh`：生成 `/tmp/fast_pid_adjustment_mission.yaml`，使用 Red Area PID 从当前位置前进到 `weapon_point_1`，并启动 `plot_debug_node` 只显示 target/current 相关图。
+
+### 超时与失效保护
+
+`fast_pid_adjustment.sh` 不新增控制 node。底盘安全行为沿用现有节点：
+
+- `global_navigation_node.pose_timeout_s`：`/state_pose2d` 超时后发布零 `/local_driving`。
+- `base_omniwheel_r2_600 local_navigation_node`：沿用本 package 的命令输入超时/停车保护。
+- `damiao_node`：沿用底层 CAN 电机驱动的掉线/命令保护。
+
+### 启动方式
+
+```bash
+bash fast_pid_adjustment.sh
+```
+
+plot_debug 参数固定为：
+
+```bash
+-p show_pose2d:=true
+-p show_target_error:=false
+-p show_driving:=false
+-p show_damiao:=false
+-p show_damiao_feedback:=false
+```
+
+
+---
+
+## v0.19 — Red Area 六点循环 FSM（2026-06-13）
+
+### 变更目标
+
+`red_area_test.sh` 改为六个 weapon head position 的循环式 FSM。`#1` 就是 `weapon1` 位置；position 2..6 由 `slot_spacing_m` 沿 `slot_direction_rad` 自动生成。流程为：当前点寻找/夹取 → lift high 后 IR 复检 → 成功则 torque docking 并释放 gripper → 前进到下一个点。成功夹取并完成 docking 的数量达到 5 时停机。
+
+### 新增 stage
+
+`red_area_weapon_cycle` 是 Red Area 上层任务 stage，不绑定年份机器人代码，所有比赛点位、速度、IR、扭矩阈值和动作序列都在 YAML 参数化。
+
+```yaml
+- id: red_area_weapon_cycle
+  type: red_area_weapon_cycle
+  start_waypoint: wp_weapon_1
+  slot_count: 6
+  slot_spacing_m: 0.2
+  slot_direction_rad: 0.0
+  slot_profile: head_rack_speed
+  target_success_count: 5
+  max_retry_per_slot: 1
+  ir_topic: /arm/ir_status
+  ir_field: ir
+  ir_timeout_s: 0.5
+  docking_torque_topic: /damiao_feedback
+  docking_torque_field: motor_5_tau
+  docking_torque_abs_threshold_nm: 1.3
+```
+
+新增 `stop_chassis` stage/sequence step：发布一次零 `/local_driving` 后推进，用于 FSM 中明确表达底盘停止。
+
+### 状态逻辑
+
+- 每个 slot 先导航到目标点，再执行 `prepare_sequence`。
+- IR=true 时执行 `pickup_sequence`；IR=false 时执行 `search.mode: micro_sweep_10mm`。
+- `pickup_sequence` lift high 后会再次读取 IR。若 IR=false，判定本次没夹到。
+- 每个 slot 最多重试 `max_retry_per_slot` 次；仍失败则执行 `miss_sequence` 并进入下一个 slot。
+- pickup verified 后等待 `/damiao_feedback.motor_5_tau` 的绝对值超过 `1.3 Nm`，触发 `dock_release_sequence`。
+- `success_count >= target_success_count` 或 6 个 slot 全部处理完后，执行 `final_sequence` 并进入 DONE，保留最终安全姿态。
+
+### 超时与失效保护
+
+- `/state_pose2d` 超时由 `global_navigation_node.pose_timeout_s` 统一发布零 `/local_driving`。
+- IR 数据缺失或超过 `ir_timeout_s` 未更新时，Red Area cycle 发布零 `/local_driving`；累计超时后按 miss 处理，不会盲动。
+- torque 数据缺失时，Docking 状态保持底盘停止并等待，不释放 gripper。
+- `final_sequence` 结束后不调用通用 `terminate`，避免通用电机归零覆盖 `yaw left / roll up / gripper open / stopper down` 最终安全姿态。
+
+### 启动方式
+
+```bash
+bash red_area_test.sh
 ```

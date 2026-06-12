@@ -2,7 +2,8 @@
 
 Loads a mission file containing waypoints, navigation profiles, actuator
 mappings, and a stage list. Executes stages sequentially with support for
-navigate, arm, sequential, parallel, conditional, wait, and terminate types.
+navigate, arm, sequential, parallel, conditional, stop_chassis,
+red_area_weapon_cycle, wait, and terminate types.
 
 All numeric values (coordinates, speeds, positions) live in the YAML.
 Python code only does interpretation and publishing — no hardcoded values.
@@ -103,6 +104,21 @@ class MissionExecutor:
         self._weapon_warned_missing_ir = False
         self._weapon_warned_ir_timeout = False
         self._weapon_ir_timeout_start = 0.0
+
+        # Red Area weapon cycle state
+        self._red_cycle_stage_id = None
+        self._red_cycle_state = 'idle'
+        self._red_cycle_slot_index = 0
+        self._red_cycle_success_count = 0
+        self._red_cycle_retry_count = 0
+        self._red_cycle_sequence_name = None
+        self._red_cycle_sequence_index = 0
+        self._red_cycle_sequence_after = None
+        self._red_cycle_wait_start = 0.0
+        self._red_cycle_target_pose = None
+        self._red_cycle_scan_start_pose = None
+        self._red_cycle_scan_start_time = 0.0
+        self._red_cycle_warned_missing_torque = False
 
         # Publishers (set after init by global_navigation_node)
         self.pub_driving = None
@@ -278,9 +294,32 @@ class MissionExecutor:
                             if key not in self.actuators:
                                 self.logger.warn(f"[{sid}] actuator '{key}' not defined")
 
+            elif stype == 'red_area_weapon_cycle':
+                if s.get('start_waypoint') not in self.waypoints:
+                    self.logger.warn(f"[{sid}] start_waypoint '{s.get('start_waypoint')}' not found")
+                profile_name = s.get('slot_profile', 'head_rack_speed')
+                if profile_name not in self.profiles:
+                    self.logger.warn(f"[{sid}] slot_profile '{profile_name}' not found")
+                search_cfg = s.get('search', {}) or {}
+                search_profile = search_cfg.get('profile')
+                if search_profile and search_profile not in self.profiles:
+                    self.logger.warn(f"[{sid}] search profile '{search_profile}' not found")
+                for seq_name in ('prepare_sequence', 'pickup_sequence', 'miss_sequence',
+                                 'dock_release_sequence', 'final_sequence'):
+                    for step in s.get(seq_name, []):
+                        step_type = step.get('type', 'wait')
+                        if step_type == 'arm':
+                            for key in step:
+                                if key == 'type':
+                                    continue
+                                if key not in self.actuators:
+                                    self.logger.warn(f"[{sid}] {seq_name} actuator '{key}' not defined")
+                        elif step_type not in ('wait', 'stop_chassis'):
+                            self.logger.warn(f"[{sid}] {seq_name} has unknown step type '{step_type}'")
+
             elif stype == 'weapon_head_pickup':
                 mode = s.get('search_mode', 'scan_until_ir')
-                if mode not in ('scan_until_ir', 'step_0p2m'):
+                if mode not in ('scan_until_ir', 'step_0p2m', 'micro_sweep_10mm'):
                     self.logger.warn(f"[{sid}] unknown search_mode '{mode}'")
                 for step in s.get('pickup_sequence', []):
                     if step.get('type') == 'arm':
@@ -328,8 +367,13 @@ class MissionExecutor:
             self._update_parallel(stage)
         elif stype == 'conditional':
             self._update_conditional(stage)
+        elif stype == 'stop_chassis':
+            self._execute_stop_chassis()
+            self._advance_stage()
         elif stype == 'weapon_head_pickup':
             self._update_weapon_head_pickup(stage)
+        elif stype == 'red_area_weapon_cycle':
+            self._update_red_area_weapon_cycle(stage)
         elif stype == 'wait':
             self._update_wait(stage)
         elif stype == 'terminate':
@@ -685,6 +729,9 @@ class MissionExecutor:
             self._seq_step_index += 1
         elif stype == 'wait':
             self._update_wait(step)
+        elif stype == 'stop_chassis':
+            self._execute_stop_chassis()
+            self._seq_step_index += 1
         else:
             self.logger.warn(f"Unknown sequential step type '{stype}', skipping")
             self._seq_step_index += 1
@@ -739,6 +786,10 @@ class MissionExecutor:
             self._update_weapon_step_move(stage)
         elif self._weapon_state == 'scan':
             self._update_weapon_scan(stage)
+        elif self._weapon_state == 'micro_sweep_prepare':
+            self._update_weapon_micro_sweep_prepare(stage)
+        elif self._weapon_state == 'micro_sweep_scan':
+            self._update_weapon_micro_sweep_scan(stage)
         elif self._weapon_state == 'pickup':
             self._update_weapon_pickup_sequence(stage)
         else:
@@ -785,6 +836,8 @@ class MissionExecutor:
             self._start_next_weapon_step(stage)
         elif mode == 'scan_until_ir':
             self._start_weapon_scan(stage)
+        elif mode == 'micro_sweep_10mm':
+            self._start_weapon_micro_sweep(stage)
         else:
             self.logger.warn(f"Unknown weapon search_mode '{mode}'")
             self._finish_weapon_pickup(stage, success=False)
@@ -877,6 +930,110 @@ class MissionExecutor:
 
         direction = float(scan_cfg.get('direction_rad', 0.0))
         speed = float(scan_cfg.get('speed_mps', 0.05))
+        vx_body = speed * math.cos(direction)
+        vy_body = speed * math.sin(direction)
+        self._pub_driving_body(vx_body, vy_body, 0.0)
+
+    def _start_weapon_micro_sweep(self, stage):
+        """Start a local -10mm to +10mm sweep around the current rack point.
+
+        This policy is intended for the moment after the chassis has navigated
+        to a rack point and the arm has already been commanded into its pickup
+        pose. If IR is still false, the chassis first backs up a small distance
+        along the configured body-frame direction, then slowly scans through the
+        point to the forward side while continuously checking IR.
+        """
+        sweep_cfg = stage.get('micro_sweep', {}) or {}
+        direction = float(sweep_cfg.get('direction_rad', 0.0))
+        back_distance = float(sweep_cfg.get('back_distance_m', 0.01))
+
+        yaw = self.current_pose['yaw'] + direction
+        self._weapon_scan_start_pose = None
+        self._weapon_scan_start_time = 0.0
+        self._weapon_step_target_pose = {
+            'x': self.current_pose['x'] - back_distance * math.cos(yaw),
+            'y': self.current_pose['y'] - back_distance * math.sin(yaw),
+            'yaw': self.current_pose['yaw'],
+        }
+        self._weapon_state = 'micro_sweep_prepare'
+        self._weapon_wait_start = 0.0
+        self._clear_navigation_state()
+        self.logger.info(
+            f"IR false; micro_sweep_10mm backing {back_distance:.3f}m before slow scan"
+        )
+
+    def _update_weapon_micro_sweep_prepare(self, stage):
+        """Move to the pre-point side of the micro sweep, then start scanning."""
+        ir_value = self._read_weapon_ir(stage)
+        if ir_value is None:
+            self._pub_zero_driving()
+            if self._check_weapon_ir_timeout_fallback(stage):
+                self._finish_weapon_pickup(stage, success=False)
+            return
+
+        if ir_value:
+            self._pub_zero_driving()
+            self._weapon_state = 'pickup'
+            self._weapon_pickup_step_index = 0
+            self._weapon_wait_start = 0.0
+            self.logger.info("Weapon head detected before micro sweep; running pickup_sequence")
+            return
+
+        sweep_cfg = stage.get('micro_sweep', {}) or {}
+        profile_name = sweep_cfg.get('profile', stage.get('step', {}).get('profile', 'slow'))
+        profile = self.profiles.get(profile_name, {})
+        pos_tol = float(sweep_cfg.get('pos_tolerance', 0.003))
+        yaw_tol = float(sweep_cfg.get('yaw_tolerance', 0.05))
+
+        arrived = self._drive_to_dynamic_pose(
+            f"{stage.get('id', 'weapon_head_pickup')}_micro_sweep_back",
+            self._weapon_step_target_pose,
+            profile,
+            pos_tol,
+            yaw_tol,
+        )
+        if arrived:
+            self._pub_zero_driving()
+            self._weapon_scan_start_pose = dict(self.current_pose)
+            self._weapon_scan_start_time = time.time()
+            self._weapon_state = 'micro_sweep_scan'
+            self.logger.info("micro_sweep_10mm reached back side; scanning through point")
+
+    def _update_weapon_micro_sweep_scan(self, stage):
+        """Scan slowly from the pre-point side to the post-point side."""
+        ir_value = self._read_weapon_ir(stage)
+        if ir_value is None:
+            self._pub_zero_driving()
+            if self._check_weapon_ir_timeout_fallback(stage):
+                self._finish_weapon_pickup(stage, success=False)
+            return
+
+        if ir_value:
+            self._pub_zero_driving()
+            self._weapon_state = 'pickup'
+            self._weapon_pickup_step_index = 0
+            self._weapon_wait_start = 0.0
+            self.logger.info("Weapon head detected during micro sweep; running pickup_sequence")
+            return
+
+        sweep_cfg = stage.get('micro_sweep', {}) or {}
+        back_distance = float(sweep_cfg.get('back_distance_m', 0.01))
+        forward_distance = float(sweep_cfg.get('forward_distance_m', 0.01))
+        max_distance_m = float(sweep_cfg.get('max_distance_m', back_distance + forward_distance))
+        timeout_s = float(sweep_cfg.get('timeout_s', 2.0))
+
+        elapsed = time.time() - self._weapon_scan_start_time
+        moved = get_distance(self.current_pose, self._weapon_scan_start_pose)
+        if elapsed > timeout_s or moved > max_distance_m:
+            self.logger.warn(
+                f"micro_sweep_10mm failed: elapsed={elapsed:.2f}s/{timeout_s:.2f}s, "
+                f"distance={moved:.3f}m/{max_distance_m:.3f}m"
+            )
+            self._finish_weapon_pickup(stage, success=False)
+            return
+
+        direction = float(sweep_cfg.get('direction_rad', 0.0))
+        speed = float(sweep_cfg.get('speed_mps', 0.015))
         vx_body = speed * math.cos(direction)
         vy_body = speed * math.sin(direction)
         self._pub_driving_body(vx_body, vy_body, 0.0)
@@ -1084,6 +1241,383 @@ class MissionExecutor:
         self._clear_weapon_state()
         self._advance_stage()
 
+
+    # ------------------------------------------------------------------
+    # Stage: red_area_weapon_cycle
+    # ------------------------------------------------------------------
+
+    def _update_red_area_weapon_cycle(self, stage):
+        """Run the Red Area rack cycle over multiple weapon head positions.
+
+        The stage keeps competition-specific flow in YAML while this executor
+        provides reusable control primitives: slot navigation, IR verification,
+        one retry per slot, torque-triggered docking release, and success-count
+        termination.
+        """
+        stage_id = stage.get('id', 'red_area_weapon_cycle')
+        if self.current_pose is None:
+            self._pub_zero_driving()
+            return
+
+        if self._red_cycle_stage_id != stage_id:
+            self._begin_red_area_weapon_cycle(stage)
+
+        state = self._red_cycle_state
+        if state == 'navigate_slot':
+            self._update_red_cycle_navigate_slot(stage)
+        elif state == 'sequence':
+            self._update_red_cycle_sequence(stage)
+        elif state == 'check_ir':
+            self._update_red_cycle_check_ir(stage)
+        elif state == 'micro_sweep_prepare':
+            self._update_red_cycle_micro_sweep_prepare(stage)
+        elif state == 'micro_sweep_scan':
+            self._update_red_cycle_micro_sweep_scan(stage)
+        elif state == 'verify_pickup':
+            self._update_red_cycle_verify_pickup(stage)
+        elif state == 'docking':
+            self._update_red_cycle_docking(stage)
+        elif state == 'complete':
+            self._finish_red_cycle(stage)
+        else:
+            self.logger.warn(f"Unknown red area cycle state '{state}', stopping chassis")
+            self._pub_zero_driving()
+            self._start_red_cycle_final_sequence(stage)
+
+    def _begin_red_area_weapon_cycle(self, stage):
+        """Initialize per-stage counters for the Red Area rack cycle."""
+        self._clear_navigation_state()
+        self._clear_weapon_state()
+        self._red_cycle_stage_id = stage.get('id', 'red_area_weapon_cycle')
+        self._red_cycle_state = 'navigate_slot'
+        self._red_cycle_slot_index = 0
+        self._red_cycle_success_count = 0
+        self._red_cycle_retry_count = 0
+        self._red_cycle_sequence_name = None
+        self._red_cycle_sequence_index = 0
+        self._red_cycle_sequence_after = None
+        self._red_cycle_wait_start = 0.0
+        self._red_cycle_target_pose = None
+        self._red_cycle_scan_start_pose = None
+        self._red_cycle_scan_start_time = 0.0
+        self._red_cycle_warned_missing_torque = False
+        self.logger.info(
+            f"Red Area weapon cycle started: slots={int(stage.get('slot_count', 6))}, "
+            f"target_success={int(stage.get('target_success_count', 5))}"
+        )
+
+    def _red_cycle_slot_pose(self, stage):
+        """Return the absolute pose of the current weapon slot."""
+        start_wp = self.waypoints[stage['start_waypoint']]
+        start_pose = start_wp['pose']
+        spacing = float(stage.get('slot_spacing_m', 0.2))
+        direction = float(start_pose.get('yaw', 0.0)) + float(stage.get('slot_direction_rad', 0.0))
+        offset = self._red_cycle_slot_index * spacing
+        return {
+            'x': float(start_pose['x']) + offset * math.cos(direction),
+            'y': float(start_pose['y']) + offset * math.sin(direction),
+            'yaw': float(start_pose.get('yaw', 0.0)),
+        }
+
+    def _red_cycle_slot_yaw_tolerance(self, stage):
+        if 'slot_yaw_tolerance_deg' in stage:
+            return math.radians(float(stage.get('slot_yaw_tolerance_deg')))
+        return float(stage.get('slot_yaw_tolerance', 0.05))
+
+    def _update_red_cycle_navigate_slot(self, stage):
+        """Navigate to the current weapon slot, then run prepare_sequence."""
+        if self._red_cycle_target_pose is None:
+            self._red_cycle_target_pose = self._red_cycle_slot_pose(stage)
+            self._clear_navigation_state()
+            self.logger.info(
+                f"Red Area slot {self._red_cycle_slot_index + 1}: navigating to "
+                f"({self._red_cycle_target_pose['x']:.3f}, {self._red_cycle_target_pose['y']:.3f})"
+            )
+
+        profile = self.profiles.get(stage.get('slot_profile', 'head_rack_speed'), {})
+        pos_tol = float(stage.get('slot_pos_tolerance', 0.005))
+        yaw_tol = self._red_cycle_slot_yaw_tolerance(stage)
+        self._pub_target_pose(self._red_cycle_target_pose)
+        arrived = self._drive_to_dynamic_pose(
+            f"{stage.get('id', 'red_area_weapon_cycle')}_slot_{self._red_cycle_slot_index + 1}",
+            self._red_cycle_target_pose,
+            profile,
+            pos_tol,
+            yaw_tol,
+        )
+        if arrived:
+            self._pub_zero_driving()
+            self._red_cycle_target_pose = None
+            self._start_red_cycle_sequence(stage, 'prepare_sequence', 'check_ir')
+
+    def _start_red_cycle_sequence(self, stage, sequence_name, after):
+        """Start a YAML action sequence used by the Red Area cycle."""
+        sequence = stage.get(sequence_name, []) or []
+        if not sequence:
+            self._handle_red_cycle_sequence_after(stage, after)
+            return
+        self._red_cycle_sequence_name = sequence_name
+        self._red_cycle_sequence_index = 0
+        self._red_cycle_sequence_after = after
+        self._red_cycle_wait_start = 0.0
+        self._red_cycle_state = 'sequence'
+
+    def _update_red_cycle_sequence(self, stage):
+        sequence = stage.get(self._red_cycle_sequence_name, []) or []
+        if self._red_cycle_sequence_index >= len(sequence):
+            after = self._red_cycle_sequence_after
+            self._red_cycle_sequence_name = None
+            self._red_cycle_sequence_index = 0
+            self._red_cycle_sequence_after = None
+            self._red_cycle_wait_start = 0.0
+            self._handle_red_cycle_sequence_after(stage, after)
+            return
+
+        step = sequence[self._red_cycle_sequence_index]
+        stype = step.get('type', 'wait')
+        if stype == 'arm':
+            self._execute_arm(step)
+            self._red_cycle_sequence_index += 1
+            self._red_cycle_wait_start = 0.0
+        elif stype == 'wait':
+            duration = float(step.get('duration_s', 0.0))
+            if self._red_cycle_wait_start == 0.0:
+                self._red_cycle_wait_start = time.time()
+                return
+            if time.time() - self._red_cycle_wait_start >= duration:
+                self._red_cycle_wait_start = 0.0
+                self._red_cycle_sequence_index += 1
+        elif stype == 'stop_chassis':
+            self._execute_stop_chassis()
+            self._red_cycle_sequence_index += 1
+            self._red_cycle_wait_start = 0.0
+        else:
+            self.logger.warn(f"Unknown red cycle sequence step type '{stype}', skipping")
+            self._red_cycle_sequence_index += 1
+            self._red_cycle_wait_start = 0.0
+
+    def _handle_red_cycle_sequence_after(self, stage, after):
+        if after == 'check_ir':
+            self._red_cycle_state = 'check_ir'
+        elif after == 'verify_pickup':
+            self._red_cycle_state = 'verify_pickup'
+        elif after == 'retry_slot':
+            self._weapon_ir_timeout_start = 0.0
+            self._red_cycle_target_pose = None
+            self._red_cycle_state = 'navigate_slot'
+        elif after == 'next_slot':
+            self._red_cycle_advance_slot_or_finish(stage)
+        elif after == 'after_docking':
+            if self._red_cycle_success_count >= int(stage.get('target_success_count', 5)):
+                self.logger.info(
+                    f"Target success count reached ({self._red_cycle_success_count}); finishing Red Area cycle"
+                )
+                self._start_red_cycle_final_sequence(stage)
+            else:
+                self._red_cycle_advance_slot_or_finish(stage)
+        elif after == 'complete':
+            self._red_cycle_state = 'complete'
+        else:
+            self.logger.warn(f"Unknown red cycle sequence continuation '{after}', finishing")
+            self._start_red_cycle_final_sequence(stage)
+
+    def _update_red_cycle_check_ir(self, stage):
+        """Check IR at the current slot before pickup or local search."""
+        ir_value = self._read_weapon_ir(stage)
+        if ir_value is None:
+            self._pub_zero_driving()
+            if self._check_weapon_ir_timeout_fallback(stage):
+                self._handle_red_cycle_miss(stage, 'IR timeout before pickup')
+            return
+
+        if ir_value:
+            self.logger.info(f"Slot {self._red_cycle_slot_index + 1}: IR true, starting pickup")
+            self._start_red_cycle_sequence(stage, 'pickup_sequence', 'verify_pickup')
+            return
+
+        search_cfg = stage.get('search', {}) or {}
+        mode = search_cfg.get('mode', 'micro_sweep_10mm')
+        if mode == 'micro_sweep_10mm':
+            self._start_red_cycle_micro_sweep(stage)
+        elif mode == 'none':
+            self._handle_red_cycle_miss(stage, 'IR false and search disabled')
+        else:
+            self.logger.warn(f"Unknown red cycle search mode '{mode}', treating slot as missed")
+            self._handle_red_cycle_miss(stage, f"unknown search mode {mode}")
+
+    def _red_cycle_search_cfg(self, stage):
+        return stage.get('micro_sweep', None) or stage.get('search', {}) or {}
+
+    def _start_red_cycle_micro_sweep(self, stage):
+        """Back up slightly, then scan through the current slot while reading IR."""
+        cfg = self._red_cycle_search_cfg(stage)
+        direction = float(cfg.get('direction_rad', 0.0))
+        back_distance = float(cfg.get('back_distance_m', 0.01))
+        yaw = self.current_pose['yaw'] + direction
+        self._red_cycle_target_pose = {
+            'x': self.current_pose['x'] - back_distance * math.cos(yaw),
+            'y': self.current_pose['y'] - back_distance * math.sin(yaw),
+            'yaw': self.current_pose['yaw'],
+        }
+        self._clear_navigation_state()
+        self._red_cycle_state = 'micro_sweep_prepare'
+        self.logger.info(
+            f"Slot {self._red_cycle_slot_index + 1}: IR false, micro sweep back {back_distance:.3f}m"
+        )
+
+    def _update_red_cycle_micro_sweep_prepare(self, stage):
+        ir_value = self._read_weapon_ir(stage)
+        if ir_value is None:
+            self._pub_zero_driving()
+            if self._check_weapon_ir_timeout_fallback(stage):
+                self._handle_red_cycle_miss(stage, 'IR timeout during micro sweep prepare')
+            return
+        if ir_value:
+            self._pub_zero_driving()
+            self._start_red_cycle_sequence(stage, 'pickup_sequence', 'verify_pickup')
+            return
+
+        cfg = self._red_cycle_search_cfg(stage)
+        profile = self.profiles.get(cfg.get('profile', stage.get('slot_profile', 'head_rack_speed')), {})
+        pos_tol = float(cfg.get('pos_tolerance', 0.003))
+        yaw_tol = float(cfg.get('yaw_tolerance', 0.05))
+        self._pub_target_pose(self._red_cycle_target_pose)
+        arrived = self._drive_to_dynamic_pose(
+            f"{stage.get('id', 'red_area_weapon_cycle')}_slot_{self._red_cycle_slot_index + 1}_micro_back",
+            self._red_cycle_target_pose,
+            profile,
+            pos_tol,
+            yaw_tol,
+        )
+        if arrived:
+            self._pub_zero_driving()
+            self._red_cycle_scan_start_pose = dict(self.current_pose)
+            self._red_cycle_scan_start_time = time.time()
+            self._red_cycle_state = 'micro_sweep_scan'
+
+    def _update_red_cycle_micro_sweep_scan(self, stage):
+        ir_value = self._read_weapon_ir(stage)
+        if ir_value is None:
+            self._pub_zero_driving()
+            if self._check_weapon_ir_timeout_fallback(stage):
+                self._handle_red_cycle_miss(stage, 'IR timeout during micro sweep scan')
+            return
+        if ir_value:
+            self._pub_zero_driving()
+            self.logger.info(f"Slot {self._red_cycle_slot_index + 1}: weapon found during micro sweep")
+            self._start_red_cycle_sequence(stage, 'pickup_sequence', 'verify_pickup')
+            return
+
+        cfg = self._red_cycle_search_cfg(stage)
+        back_distance = float(cfg.get('back_distance_m', 0.01))
+        forward_distance = float(cfg.get('forward_distance_m', 0.01))
+        max_distance_m = float(cfg.get('max_distance_m', back_distance + forward_distance))
+        timeout_s = float(cfg.get('timeout_s', 2.0))
+        elapsed = time.time() - self._red_cycle_scan_start_time
+        moved = get_distance(self.current_pose, self._red_cycle_scan_start_pose)
+        if elapsed > timeout_s or moved > max_distance_m:
+            self.logger.warn(
+                f"Slot {self._red_cycle_slot_index + 1}: micro sweep missed "
+                f"elapsed={elapsed:.2f}s/{timeout_s:.2f}s, distance={moved:.3f}m/{max_distance_m:.3f}m"
+            )
+            self._handle_red_cycle_miss(stage, 'micro sweep missed')
+            return
+
+        direction = float(cfg.get('direction_rad', 0.0))
+        speed = float(cfg.get('speed_mps', 0.015))
+        self._pub_driving_body(speed * math.cos(direction), speed * math.sin(direction), 0.0)
+
+    def _update_red_cycle_verify_pickup(self, stage):
+        """Verify that lift-high pickup still sees IR before counting success."""
+        ir_value = self._read_weapon_ir(stage)
+        if ir_value is None:
+            self._pub_zero_driving()
+            if self._check_weapon_ir_timeout_fallback(stage):
+                self._handle_red_cycle_miss(stage, 'IR timeout after lift high')
+            return
+
+        if ir_value:
+            self._red_cycle_success_count += 1
+            self._red_cycle_retry_count = 0
+            self.logger.info(
+                f"Slot {self._red_cycle_slot_index + 1}: pickup verified, "
+                f"success_count={self._red_cycle_success_count}"
+            )
+            self._red_cycle_state = 'docking'
+        else:
+            self._handle_red_cycle_miss(stage, 'IR false after lift high')
+
+    def _handle_red_cycle_miss(self, stage, reason):
+        """Handle a failed pickup attempt with one retry per configured slot."""
+        self._pub_zero_driving()
+        max_retry = int(stage.get('max_retry_per_slot', 1))
+        slot_no = self._red_cycle_slot_index + 1
+        if self._red_cycle_retry_count < max_retry:
+            self._red_cycle_retry_count += 1
+            self.logger.warn(
+                f"Slot {slot_no}: pickup missed ({reason}); retry "
+                f"{self._red_cycle_retry_count}/{max_retry}"
+            )
+            self._start_red_cycle_sequence(stage, 'miss_sequence', 'retry_slot')
+        else:
+            self.logger.warn(f"Slot {slot_no}: pickup missed after retry ({reason}); moving on")
+            self._start_red_cycle_sequence(stage, 'miss_sequence', 'next_slot')
+
+    def _update_red_cycle_docking(self, stage):
+        """Wait for torque contact, then release gripper for docking handoff."""
+        self._pub_zero_driving()
+        topic = stage.get('docking_torque_topic', '/damiao_feedback')
+        field = stage.get('docking_torque_field', 'motor_5_tau')
+        threshold = float(stage.get('docking_torque_abs_threshold_nm', 1.3))
+        sensor_data = self.sensor_cache.get(topic)
+        if sensor_data is None:
+            if not self._red_cycle_warned_missing_torque:
+                self.logger.warn(f"No torque data on {topic}; Red Area docking is waiting")
+                self._red_cycle_warned_missing_torque = True
+            return
+        self._red_cycle_warned_missing_torque = False
+        actual = float(sensor_data.get(field, 0.0))
+        if abs(actual) > threshold:
+            self.logger.info(
+                f"Docking torque detected: abs({field})={abs(actual):.3f}Nm > {threshold:.3f}Nm"
+            )
+            self._start_red_cycle_sequence(stage, 'dock_release_sequence', 'after_docking')
+
+    def _red_cycle_advance_slot_or_finish(self, stage):
+        target_success = int(stage.get('target_success_count', 5))
+        slot_count = int(stage.get('slot_count', 6))
+        if self._red_cycle_success_count >= target_success:
+            self._start_red_cycle_final_sequence(stage)
+            return
+        if self._red_cycle_slot_index >= slot_count - 1:
+            self.logger.warn(
+                f"Red Area processed {slot_count} slots with success_count="
+                f"{self._red_cycle_success_count}/{target_success}; finishing"
+            )
+            self._start_red_cycle_final_sequence(stage)
+            return
+
+        self._red_cycle_slot_index += 1
+        self._red_cycle_retry_count = 0
+        self._red_cycle_target_pose = None
+        self._weapon_ir_timeout_start = 0.0
+        self._clear_navigation_state()
+        self._red_cycle_state = 'navigate_slot'
+
+    def _start_red_cycle_final_sequence(self, stage):
+        self._pub_zero_driving()
+        self._start_red_cycle_sequence(stage, 'final_sequence', 'complete')
+
+    def _finish_red_cycle(self, stage):
+        """Finish without generic terminate so the final arm pose is preserved."""
+        self._pub_zero_driving()
+        self.phase = 'done'
+        self.logger.info(
+            f"Red Area weapon cycle complete: success_count={self._red_cycle_success_count}, "
+            f"last_slot={self._red_cycle_slot_index + 1}"
+        )
+        self._clear_red_cycle_state()
+
     # ------------------------------------------------------------------
     # Stage: conditional
     # ------------------------------------------------------------------
@@ -1131,6 +1665,7 @@ class MissionExecutor:
                 self._wait_duration = 0.0
                 self._clear_navigation_state()
                 self._clear_weapon_state()
+                self._clear_red_cycle_state()
                 self.logger.info(f"Jumped to [{stage_id}]")
                 return
         self.logger.warn(f"Stage '{stage_id}' not found, skipping")
@@ -1152,6 +1687,14 @@ class MissionExecutor:
                 self._seq_step_index += 1
             else:
                 self._advance_stage()
+
+    # ------------------------------------------------------------------
+    # Stage: stop_chassis
+    # ------------------------------------------------------------------
+
+    def _execute_stop_chassis(self):
+        """Publish an explicit zero chassis command."""
+        self._pub_zero_driving()
 
     # ------------------------------------------------------------------
     # Stage: terminate
@@ -1187,6 +1730,7 @@ class MissionExecutor:
     def _advance_stage(self):
         self._clear_navigation_state()
         self._clear_weapon_state()
+        self._clear_red_cycle_state()
         self.stage_index += 1
 
     def _clear_navigation_state(self):
@@ -1209,6 +1753,23 @@ class MissionExecutor:
         self._weapon_wait_start = 0.0
         self._weapon_warned_missing_ir = False
         self._weapon_warned_ir_timeout = False
+        self._weapon_ir_timeout_start = 0.0
+
+    def _clear_red_cycle_state(self):
+        """Clear per-stage Red Area weapon cycle state."""
+        self._red_cycle_stage_id = None
+        self._red_cycle_state = 'idle'
+        self._red_cycle_slot_index = 0
+        self._red_cycle_success_count = 0
+        self._red_cycle_retry_count = 0
+        self._red_cycle_sequence_name = None
+        self._red_cycle_sequence_index = 0
+        self._red_cycle_sequence_after = None
+        self._red_cycle_wait_start = 0.0
+        self._red_cycle_target_pose = None
+        self._red_cycle_scan_start_pose = None
+        self._red_cycle_scan_start_time = 0.0
+        self._red_cycle_warned_missing_torque = False
 
     def set_pose(self, pose):
         self.current_pose = pose
@@ -1222,3 +1783,4 @@ class MissionExecutor:
         self._wait_duration = 0.0
         self._clear_navigation_state()
         self._clear_weapon_state()
+        self._clear_red_cycle_state()

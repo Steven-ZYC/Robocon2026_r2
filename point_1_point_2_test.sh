@@ -4,7 +4,7 @@
 #
 # 假设: 机器人和 Arm 已在 point 1 前方对齐。
 # 序列:
-#   point 1: arm init pose → weapon_head_pickup (step_0p2m) → verify_ir
+#   point 1: arm init pose → weapon_head_pickup (micro_sweep_10mm) → verify_ir
 #     ├─ IR=true  → 继续释放流程 → done
 #     └─ IR=false → 回 arm open/low safe pose → navigate to point 2 → pickup point 2
 # ============================================================================
@@ -66,16 +66,17 @@ angle_unit: deg
 
 waypoints:
   wp_point_1:
-    pose: { x: 0.0, y: 0.0, yaw: 0.0 }
+    pose: { x: 0.35, y: 0.85, yaw: 0.0 }
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
   wp_point_2:
-    pose: { x: 0.0, y: 0.1, yaw: 0.0 }
+    pose: { x: 0.35, y: 0.85, yaw: 0.0 }
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
 
 profiles:
   head_rack_speed:
+    # Approach/REC tracking profile = 1/4 Red Area profile speed limits.
     speed_mps: 0.1
     yaw_rate_rps: 0.075
     start_radius_m: 0.0
@@ -131,6 +132,11 @@ stages:
     type: wait
     duration_s: 2.0
 
+  - id: move_to_rack
+    type: navigate
+    to: wp_point_1
+    profile: head_rack_speed
+
   # ---- 手臂初始姿态：M5=front, M6=up, gripper=open, lift=low, stopper=low ----
   - id: arm_start_pose
     type: arm
@@ -155,19 +161,29 @@ stages:
     duration_s: 0.1
 
   # ================================================================
-  # Point 1: weapon_head_pickup (step_0p2m)
-  #   slot_count=1 表示只检测当前位置，不做步进搜索
-  #   on_miss=advance 表示当前位置没有 weapon head 时跳过，继续后续 stage
+  # Point 1: weapon_head_pickup (micro_sweep_10mm)
+  #   IR=false 时先退 10mm，再慢速扫过当前位置到 +10mm
+  #   on_miss=advance 表示微扫仍未检测到 weapon head 时继续后续 stage
   # ================================================================
   - id: pickup_point_1
     type: weapon_head_pickup
-    search_mode: step_0p2m
+    search_mode: micro_sweep_10mm
     ir_topic: /arm/ir_status
     ir_field: ir
     ir_timeout_s: 1.0
     slot_count: 1
     slot_spacing_m: 0.2
     on_miss: advance
+    micro_sweep:
+      # rack point 1 -> point 2 当前沿 body +Y 排列；若实车方向相反可改为 -1.5708
+      direction_rad: 1.5708
+      back_distance_m: 0.01
+      forward_distance_m: 0.01
+      speed_mps: 0.015
+      timeout_s: 2.0
+      profile: head_rack_speed
+      pos_tolerance: 0.003
+      yaw_tolerance: 0.05
     step:
       profile: head_rack_speed
       settle_s: 0.15
@@ -252,7 +268,7 @@ stages:
   - id: move_to_point_2
     type: navigate
     to: wp_point_2
-    profile: head_step
+    profile: head_rack_speed
 
   # ---- Point 2 手臂就位：M5=front, M6=up, gripper=open, lift=low ----
   - id: point_2_ready
@@ -268,20 +284,30 @@ stages:
     duration_s: 0.2
 
   # ================================================================
-  # Point 2: weapon_head_pickup (step_0p2m)
+  # Point 2: weapon_head_pickup (micro_sweep_10mm)
   #   与 point 1 完全相同的 pickup_sequence，区别：
   #   - on_miss=terminate：point 2 是最后一次重试，不再继续
   #   - verify_ir on_false → point_2_failed_safe_pose → terminate
   # ================================================================
   - id: pickup_point_2
     type: weapon_head_pickup
-    search_mode: step_0p2m
+    search_mode: micro_sweep_10mm
     ir_topic: /arm/ir_status
     ir_field: ir
     ir_timeout_s: 1.0
     slot_count: 1
     slot_spacing_m: 0.2
     on_miss: terminate
+    micro_sweep:
+      # rack point 1 -> point 2 当前沿 body +Y 排列；若实车方向相反可改为 -1.5708
+      direction_rad: 1.5708
+      back_distance_m: 0.01
+      forward_distance_m: 0.01
+      speed_mps: 0.015
+      timeout_s: 2.0
+      profile: head_rack_speed
+      pos_tolerance: 0.003
+      yaw_tolerance: 0.05
     step:
       profile: head_rack_speed
       settle_s: 0.15
@@ -493,8 +519,8 @@ echo "  窗口7: /global_nav/status 监听"
 echo ""
 echo "  序列:"
 echo "    point 1"
-echo "      arm init pose → settle → weapon_head_pickup (step_0p2m)"
-echo "        search phase: 按 slot_spacing_m=0.2m 步进直到 IR=true"
+echo "      arm init pose → settle → weapon_head_pickup (micro_sweep_10mm)"
+echo "        search phase: 每个 point 前后 10mm 慢速扫动直到 IR=true"
 echo "        pickup_sequence: gripper close → lift high → verify_ir"
 echo "          ├─ IR=true  → continue: 放回 + 重回 init pose → done"
 echo "          └─ IR=false → prepare_point_2 (open/low safe pose)"

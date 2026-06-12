@@ -32,6 +32,7 @@
 - [x] 新增 `weapon_head_pickup` stage，支持 IR 检测后执行 YAML 内抓取序列
 - [x] 支持 `search_mode: step_0p2m`，按 `slot_spacing_m` 检查最多 `slot_count` 个槽位
 - [x] 支持 `search_mode: scan_until_ir`，低速连续扫描直到 IR=true
+- [x] 支持 `search_mode: micro_sweep_10mm`，在当前 point 前后 10mm 慢速扫 IR
 - [x] 在 README 说明 IR 缺失/超时/CRC 无效时的停车保护
 - [x] 在 `red_area.yaml` 增加 weapon head pickup 示例
 - [x] 新增 `routes/red_area_torque_test.yaml`，red area 底盘导航 + 手臂力矩触发测试
@@ -40,6 +41,23 @@
 - [ ] 实车验证 red_area_torque_test.yaml 完整序列 + 力矩触发
 
 - [x] 为 `weapon_head_pickup.pickup_sequence` 新增 `verify_ir` 抓后 IR 复检分支
-- [x] 新增 `routes/point_1_point_2.yaml`，只测试 weapon head point 1 与 point 2
+- [x] 新增 `routes/point_1_point_2.yaml`，只测试 weapon head point 1 与 point 2（历史记录；当前不保留 standalone route，改由脚本内联 mission）
 - [ ] 实车验证 point 1 抓后 IR=False 时能安全回到 open/low 并移动到 point 2
 - [ ] 实车验证 point 1/point 2 抓后 IR=True 时放回与感应脱离时序满足要求
+
+- [ ] 实车验证 point 1/point 2 的 `micro_sweep_10mm` 方向、速度和 10mm 距离是否合适
+
+- [x] `point_1_point_2_test.sh` 保持内联 mission，不再创建 standalone `routes/point_1_point_2.yaml`
+
+
+- [x] 统一 Red Area 相关测试的 profile 口径：正常 Red Area 与 1/4 接近 REC 追踪速度
+- [x] 新增根目录 `fast_pid_adjustment.sh`，用 Red Area PID 前进到 `weapon_point_1` 并只显示 target/current plot_debug 图
+- [ ] 实车验证 `fast_pid_adjustment.sh` 的 `weapon_point_1` 坐标与前进方向是否符合当前场地摆位
+
+
+- [x] 新增 `red_area_weapon_cycle` stage，支持 1..6 weapon position 循环夹取、单点重试、成功计数和 torque docking
+- [x] 新增 `stop_chassis` stage/sequence step，用于 FSM 显式发布零 `/local_driving`
+- [x] 更新 `red_area_test.sh` 为六点循环：成功 5 个后执行最终安全姿态并停机
+- [ ] 实车验证 Red Area 六点循环的 slot 方向、0.2m 间距和 `weapon1/#1` 坐标
+- [ ] 实车验证 lift high 后 IR=false 时能重试本点一次，二次失败后进入下一个 slot
+- [ ] 实车验证 `abs(motor_5_tau) > 1.3Nm` 的 docking 释放阈值
