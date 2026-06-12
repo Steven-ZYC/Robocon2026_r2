@@ -155,9 +155,16 @@ class GlobalNavigationNode(Node):
         }
 
     def _arm_ir_callback(self, msg):
-        """Cache arm-side IR sensor status for conditional stage evaluation."""
+        """Cache arm-side IR sensor status for conditional stage evaluation.
+
+        The arm_arduino_node already validates serial frames via XOR-LRC before
+        publishing, so bad data never reaches this callback. _stamp is included
+        so _read_weapon_ir() timeout checks work identically regardless of
+        which topic (ir_topic) the YAML configures.
+        """
         self.mission.sensor_cache['/arm/ir_status'] = {
             'ir': bool(msg.data),
+            '_stamp': time.monotonic(),
         }
 
     def _damiao_feedback_callback(self, msg):

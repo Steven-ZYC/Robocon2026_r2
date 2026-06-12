@@ -966,22 +966,20 @@ class MissionExecutor:
         """Read configured IR boolean from the cached sensor topic.
 
         Returns True/False when the value is fresh enough, or None when the
-        sensor data is missing/stale/CRC-invalid and the chassis must not move.
+        sensor data is missing/stale and the chassis must not move.
+
+        CRC is NOT checked here: arm_arduino_node already validates serial
+        frames via XOR-LRC before publishing to /arm/ir_status, so bad data
+        never reaches this function. Timeout protection (ir_timeout_s) is
+        the only gate — if sensor data stops arriving, the chassis holds.
         """
-        topic = stage.get('ir_topic', '/arduino/raw_sensor_data')
-        field = stage.get('ir_field', 'weapon_head_detected')
+        topic = stage.get('ir_topic', '/arm/ir_status')
+        field = stage.get('ir_field', 'ir')
         sensor_data = self.sensor_cache.get(topic)
         if sensor_data is None:
             if not self._weapon_warned_missing_ir:
                 self.logger.warn(f"No IR sensor data on {topic}; weapon pickup is holding position")
                 self._weapon_warned_missing_ir = True
-            return None
-
-        require_crc_valid = bool(stage.get('require_crc_valid', True))
-        if require_crc_valid and not bool(sensor_data.get('crc_valid', False)):
-            if not self._weapon_warned_ir_timeout:
-                self.logger.warn("Latest IR packet is CRC-invalid; weapon pickup is holding position")
-                self._weapon_warned_ir_timeout = True
             return None
 
         stamp = sensor_data.get('_stamp')

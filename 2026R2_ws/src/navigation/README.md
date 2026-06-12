@@ -406,6 +406,7 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-12 | v0.16 — 修复 `_arm_ir_callback` 缺 `_stamp`/`crc_valid` 导致 timeout/CRC 保护失效；统一所有 mission YAML 的 `ir_topic`/`ir_field` 为 `/arm/ir_status`/`ir`；新增两路 Arduino IR 数据源区别文档 |
 | 2026-06-12 | v0.15 — `weapon_head_pickup` 支持 `verify_ir` 抓后复检分支；新增 `routes/point_1_point_2.yaml` 两点测试 |
 | 2026-06-11 | v0.14 — Mission YAML 完整字段参考：所有区块/字段/类型/参数/systematic 文档化 |
 | 2026-06-08 | v0.13 — 新增 `routes/red_area_torque_test.yaml`，red area 底盘导航 + 手臂力矩触发测试；修复 global_navigation_node 对 `/damiao_feedback` 的订阅类型（Float32MultiArray → DamiaoFeedback） |
@@ -769,11 +770,9 @@ omega = max(alpha, 0.3) × omega_raw
 - id: pickup_weapon_head
   type: weapon_head_pickup
   search_mode: scan_until_ir        # scan_until_ir 或 step_0p2m
-  ir_topic: /arduino/raw_sensor_data
-  ir_field: weapon_head_detected
+  ir_topic: /arm/ir_status           # 见下方 Arduino IR 数据源说明
+  ir_field: ir
   ir_timeout_s: 0.5
-  require_crc_valid: true
-  slot_count: 6
   slot_spacing_m: 0.2
   on_miss: advance                  # advance 或 terminate
 
@@ -819,9 +818,47 @@ omega = max(alpha, 0.3) × omega_raw
 
 示例：`arm_yaw_motor: front` 会按 `actuators.arm_yaw_motor.motor_id` 与 `positions.front` 展开为 joint triplet；`arm_gripper: close` 会按 `states` index 展开为 `"arm_gripper:1"`。
 
+### 两个 Arduino IR 数据源（重要）
+
+系统中存在**两路独立的 Arduino**，各自发布自己的 IR 数据到不同的 topic。混淆两者是极常见的错误来源。
+
+| | Arduino 1: Sensor Arduino | Arduino 2: Arm Arduino |
+|---|---|---|
+| **节点** | `arduino_sensor_parser` | `arm_arduino_node` |
+| **串口** | `/dev/sensor_arduino` | `/dev/arm_arduino` |
+| **职责** | IMU + 编码器 → 里程计 | 气动阀控制 + IR 检测 |
+| **IR topic** | `/arduino/raw_sensor_data` | `/arm/ir_status` |
+| **IR 字段** | `weapon_head_detected` | `ir` |
+| **消息类型** | `ArduinoSensorData` | `std_msgs/msg/Bool` |
+| **CRC 校验** | CRC8-ATM（parser 层），结果写入 `crc_valid` 字段 | XOR-LRC（node 内 `extract_and_verify_payload`），校验失败直接丢弃 |
+| **`_stamp` 来源** | `global_navigation_node._arduino_sensor_callback` 写入 `time.monotonic()` | `global_navigation_node._arm_ir_callback` 写入 `time.monotonic()` |
+
+**使用规则：**
+
+- **weapon_head_pickup / verify_ir 应使用 `/arm/ir_status`**。Arm Arduino 的 IR 传感器是专门用于 weapon head 检测的，数据已经过 XOR-LRC 校验，CRC 无效的包在 node 层就被丢弃，不会到达 topic。
+- **`/arduino/raw_sensor_data` 的 `weapon_head_detected` 字段为预留位，当前恒为 `False`**。该字段未在 `ArduinoSensorData.msg` 中定义，`global_navigation_node` 通过 `getattr(msg, 'weapon_head_detected', False)` 获取，默认值为 `False`。后续如需从 sensor Arduino 读取 IR，需先在 `.msg` 中新增字段并在 `arduino_sensor_parser` 中填充。
+
+**YAML 正确配置示例：**
+
+```yaml
+# 正确：使用 /arm/ir_status（arm Arduino IR 传感器）
+- id: pickup_head
+  type: weapon_head_pickup
+  ir_topic: /arm/ir_status
+  ir_field: ir
+  ir_timeout_s: 0.5
+
+# 错误：不要这样写 —
+#   ir_topic: /arduino/raw_sensor_data
+#   ir_field: weapon_head_detected
+#   原因：weapon_head_detected 字段不存在于 ArduinoSensorData.msg，恒为 False
+```
+
+**超时保护：** `_read_weapon_ir()` 仅使用 `ir_timeout_s` 保护数据新鲜度——数据断流超过阈值则停车等待。不检查 CRC，因为 arm Arduino 的 XOR-LRC 校验在 publish 前已完成，topic 上不存在 CRC 无效数据。`_arm_ir_callback` 已补齐 `_stamp` 字段（v0.16），timeout 检查对 `/arm/ir_status` 生效。
+
 ### 超时与失效保护
 
-- IR 数据缺失、超过 `ir_timeout_s` 未更新、或 `require_crc_valid: true` 且最新包 CRC 无效时，`weapon_head_pickup` 会发布零 `/local_driving` 并保持当前 stage，不继续移动。
+- IR 数据缺失或超过 `ir_timeout_s` 未更新时，`weapon_head_pickup` 会发布零 `/local_driving` 并保持当前 stage，不继续移动。
 - `scan_until_ir` 超过 `scan.timeout_s` 或 `scan.max_distance_m` 后会发布零 `/local_driving`，记录 warn，并按 `on_miss` 处理：默认 `advance`，也可配置 `terminate`。
 - `/state_pose2d` 超时仍由 `global_navigation_node.pose_timeout_s` 负责安全停车。
 ```
@@ -1280,10 +1317,9 @@ arm_gripper: open  →  states.index('open') = 0
 - id: pickup_weapon_head
   type: weapon_head_pickup
   search_mode: scan_until_ir        # "scan_until_ir" 或 "step_0p2m"
-  ir_topic: /arduino/raw_sensor_data
-  ir_field: weapon_head_detected
+  ir_topic: /arm/ir_status
+  ir_field: ir
   ir_timeout_s: 0.5
-  require_crc_valid: true
   slot_count: 6
   slot_spacing_m: 0.2
   on_miss: advance                  # "advance" 或 "terminate"
@@ -1317,10 +1353,9 @@ arm_gripper: open  →  states.index('open') = 0
 | `id` | str | 是 | — | 唯一 stage ID |
 | `type` | str | 是 | — | 固定值 `"weapon_head_pickup"` |
 | `search_mode` | str | 否 | `"scan_until_ir"` | `"scan_until_ir"` / `"step_0p2m"` |
-| `ir_topic` | str | 否 | `"/arduino/raw_sensor_data"` | IR 数据来源 topic |
-| `ir_field` | str | 否 | `"weapon_head_detected"` | IR 字段名 |
-| `ir_timeout_s` | float | 否 | `0.5` | IR 数据超时 (s) |
-| `require_crc_valid` | bool | 否 | `true` | 是否要求 CRC 有效才采纳 |
+| `ir_topic` | str | 否 | `"/arm/ir_status"` | IR 数据来源 topic，见下方 Arduino IR 数据源说明 |
+| `ir_field` | str | 否 | `"ir"` | IR 字段名，对应 topic 缓存字典中的 key |
+| `ir_timeout_s` | float | 否 | `0.5` | IR 数据超时 (s)，数据断流超过此值则停车等待 |
 | `slot_count` | int | 否 | `6` | 最大槽位数 (仅 step_0p2m) |
 | `slot_spacing_m` | float | 否 | `0.2` | 槽间距 (m，仅 step_0p2m) |
 | `on_miss` | str | 否 | `"advance"` | 搜索失败策略：`"advance"` / `"terminate"` |
@@ -1408,7 +1443,6 @@ data: "arm_gripper:1,arm_lift:0,arm_stopper:1"
 |---|---|---|---|
 | global_navigation | `pose_timeout_s` | `/state_pose2d` 超时未更新 | 发布零 `/local_driving`，暂停 FSM |
 | weapon_head_pickup | `ir_timeout_s` | IR 数据超时 | 发布零 `/local_driving`，停在当前 stage |
-| weapon_head_pickup | `require_crc_valid: true` | CRC 无效 | 同上（不移动，等待有效数据） |
 | arm_arduino | `COMMAND_TIMEOUT_MS=200` | 200ms 无新命令 | Arduino 自行关断全部气动 |
 | damiao_ctrl | `command_timeout` | CAN 命令超时 | 电机失能 (disabled) |
 
@@ -1444,7 +1478,7 @@ data: "arm_gripper:1,arm_lift:0,arm_stopper:1"
 
 ### 超时与失效保护
 
-`verify_ir` 复用 `weapon_head_pickup` 原有 IR 保护：如果 `/arduino/raw_sensor_data` 缺失、超过 `ir_timeout_s` 未更新，或 `require_crc_valid: true` 且 CRC 无效，则发布零 `/local_driving` 并停在当前复检 step，不会继续移动到 point 2，也不会误判成功/失败。
+`verify_ir` 复用 `weapon_head_pickup` 原有 IR 保护：如果 IR 数据缺失或超过 `ir_timeout_s` 未更新，则发布零 `/local_driving` 并停在当前复检 step，不会继续移动到 point 2，也不会误判成功/失败。不检查 CRC——arm Arduino 在 publish 前已完成 XOR-LRC 校验。
 
 ### 启动方式
 

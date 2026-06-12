@@ -182,10 +182,9 @@ stages:
   - id: scan_and_grab_weapon_head
     type: weapon_head_pickup
     search_mode: step_0p2m
-    ir_topic: /arduino/raw_sensor_data
-    ir_field: weapon_head_detected
+    ir_topic: /arm/ir_status
+    ir_field: ir
     ir_timeout_s: 0.5
-    require_crc_valid: true
     slot_count: 6
     slot_spacing_m: 0.2
     on_miss: terminate

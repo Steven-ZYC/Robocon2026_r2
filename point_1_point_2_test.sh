@@ -152,15 +152,14 @@ stages:
   - id: pickup_point_1
     type: weapon_head_pickup
     search_mode: step_0p2m
-    ir_topic: /arduino/raw_sensor_data
-    ir_field: weapon_head_detected
+    ir_topic: /arm/ir_status
+    ir_field: ir
     ir_timeout_s: 0.5
-    require_crc_valid: true
     slot_count: 1
     slot_spacing_m: 0.2
     on_miss: advance
     step:
-      profile: head_step
+      profile: head_rack_speed
       settle_s: 0.15
       pos_tolerance: 0.02
       yaw_tolerance: 0.05
@@ -238,15 +237,14 @@ stages:
   - id: pickup_point_2
     type: weapon_head_pickup
     search_mode: step_0p2m
-    ir_topic: /arduino/raw_sensor_data
-    ir_field: weapon_head_detected
+    ir_topic: /arm/ir_status
+    ir_field: ir
     ir_timeout_s: 0.5
-    require_crc_valid: true
     slot_count: 1
     slot_spacing_m: 0.2
     on_miss: terminate
     step:
-      profile: head_step
+      profile: head_rack_speed
       settle_s: 0.15
       pos_tolerance: 0.02
       yaw_tolerance: 0.05
@@ -255,37 +253,48 @@ stages:
         arm_gripper: close
         arm_lift: low
         arm_stopper: low
+
       - type: wait
         duration_s: 0.15
+      
       - type: arm
         arm_gripper: close
         arm_lift: high
         arm_stopper: low
+      
       - type: wait
         duration_s: 0.20
+      
       - type: verify_ir
         label: point_2_after_lift_has_weapon_head
         expected: true
         on_true: continue
         on_false: point_2_failed_safe_pose
+      
       - type: arm
         arm_gripper: close
         arm_lift: low
         arm_stopper: low
+      
       - type: wait
         duration_s: 0.15
+      
       - type: arm
         arm_gripper: open
         arm_lift: low
         arm_stopper: low
+      
       - type: wait
         duration_s: 0.20
+      
       - type: arm
         arm_gripper: open
         arm_lift: high
         arm_stopper: low
+      
       - type: wait
         duration_s: 0.20
+      
       - type: verify_ir
         label: point_2_after_release_sensor_clear
         expected: false

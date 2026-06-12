@@ -200,3 +200,46 @@ main          ← 只放稳定、可执行版本
 - 是否优先使用 Python，且注释足够让他人维护？
 
 若任一项不满足，你必须在回答中明确指出并说明原因。
+
+---
+
+## 11. Arduino 数据源约定（两路独立 Arduino）
+
+系统中有**两路独立 Arduino**，各自负责不同的传感器与执行器。混淆两者的 topic 是最常见的 bug 来源之一，**每次写 `ir_topic` / `conditional.topic` 时都必须明确选择**。
+
+| | Arduino 1: Sensor Arduino | Arduino 2: Arm Arduino |
+|---|---|---|
+| **ROS 节点** | `arduino_sensor_parser` | `arm_arduino_node` |
+| **串口** | `/dev/sensor_arduino` | `/dev/arm_arduino` |
+| **职责** | IMU + 编码器 → 里程计 (`/state_pose2d`) | 气动阀控制 + IR 检测 |
+| **数据 topic** | `/arduino/raw_sensor_data` (ArduinoSensorData) | `/arm/ir_status` (std_msgs/Bool) |
+| **CRC 校验** | CRC8-ATM（parser 层），结果写入 `crc_valid` 字段 | XOR-LRC（node 内），校验失败直接丢弃不 publish |
+
+### 11.1 IR 检测必须用 `/arm/ir_status`
+
+- `weapon_head_pickup` 和 `verify_ir` 的 `ir_topic` / `ir_field` 必须配置为：
+  ```yaml
+  ir_topic: /arm/ir_status
+  ir_field: ir
+  ```
+- **禁止**使用 `/arduino/raw_sensor_data` + `weapon_head_detected`。该字段不存在于 `ArduinoSensorData.msg` 中，`global_navigation_node` 通过 `getattr(msg, 'weapon_head_detected', False)` 获取，恒为 `False`。
+
+### 11.2 两 topic 在 sensor_cache 中的 key 与字段
+
+| sensor_cache key | 典型字段 | 来源回调 |
+|---|---|---|
+| `"/arm/ir_status"` | `ir` (bool), `_stamp` (float) | `_arm_ir_callback` |
+| `"/arduino/raw_sensor_data"` | `imu_heading_deg`, `enc_x_counts`, `packet_id`, `crc_valid`, `_stamp` 等 | `_arduino_sensor_callback` |
+
+### 11.3 CRC 校验策略
+
+`_read_weapon_ir()` **不检查 CRC**。理由：
+- arm Arduino 走 XOR-LRC，校验失败的帧在 publish 前已丢弃，topic 上不存在 CRC 无效数据
+- 唯一保护是 `ir_timeout_s`——数据断流超过阈值则停车等待
+- `waapon_head_pickup` YAML 中**不存在** `require_crc_valid` 字段（已从 v0.17 移除）
+
+### 11.4 关联 package README
+
+两个 Arduino 节点的完整文档见：
+- `2026R2_ws/src/arduino_sensor_driver/README.md`
+- `2026R2_ws/src/arm_arduino_praser/README.md`
