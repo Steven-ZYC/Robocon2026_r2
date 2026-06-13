@@ -70,11 +70,11 @@ waypoints:
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
   wp_point_1:
-    pose: { x: 0.36, y: 0.87, yaw: 0.0 }
+    pose: { x: 0.36, y: -0.87, yaw: 0.0 }
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
   wp_point_2:
-    pose: { x: 0.36, y: 0.87, yaw: 0.0 }
+    pose: { x: 0.36, y: -0.87, yaw: 0.0 }
     pos_tolerance: 0.017
     yaw_tolerance_deg: 1.0
 
@@ -132,6 +132,7 @@ actuators:
     positions:
       up: 0.0
       right_90deg: 1.5708
+      left_90deg: -1.5708
 
   arm_gripper:
     type: pneumatic
@@ -152,7 +153,25 @@ stages:
   # 等下游节点 (arm_ctrl_node) ROS2 发现完成 (跨进程发现需要 3-5s)
   - id: init_wait
     type: wait
-    duration_s: 1.5
+    duration_s: 1.0
+
+  # ---- 手臂初始姿态：M5=front, M6=up, gripper=open, lift=low, stopper=low ----
+  - id: arm_start_pose
+    type: arm
+    arm_yaw_motor: front
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+
+  # ---- M5 转到侧面 (right = 90°)，对准 rack slot ----
+  - id: arm_ready
+    type: arm
+    arm_yaw_motor: right
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
 
   - id: move_to_middle
     type: navigate
@@ -174,28 +193,10 @@ stages:
       max_age_s: 0.5
       min_elapsed_s: 0.20
 
-  # ---- 手臂初始姿态：M5=front, M6=up, gripper=open, lift=low, stopper=low ----
-  - id: arm_start_pose
-    type: arm
-    arm_yaw_motor: front
-    arm_roll_motor: up
-    arm_gripper: open
-    arm_lift: low
-    arm_stopper: low
-
-  # ---- M5 转到侧面 (left = -90°)，对准 rack slot ----
-  - id: arm_ready
-    type: arm
-    arm_yaw_motor: left
-    arm_roll_motor: up
-    arm_gripper: open
-    arm_lift: low
-    arm_stopper: low
-
   # ---- 等待手臂就位后短暂稳定 ----
   - id: point_1_settle
     type: wait
-    duration_s: 0.1
+    duration_s: 1.0
 
   # ================================================================
   # Point 1: weapon_head_pickup (micro_sweep_10mm)
@@ -207,16 +208,16 @@ stages:
     search_mode: micro_sweep_10mm
     ir_topic: /arm/ir_status
     ir_field: ir
-    ir_timeout_s: 1.0
+    ir_timeout_s: 2.0
     slot_count: 1
     slot_spacing_m: 0.2
     on_miss: advance
     micro_sweep:
-      # rack point 1 -> point 2 当前沿 body +Y 排列；若实车方向相反可改为 -1.5708
-      direction_rad: 1.5708
+      # Blue point 1/2 pickup 需要车体前后微扫；0.0 = body +X 前进方向
+      direction_rad: 0.0
       back_distance_m: 0.01
       forward_distance_m: 0.01
-      speed_mps: 0.015
+      speed_mps: 0.02
       timeout_s: 2.0
       profile: head_rack_speed
       pos_tolerance: 0.003
@@ -233,47 +234,110 @@ stages:
         arm_gripper: close
         arm_lift: low
         arm_stopper: low
+      
       - type: wait
-        duration_s: 0.15
+        duration_s: 1.0
 
       # 步骤2: lift high（提起 weapon head）
       - type: arm
         arm_gripper: close
         arm_lift: high
         arm_stopper: low
+
       - type: wait
-        duration_s: 0.20
+        duration_s: 1.0
 
-      # 步骤3: verify_ir 复检 —— 确认是否真的抓到了 weapon head
-      #   IR=true  → continue：继续下方释放流程
-      #   IR=false → prepare_point_2_after_failed_grab：跳 point 2 重试
-      - type: verify_ir
-        label: point_1_after_lift_has_weapon_head
-        expected: true
-        on_true: continue
-        on_false: prepare_point_2_after_failed_grab
+      # 步骤6:检查有无夹到，未触发IR sensor需要归位
+      # else 跳回自己 → 50Hz 轮询直到 IR=true
+      #- id: verify_ir
+      # type: verify_ir
+      #  expected_ir: true
+      #  on_true: yaw_to_front
+      #  on_false: prepare_point_2_after_failed_grab
 
-      # 步骤4: lift low, gripper open（放回 rack）
-      - type: arm
+      # 步骤7: M5→front (0°)
+      - id: yaw_to_front
+        type: arm
+        arm_yaw_motor: front
+        arm_roll_motor: up
+        arm_gripper: close
+        arm_lift: high
+        arm_stopper: low
+
+      - id: wait_1s
+        type: wait
+        duration_s: 1.0
+
+      # 步骤8: M6→+90°
+      - id: roll_right
+        type: arm
+        arm_yaw_motor: front
+        arm_roll_motor: left_90deg
         arm_gripper: close
         arm_lift: low
         arm_stopper: low
-      - type: wait
-        duration_s: 0.15
-      - type: arm
+
+      - id: wait_1s
+        type: wait
+        duration_s: 1.0
+
+      # 步骤9: stopper high
+      - id: stopper_up
+        type: arm
+        arm_yaw_motor: front
+        arm_roll_motor: left_90deg
+        arm_gripper: close
+        arm_lift: low
+        arm_stopper: high
+
+      - id: wait_0_5s
+        type: wait
+        duration_s: 1.0
+
+      # 步骤10: 扭矩检测: M5 torque > |2.0| Nm → 松开 gripper
+      # 支持的 op 字段: gt(大于) lt(小于) gte(≥) lte(≤) abs_gt(绝对值大于) abs_gte(绝对值≥)
+      # 数据来源: /damiao_feedback → motor_5_tau (Nm)，由 global_navigation_node 缓存到 sensor_cache
+      - id: check_torque
+        type: conditional
+        condition:
+          topic: /damiao_feedback
+          field: motor_5_tau
+          op: abs_gt
+          value: 2.0
+        then: release_gripper
+        else: check_torque
+
+      - id: check_torque_timeout
+        type: wait
+        duration_s: 0.3
+        on_timeout: release_gripper
+        on_event: check_torque
+
+      # 步骤11: 松开 gripper
+      - id: release_gripper
+        type: arm
+        arm_yaw_motor: front
+        arm_roll_motor: left_90deg
         arm_gripper: open
         arm_lift: low
         arm_stopper: low
-      - type: wait
-        duration_s: 0.20
 
-      # 步骤5: lift high, arm 离开 rack（不挂到 rack 上物体）
-      - type: arm
+      - id: wait_1s
+        type: wait
+        duration_s: 1.0
+      
+      # 步骤12: 归位
+      - id: arm_init_pose
+        type: arm
+        arm_yaw_motor: front
+        arm_roll_motor: up
         arm_gripper: open
-        arm_lift: high
+        arm_lift: low
         arm_stopper: low
-      - type: wait
-        duration_s: 0.20
+
+      - id: wait_1s
+        type: wait
+        duration_s: 1.0
 
       # 步骤6: verify_ir 复检 —— 确认 sensor 已清空（weapon head 已脱离）
       #   无论 true/false 都跳 point_1_done → terminate
@@ -287,10 +351,10 @@ stages:
   # Point 1 失败恢复路径 (verify_ir on_false 跳转到这里)
   #   arm 回 open/low 安全姿态 → wait → navigate 到 point 2 → 重试
   # ================================================================
-  # ---- 失败安全姿态：M5=front, M6=up, gripper=open, lift=low ----
+  # ---- 失败安全姿态：M5=right, M6=up, gripper=open, lift=low ----
   - id: prepare_point_2_after_failed_grab
     type: arm
-    arm_yaw_motor: front
+    arm_yaw_motor: right
     arm_roll_motor: up
     arm_gripper: open
     arm_lift: low
@@ -320,6 +384,14 @@ stages:
     type: wait
     duration_s: 0.2
 
+  - id: arm_ready_point_2
+    type: arm
+    arm_yaw_motor: right
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+
   # ================================================================
   # Point 2: weapon_head_pickup (micro_sweep_10mm)
   #   与 point 1 完全相同的 pickup_sequence，区别：
@@ -331,17 +403,17 @@ stages:
     search_mode: micro_sweep_10mm
     ir_topic: /arm/ir_status
     ir_field: ir
-    ir_timeout_s: 1.0
+    ir_timeout_s: 2.0
     slot_count: 1
     slot_spacing_m: 0.2
     on_miss: terminate
     micro_sweep:
-      # rack point 1 -> point 2 当前沿 body +Y 排列；若实车方向相反可改为 -1.5708
-      direction_rad: 1.5708
+      # Blue point 1/2 pickup 需要车体前后微扫；0.0 = body +X 前进方向
+      direction_rad: 0.0
       back_distance_m: 0.01
       forward_distance_m: 0.01
       speed_mps: 0.015
-      timeout_s: 2.0
+      timeout_s: 5.0
       profile: head_rack_speed
       pos_tolerance: 0.003
       yaw_tolerance: 0.05
@@ -544,6 +616,17 @@ ros2 topic echo /global_nav/status
 read -p '按 Enter 关闭此窗口...'
 "
 
+# ---- 窗口8: /arm/ir_status 监听 ----
+sleep 0.1
+gnome-terminal --geometry=80x10+1600+850 -- bash -c "
+source $WS/install/setup.bash
+echo '=== 窗口8: /arm/ir_status ==='
+echo ''
+sleep 3
+ros2 topic echo /arm/ir_status
+read -p '按 Enter 关闭此窗口...'
+"
+
 echo "[pt1_pt2] 所有窗口已启动"
 echo ""
 echo "  窗口1: damiao_ctrl"
@@ -553,6 +636,7 @@ echo "  窗口4: arm_arduino_node"
 echo "  窗口5: navigation + Arduino sensor parser"
 echo "  窗口6: plot_debug"
 echo "  窗口7: /global_nav/status 监听"
+echo "  窗口8: /arm/ir_status 监听"
 echo ""
 echo "  序列:"
 echo "    point 1"
@@ -568,7 +652,7 @@ echo "        └─ IR=false → safe pose → terminate"
 echo ""
 echo "  重点观察:"
 echo "    /global_nav/status     → FSM 当前 stage / 进度"
-echo "    weapon_head_detected   → IR 传感器状态 (sensor cache)"
+echo "    /arm/ir_status       → Arm Arduino IR 状态（weapon_head_pickup 实际使用）"
 echo "    /global_nav/target_pose → PID 目标 vs 当前位置对比"
 echo "    /damiao_feedback motor_1_tau → middle 到 point 1 torque early quit"
 echo "    move_to_rack timeout_s=8.0 → 未到点/未触发 torque 也会进入 point 1 pickup"

@@ -127,7 +127,7 @@ stages:
     then: gripper_close
     else: wait_ir
 
-  # 步骤3 完成: gripper close, 其余保持
+  # 步骤4 完成: gripper close, 其余保持
   - id: gripper_close
     type: arm
     arm_yaw_motor: minus_90deg
@@ -140,7 +140,7 @@ stages:
     type: wait
     duration_s: 1.0
 
-  # 步骤4: lift high
+  # 步骤5: lift high
   - id: lift_up
     type: arm
     arm_yaw_motor: minus_90deg
@@ -149,11 +149,19 @@ stages:
     arm_lift: high
     arm_stopper: low
 
-  - id: wait_1s
+  - id: wait_0_8s
     type: wait
-    duration_s: 1.0
+    duration_s: 0.8
 
-  # 步骤5: M5→front (0°)
+  # 步骤6:检查有无夹到，未触发IR sensor需要归位
+  # else 跳回自己 → 50Hz 轮询直到 IR=true
+  - id: verify_ir
+    type: verify_ir
+    expected_ir: true
+    on_true: yaw_to_front
+    on_false: arm_ready
+
+  # 步骤7: M5→front (0°)
   - id: yaw_to_front
     type: arm
     arm_yaw_motor: front
@@ -164,9 +172,9 @@ stages:
 
   - id: wait_0_5s
     type: wait
-    duration_s: 0.5
+    duration_s: 0.8
 
-  # 步骤6: M6→+90°
+  # 步骤8: M6→+90°
   - id: roll_right
     type: arm
     arm_yaw_motor: front
@@ -179,7 +187,7 @@ stages:
     type: wait
     duration_s: 1.0
 
-  # 步骤7: stopper high
+  # 步骤9: stopper high
   - id: stopper_up
     type: arm
     arm_yaw_motor: front
@@ -190,9 +198,9 @@ stages:
 
   - id: wait_0_5s
     type: wait
-    duration_s: 0.5
+    duration_s: 1.0
 
-  # 扭矩检测: M5 torque > |1.3| Nm → 松开 gripper
+  # 步骤10: 扭矩检测: M5 torque > |1.3| Nm → 松开 gripper
   # 支持的 op 字段: gt(大于) lt(小于) gte(≥) lte(≤) abs_gt(绝对值大于) abs_gte(绝对值≥)
   # 数据来源: /damiao_feedback → motor_5_tau (Nm)，由 global_navigation_node 缓存到 sensor_cache
   - id: check_torque
@@ -205,6 +213,7 @@ stages:
     then: release_gripper
     else: check_torque
 
+  # 步骤11: 松开 gripper
   - id: release_gripper
     type: arm
     arm_yaw_motor: front
@@ -216,7 +225,8 @@ stages:
   - id: wait_0_5s
     type: wait
     duration_s: 0.5
-
+  
+  # 步骤12: 归位
   - id: arm_init_pose
     type: arm
     arm_yaw_motor: front

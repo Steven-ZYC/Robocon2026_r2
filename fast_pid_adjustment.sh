@@ -49,11 +49,14 @@ waypoints:
     pose: { x: 0.0, y: 0.0, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
-  weapon_point_1:
-    pose: { x: 0.35, y: 0.85, yaw: 0.0 }
+  point_1:
+    pose: { x: 0.33, y: 0.0, yaw: 0.0 }
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
-
+  weapon_point_1:
+    pose: { x: 0.36, y: 0.87, yaw: 0.0 }
+    pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
 profiles:
   red_area:
     speed_mps: 0.4
@@ -74,6 +77,11 @@ profiles:
     curve: cubic_ease
 
 stages:
+  - id: move_to_weapon_point_1
+    type: navigate
+    to: point_1
+    profile: red_area
+  
   - id: move_to_weapon_point_1
     type: navigate
     to: weapon_point_1

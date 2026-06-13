@@ -6,7 +6,7 @@ Loads a mission YAML file and executes its stages: navigation, arm joint
 Subscribes:
 - /state_pose2d (Pose2D): robot planar state from arduino_sensor_driver
 - /arduino/raw_sensor_data (ArduinoSensorData): for conditional evaluation
-- /damiao_feedback (DamiaoFeedback): motor 5 torque for torque-triggered stages
+- /damiao_feedback (DamiaoFeedback): motor 5 arm torque and motor 1/2 chassis torque
 
 Publishes:
 - /local_driving (Float32MultiArray): chassis motion → local_navigation_node
@@ -168,17 +168,34 @@ class GlobalNavigationNode(Node):
         }
 
     def _damiao_feedback_callback(self, msg):
-        """Cache motor 5 torque/position for conditional stage evaluation.
+        """Cache selected Damiao motor feedback for mission conditions.
 
-        DamiaoFeedback fields: motor_id, q_rad, dq_rad_s, tau_nm, enabled
-        Only motor 5 data is tracked for torque-triggered FSM stages.
+        Motor 5 is used by arm docking torque logic. Motor 1 and 2 are cached
+        as chassis torque channels so test missions can detect rack contact
+        without subscribing to all four base motors.
         """
-        if msg.motor_id == 5:
-            self.mission.sensor_cache['/damiao_feedback'] = {
-                'motor_5_tau': float(msg.tau_nm),
-                'motor_5_q': float(msg.q_rad),
-                'motor_5_dq': float(msg.dq_rad_s),
-            }
+        motor_id = int(msg.motor_id)
+        if motor_id not in (1, 2, 5):
+            return
+
+        cache = self.mission.sensor_cache.setdefault('/damiao_feedback', {})
+        now = time.monotonic()
+        torque = float(msg.tau_nm)
+        position = float(msg.q_rad)
+        velocity = float(msg.dq_rad_s)
+
+        cache[f'motor_{motor_id}_tau'] = torque
+        cache[f'motor_{motor_id}_q'] = position
+        cache[f'motor_{motor_id}_dq'] = velocity
+        cache[f'motor_{motor_id}_stamp'] = now
+        cache['_stamp'] = now
+
+        if motor_id == 2:
+            cache['chassis_motor_id'] = 2
+            cache['chassis_motor_tau'] = torque
+            cache['chassis_motor_q'] = position
+            cache['chassis_motor_dq'] = velocity
+            cache['chassis_motor_stamp'] = now
 
     def pose_callback(self, msg):
         # arduino_sensor_parser publishes theta in degrees; convert to rad

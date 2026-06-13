@@ -406,6 +406,12 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-13 | v0.26 — `blue_point_1_point_2_test.sh` 增加窗口订阅 `/arm/ir_status`，用于现场确认 weapon_head_pickup 实际 IR 输入 |
+| 2026-06-13 | v0.25 — `blue_point_1_point_2_test.sh` 的 `weapon_head_pickup.micro_sweep` 改为 body +X 前后 10mm 扫动，避免误用 body +Y 侧向扫 |
+| 2026-06-13 | v0.24 — `navigate` 支持 `timeout_s` 超时推进；`point_1_point_2_test.sh` 的 `move_to_rack` 8 秒后自动进入下一 stage |
+| 2026-06-13 | v0.22 — `navigate` 支持 `torque_arrival` early quit；`point_1_point_2_test.sh` 在 middle→point1 使用 `motor_1_tau` 触发提前到达 |
+| 2026-06-13 | v0.21 — `/damiao_feedback` 额外缓存 motor 2 作为 chassis torque 代表，提供 `chassis_motor_tau` 给 navigation 条件使用 |
+| 2026-06-13 | v0.20 — 动态目标导航 `_drive_to_dynamic_pose()` 支持完整 XY PID I/D 与 `k_heading_d`，`red_area_weapon_cycle` slot/micro-back 可复用 Red Area PID 参数 |
 | 2026-06-13 | v0.19 — Red Area 六点循环 FSM：`red_area_weapon_cycle` 处理 1..6 weapon position，成功 5 个后停机 |
 | 2026-06-13 | v0.18 — 统一 Red Area/接近 REC profile 口径；新增根目录 `fast_pid_adjustment.sh` 用 Red Area PID 前进到 `weapon_point_1` 并只显示 target/current 图 |
 | 2026-06-13 | v0.17 — `weapon_head_pickup` 新增 `micro_sweep_10mm` 搜索 policy；`point_1_point_2` 在每个 point 前后 10mm 慢速扫 IR |
@@ -1234,9 +1240,18 @@ arm_gripper: open  →  states.index('open') = 0
 | topic key | 来源节点 | cache 存入的字段 | 字段类型 |
 |---|---|---|---|
 | `/arm/ir_status` | `arm_arduino_node` → `global_navigation_node._arm_ir_callback` | `ir` | bool |
-| `/damiao_feedback` | `damiao_ctrl` → `global_navigation_node._damiao_feedback_callback` | `motor_5_tau` | float (Nm) |
+| `/damiao_feedback` | `damiao_ctrl` → `global_navigation_node._damiao_feedback_callback` | `motor_5_tau` | float (Nm), arm docking torque |
 | | | `motor_5_q` | float (rad) |
 | | | `motor_5_dq` | float (rad/s) |
+| | | `motor_1_tau` | float (Nm), chassis motor 1 torque |
+| | | `motor_1_q` | float (rad) |
+| | | `motor_1_dq` | float (rad/s) |
+| | | `motor_2_tau` | float (Nm), chassis motor 2 torque |
+| | | `motor_2_q` | float (rad) |
+| | | `motor_2_dq` | float (rad/s) |
+| | | `chassis_motor_tau` | float (Nm), alias of `motor_2_tau` |
+| | | `chassis_motor_q` | float (rad), alias of `motor_2_q` |
+| | | `chassis_motor_dq` | float (rad/s), alias of `motor_2_dq` |
 | `/arduino/raw_sensor_data` | `arduino_sensor_parser` → `global_navigation_node._arduino_sensor_callback` | `weapon_head_detected` | bool |
 | | | `imu_heading_deg` | float |
 | | | `imu_rate_rad_s` | float |
@@ -1543,6 +1558,7 @@ ros2 launch navigation navigation.launch.py mission_file:=routes/point_1_point_2
 - point 1：`on_miss: advance`，微扫仍未检测到 IR 时，arm 回到 open/low 安全姿态，再导航到 point 2。
 - point 2：`on_miss: terminate`，最后一次重试失败后进入安全终止。
 - 当前 rack point 方向假设为 body `+Y`，即 `direction_rad: 1.5708`。如果实车 point 2 在相反方向，把两个 pickup stage 的该参数改为 `-1.5708`。
+- `blue_point_1_point_2_test.sh` 现场需要车体前后微扫，两个 `weapon_head_pickup.micro_sweep.direction_rad` 已改为 `0.0`，即 body `+X` 前进方向；准备阶段会先退 `back_distance_m=0.01 m`，再向前扫过当前位置到 `forward_distance_m=0.01 m`。
 - 启动方式使用 `bash point_1_point_2_test.sh`，脚本会把内联 mission 写到 `/tmp/point_1_point_2_mission.yaml` 后启动 navigation。
 
 
@@ -1642,3 +1658,126 @@ plot_debug 参数固定为：
 ```bash
 bash red_area_test.sh
 ```
+
+---
+
+## v0.20 — red_area_weapon_cycle 动态目标完整 PID（2026-06-13）
+
+### 变更目标
+
+`red_area_weapon_cycle` 的 slot 导航和 micro-back 预定位都通过 `_drive_to_dynamic_pose()` 生成动态目标。旧实现只使用 `k_p_x` / `k_p_y` 和 heading P，导致 `head_rack_speed` 中配置的 `k_i_x`、`k_i_y`、`k_d_x`、`k_d_y`、`k_heading_d` 不生效。
+
+本版本将动态目标导航改为完整 XY PID：
+
+```text
+vx_body = k_p_x * e_x + k_i_x * integral(e_x) + k_d_x * delta(e_x)
+vy_body = k_p_y * e_y + k_i_y * integral(e_y) + k_d_y * delta(e_y)
+omega   = heading PID output, using k_heading_p and k_heading_d
+```
+
+### 影响范围
+
+- `red_area_weapon_cycle.navigate_slot`：前往每个 weapon slot 时支持完整 I/D。
+- `red_area_weapon_cycle.micro_sweep_prepare`：退到 micro sweep 起点时支持完整 I/D。
+- `weapon_head_pickup` 中复用 `_drive_to_dynamic_pose()` 的动态小步移动也同步支持完整 I/D。
+
+### 参数兼容
+
+仍然使用 profile 内已有字段：`k_i_x`、`k_i_y`、`k_d_x`、`k_d_y`、`xy_integral_max`、`k_heading_d`。这些参数默认值仍为 `0.0`，不配置时保持接近旧版纯 P 行为。
+
+### 超时与失效保护
+
+本次修改不改变超时策略：`/state_pose2d` 超时仍由 `global_navigation_node.pose_timeout_s` 统一停车；IR 超时、torque 缺失等待、final safe pose 行为沿用 v0.19。
+
+---
+
+## v0.21 — chassis torque 代表缓存（2026-06-13）
+
+### 变更目标
+
+`global_navigation_node` 原先只在 `/damiao_feedback` 中缓存 motor 5，主要服务 arm docking torque。为了后续 navigation 可以用底盘接触力矩判断到达，本版本额外缓存 motor 2，作为 chassis torque 的代表通道。
+
+### 新增 cache 字段
+
+| 字段 | 含义 | 单位 |
+|---|---|---|
+| `motor_2_tau` | motor 2 原始反馈 torque | Nm |
+| `motor_2_q` | motor 2 输出侧位置 | rad |
+| `motor_2_dq` | motor 2 输出侧速度 | rad/s |
+| `chassis_motor_tau` | chassis torque 代表值，等同 `motor_2_tau` | Nm |
+| `chassis_motor_q` | chassis 代表电机位置，等同 `motor_2_q` | rad |
+| `chassis_motor_dq` | chassis 代表电机速度，等同 `motor_2_dq` | rad/s |
+
+### 超时与失效保护
+
+本次只增加 cache，不改变现有控制行为。`/state_pose2d` 超时仍由 `pose_timeout_s` 停车；如果后续 mission 使用 `chassis_motor_tau` 做条件判断，应继续通过 stage timeout 或 pose timeout 避免无反馈时盲动。
+
+---
+
+## v0.22 — navigate torque_arrival early quit（2026-06-13）
+
+### 变更目标
+
+`navigate` stage 新增可选 `torque_arrival` 条件，用于“还没到 waypoint，但底盘 motor torque 已经突增，说明已经碰到 rack/边界”的场景。默认不启用；只有 YAML stage 写了 `torque_arrival` 时才会提前退出。
+
+### YAML 示例
+
+```yaml
+- id: move_to_rack
+  type: navigate
+  to: wp_point_1
+  profile: red_area
+  torque_arrival:
+    topic: /damiao_feedback
+    field: motor_1_tau
+    op: abs_gte
+    abs_threshold_nm: 1.3
+    max_age_s: 0.25
+    min_elapsed_s: 0.20
+```
+
+触发后 `global_navigation_node` 会发布零 `/local_driving`，然后把该 `navigate` stage 视为完成并进入下一 stage。`point_1_point_2_test.sh` 已在 `move_to_rack`（middle → point 1）启用此逻辑。
+
+### 参数说明
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `topic` | `/damiao_feedback` | sensor_cache topic key |
+| `field` | `chassis_motor_tau` | torque 字段，point 1/2 测试使用 `motor_1_tau` |
+| `op` | `abs_gte` | 支持 `abs_gt/abs_gte/gt/gte/lt/lte` |
+| `abs_threshold_nm` | `0.0` | 绝对值 torque 阈值，单位 Nm |
+| `max_age_s` | `0.25` | feedback 最大允许年龄，超过则不触发 early quit |
+| `min_elapsed_s` | `0.0` | stage 开始后忽略 torque 的时间，避免旧 feedback 误触发 |
+
+### 超时与失效保护
+
+如果 torque feedback 缺失或超过 `max_age_s`，`torque_arrival` 不触发，`navigate` 继续按 waypoint 正常导航。`/state_pose2d` 超时仍由 `global_navigation_node.pose_timeout_s` 发布零 `/local_driving`。
+
+---
+
+## v0.24 — navigate timeout_s 超时推进（2026-06-13）
+
+### 变更目标
+
+`navigate` stage 新增可选 `timeout_s`。当 stage 运行时间超过该值，且还没有正常到达 waypoint、也没有触发 `torque_arrival`，navigation 会发布零 `/local_driving` 并进入下一 stage。
+
+### YAML 示例
+
+```yaml
+- id: move_to_rack
+  type: navigate
+  to: wp_point_1
+  profile: red_area
+  timeout_s: 8.0
+  torque_arrival:
+    topic: /damiao_feedback
+    field: motor_1_tau
+    op: abs_gte
+    abs_threshold_nm: 2.5
+```
+
+`point_1_point_2_test.sh` 已在 `move_to_rack` 启用 `timeout_s: 8.0`。因此 middle → point 1 阶段有三种退出方式：到达 waypoint、motor 1 torque early quit、8 秒超时自动进入 point 1 pickup。
+
+### 超时与失效保护
+
+`timeout_s` 触发时会先发布零 `/local_driving`，再推进 stage。全局 `/state_pose2d` 超时仍由 `global_navigation_node.pose_timeout_s` 负责停车并暂停 FSM。

@@ -37,6 +37,9 @@
 - [x] 在 `red_area.yaml` 增加 weapon head pickup 示例
 - [x] 新增 `routes/red_area_torque_test.yaml`，red area 底盘导航 + 手臂力矩触发测试
 - [x] 修复 global_navigation_node 对 `/damiao_feedback` 的订阅类型（Float32MultiArray → DamiaoFeedback）
+- [x] `/damiao_feedback` 额外缓存 motor 2，提供 `chassis_motor_tau` 作为底盘 torque 代表
+- [x] `navigate` stage 支持 `torque_arrival` early quit，到达前可由 motor torque 触发完成
+- [x] `navigate` stage 支持 `timeout_s`，超时后发布零 `/local_driving` 并推进下一 stage
 - [ ] 实车验证 IR=true 时底盘停车距离与夹爪时序是否满足抓取要求
 - [ ] 实车验证 red_area_torque_test.yaml 完整序列 + 力矩触发
 
@@ -48,6 +51,10 @@
 - [ ] 实车验证 point 1/point 2 的 `micro_sweep_10mm` 方向、速度和 10mm 距离是否合适
 
 - [x] `point_1_point_2_test.sh` 保持内联 mission，不再创建 standalone `routes/point_1_point_2.yaml`
+- [x] `point_1_point_2_test.sh` 在 `move_to_rack` 增加 `motor_1_tau` torque early quit
+- [x] `point_1_point_2_test.sh` 的 `move_to_rack` 增加 `timeout_s: 8.0`，8 秒后自动进入下一 stage
+- [x] `blue_point_1_point_2_test.sh` 的 `weapon_head_pickup.micro_sweep.direction_rad` 改为 `0.0`，用于 body +X 前后 10mm 微扫
+- [x] `blue_point_1_point_2_test.sh` 增加窗口订阅 `/arm/ir_status`，用于现场观察 Arm Arduino IR 状态
 
 
 - [x] 统一 Red Area 相关测试的 profile 口径：正常 Red Area 与 1/4 接近 REC 追踪速度
@@ -56,6 +63,7 @@
 
 
 - [x] 新增 `red_area_weapon_cycle` stage，支持 1..6 weapon position 循环夹取、单点重试、成功计数和 torque docking
+- [x] `red_area_weapon_cycle` 动态目标导航支持完整 I/D：`k_i_x/k_i_y/k_d_x/k_d_y/k_heading_d`
 - [x] 新增 `stop_chassis` stage/sequence step，用于 FSM 显式发布零 `/local_driving`
 - [x] 更新 `red_area_test.sh` 为六点循环：成功 5 个后执行最终安全姿态并停机
 - [ ] 实车验证 Red Area 六点循环的 slot 方向、0.2m 间距和 `weapon1/#1` 坐标

@@ -80,6 +80,7 @@ class MissionExecutor:
         self._nav_profile = {}
         self._nav_from_pose = None
         self._active_nav_stage_id = None
+        self._nav_start_time = 0.0
 
         # XY split PID integral / derivative state
         self._xy_error_integral_x = 0.0
@@ -397,6 +398,8 @@ class MissionExecutor:
             self._pub_zero_driving()
             return
 
+        self._begin_navigate_stage(stage, end_pose, profile)
+
         dist = get_distance(self.current_pose, end_pose)
         yaw_err = abs(normalize_angle(end_pose['yaw'] - self.current_pose['yaw']))
 
@@ -415,7 +418,16 @@ class MissionExecutor:
             self._advance_stage()
             return
 
-        self._begin_navigate_stage(stage, end_pose, profile)
+        if self._navigate_torque_arrived(stage):
+            self._pub_zero_driving()
+            self._advance_stage()
+            return
+
+        if self._navigate_timed_out(stage):
+            self._pub_zero_driving()
+            self._advance_stage()
+            return
+
         self._pub_target_pose(end_pose)
 
         # Compute driving command
@@ -594,6 +606,7 @@ class MissionExecutor:
             return
 
         self._active_nav_stage_id = stage_id
+        self._nav_start_time = time.monotonic()
         self._nav_from_pose = dict(self.current_pose)
         self._nav_target_wp = dict(end_pose)
         self._nav_profile = dict(profile)
@@ -610,6 +623,82 @@ class MissionExecutor:
             f"({self._nav_from_pose['x']:.3f}, {self._nav_from_pose['y']:.3f}) "
             f"to ({end_pose['x']:.3f}, {end_pose['y']:.3f})"
         )
+
+    def _navigate_torque_arrived(self, stage):
+        """Return True when a navigate stage should early-exit on motor torque.
+
+        This is optional per stage. It lets a mission treat physical contact as
+        arrival while keeping normal waypoint arrival as the default behavior.
+        """
+        cfg = stage.get('torque_arrival') or {}
+        if not cfg:
+            return False
+
+        min_elapsed_s = float(cfg.get('min_elapsed_s', 0.0))
+        if self._nav_start_time > 0.0 and time.monotonic() - self._nav_start_time < min_elapsed_s:
+            return False
+
+        topic = cfg.get('topic', '/damiao_feedback')
+        field = cfg.get('field', 'chassis_motor_tau')
+        sensor_data = self.sensor_cache.get(topic)
+        if not sensor_data or field not in sensor_data:
+            return False
+
+        stamp_field = cfg.get('stamp_field')
+        if stamp_field is None:
+            if field.startswith('motor_') and field.endswith('_tau'):
+                stamp_field = field.replace('_tau', '_stamp')
+            elif field.startswith('chassis_motor_'):
+                stamp_field = 'chassis_motor_stamp'
+            else:
+                stamp_field = '_stamp'
+        stamp = sensor_data.get(stamp_field, sensor_data.get('_stamp'))
+        max_age_s = float(cfg.get('max_age_s', 0.25))
+        if stamp is None or time.monotonic() - float(stamp) > max_age_s:
+            return False
+
+        actual = float(sensor_data.get(field, 0.0))
+        threshold = float(cfg.get('abs_threshold_nm', cfg.get('threshold_nm', cfg.get('value', 0.0))))
+        op = cfg.get('op', 'abs_gte')
+        if op == 'abs_gt':
+            triggered = abs(actual) > threshold
+        elif op == 'abs_gte':
+            triggered = abs(actual) >= threshold
+        elif op == 'gt':
+            triggered = actual > threshold
+        elif op == 'gte':
+            triggered = actual >= threshold
+        elif op == 'lt':
+            triggered = actual < threshold
+        elif op == 'lte':
+            triggered = actual <= threshold
+        else:
+            self.logger.warn(f"Unknown torque_arrival op '{op}', ignoring")
+            return False
+
+        if triggered:
+            self.logger.info(
+                f"Navigate [{stage.get('id', '?')}] torque arrival: "
+                f"{field}={actual:.3f}Nm, op={op}, threshold={threshold:.3f}Nm"
+            )
+        return triggered
+
+    def _navigate_timed_out(self, stage):
+        """Return True when a navigate stage exceeds its optional timeout_s."""
+        if 'timeout_s' not in stage:
+            return False
+        timeout_s = float(stage.get('timeout_s', 0.0))
+        if timeout_s <= 0.0 or self._nav_start_time <= 0.0:
+            return False
+        elapsed = time.monotonic() - self._nav_start_time
+        if elapsed < timeout_s:
+            return False
+
+        self.logger.warn(
+            f"Navigate [{stage.get('id', '?')}] timeout: "
+            f"elapsed={elapsed:.2f}s >= {timeout_s:.2f}s; advancing"
+        )
+        return True
 
     def _pub_driving_body(self, vx_body, vy_body, omega):
         """Publish body-frame velocity command to /local_driving.
@@ -1185,7 +1274,12 @@ class MissionExecutor:
         return False
 
     def _drive_to_dynamic_pose(self, stage_id, target_pose, profile, pos_tol, yaw_tol):
-        """Small-pose PID used by step_0p2m dynamic slot targets."""
+        """Drive to a generated pose using the same XY PID fields as navigate.
+
+        Dynamic pose targets are used by weapon rack slot moves and Red Area
+        micro-sweep pre-positioning. They need the same I/D tuning surface as
+        normal navigate stages so field PID adjustments transfer consistently.
+        """
         if target_pose is None or self.current_pose is None:
             self._pub_zero_driving()
             return False
@@ -1214,8 +1308,32 @@ class MissionExecutor:
 
         k_p_x = float(profile.get('k_p_x', DEFAULT_K_P_X))
         k_p_y = float(profile.get('k_p_y', DEFAULT_K_P_Y))
-        vx_body = k_p_x * ex_body
-        vy_body = k_p_y * ey_body
+        k_i_x = float(profile.get('k_i_x', DEFAULT_K_I_X))
+        k_i_y = float(profile.get('k_i_y', DEFAULT_K_I_Y))
+        k_d_x = float(profile.get('k_d_x', DEFAULT_K_D_X))
+        k_d_y = float(profile.get('k_d_y', DEFAULT_K_D_Y))
+
+        if not self._xy_pid_initialized:
+            self._xy_error_prev_x = ex_body
+            self._xy_error_prev_y = ey_body
+            self._xy_pid_initialized = True
+
+        self._xy_error_integral_x += ex_body
+        self._xy_error_integral_y += ey_body
+        integral_max_x = float(profile.get('xy_integral_max', 0.0))
+        integral_max_y = float(profile.get('xy_integral_max', 0.0))
+        if integral_max_x > 0:
+            self._xy_error_integral_x = max(-integral_max_x, min(integral_max_x, self._xy_error_integral_x))
+        if integral_max_y > 0:
+            self._xy_error_integral_y = max(-integral_max_y, min(integral_max_y, self._xy_error_integral_y))
+
+        d_x = ex_body - self._xy_error_prev_x
+        d_y = ey_body - self._xy_error_prev_y
+        self._xy_error_prev_x = ex_body
+        self._xy_error_prev_y = ey_body
+
+        vx_body = k_p_x * ex_body + k_i_x * self._xy_error_integral_x + k_d_x * d_x
+        vy_body = k_p_y * ey_body + k_i_y * self._xy_error_integral_y + k_d_y * d_y
 
         max_body_x = float(profile.get('max_body_x_mps', DEFAULT_MAX_LATERAL_MPS))
         max_body_y = float(profile.get('max_body_y_mps', DEFAULT_MAX_LATERAL_MPS))
@@ -1223,8 +1341,21 @@ class MissionExecutor:
         vy_body = max(-max_body_y, min(max_body_y, vy_body))
 
         k_heading = float(profile.get('k_heading_p', TRACKER_K_HEADING_P))
+        k_heading_d = float(profile.get('k_heading_d', TRACKER_K_HEADING_D))
+        _, _, omega_raw, _, _ = self.tracker.compute_pid_cte(
+            self.current_pose,
+            self._nav_from_pose,
+            target_pose,
+            {
+                'method': 'pid_cte',
+                'k_cte_p': 0.0,
+                'k_heading_p': k_heading,
+                'k_heading_d': k_heading_d,
+                'speed_mps': 0.0,
+            },
+        )
         max_omega = float(profile.get('yaw_rate_rps', 1.5))
-        omega = max(-max_omega, min(max_omega, k_heading * yaw_err_signed))
+        omega = max(-max_omega, min(max_omega, omega_raw))
         self._pub_driving_body(vx_body, vy_body, omega)
         return False
 
@@ -1739,6 +1870,7 @@ class MissionExecutor:
         self._nav_profile = {}
         self._nav_from_pose = None
         self._active_nav_stage_id = None
+        self._nav_start_time = 0.0
         self.arrived_counter = 0
 
     def _clear_weapon_state(self):
