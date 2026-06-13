@@ -38,6 +38,8 @@ class GlobalNavigationNode(Node):
         self.declare_parameter('control_rate_hz', 50.0)
         self.declare_parameter('arrived_stable_count', 5)
         self.declare_parameter('pose_timeout_s', 0.5)
+        self.declare_parameter('arm_keepalive_interval_s', 0.1)
+        self.declare_parameter('arm_keepalive_enabled', True)
 
         mission_file = self.get_parameter('mission_file').value
         control_rate = self.get_parameter('control_rate_hz').value
@@ -46,6 +48,12 @@ class GlobalNavigationNode(Node):
         # Mission executor
         self.mission = MissionExecutor(self.get_logger(), self)
         self.mission.arrived_stable_count = self.get_parameter('arrived_stable_count').value
+        self.mission._arm_keepalive_interval_s = float(
+            self.get_parameter('arm_keepalive_interval_s').value
+        )
+        self.mission._arm_keepalive_enabled = bool(
+            self.get_parameter('arm_keepalive_enabled').value
+        )
 
         if mission_file:
             try:

@@ -121,6 +121,13 @@ class MissionExecutor:
         self._red_cycle_scan_start_time = 0.0
         self._red_cycle_warned_missing_torque = False
 
+        # Arm state tracking (deterministic FSM: every stage defines full robot state)
+        self._current_arm_state = {}           # {actuator_name: semantic_value}
+        self._last_arm_publish_time = 0.0
+        self._arm_keepalive_interval_s = 0.1   # 10Hz default
+        self._arm_keepalive_enabled = True
+        self._active_stage_id = None           # for stage-entry detection
+
         # Publishers (set after init by global_navigation_node)
         self.pub_driving = None
         self.pub_joint = None   # arm/joint_navigation
@@ -347,49 +354,66 @@ class MissionExecutor:
             self.logger.info("Mission started")
 
         if self.phase in ('done', 'terminated'):
+            self._arm_keepalive_poll()
             return
 
         if self.stage_index >= len(self.stages):
             self.phase = 'done'
             self.logger.info("Mission complete")
+            self._arm_keepalive_poll()
             return
 
         stage = self.stages[self.stage_index]
         stype = stage.get('type', 'wait')
 
-        if stype == 'navigate':
-            self._update_navigate(stage)
-        elif stype == 'arm':
-            self._execute_arm(stage)
-            self._advance_stage()
-        elif stype == 'sequential':
-            self._update_sequential(stage)
-        elif stype == 'parallel':
-            self._update_parallel(stage)
-        elif stype == 'conditional':
-            self._update_conditional(stage)
-        elif stype == 'stop_chassis':
-            self._execute_stop_chassis()
-            self._advance_stage()
+        # ---- Stage entry: apply optional arm block from YAML ----
+        current_id = stage.get('id', '?')
+        if current_id != self._active_stage_id:
+            self._on_stage_enter(stage)
+
+        # ---- Dispatch (old type names are aliased to unified types) ----
+        # action  ← action, navigate, arm, stop_chassis
+        # condition ← condition, conditional, verify_ir
+        if stype in ('action', 'arm', 'navigate', 'stop_chassis'):
+            self._update_action(stage)
+        elif stype in ('condition', 'conditional', 'verify_ir'):
+            self._update_condition(stage)
+        elif stype == 'wait':
+            self._update_wait(stage)
         elif stype == 'weapon_head_pickup':
             self._update_weapon_head_pickup(stage)
         elif stype == 'red_area_weapon_cycle':
             self._update_red_area_weapon_cycle(stage)
-        elif stype == 'wait':
-            self._update_wait(stage)
+        elif stype == 'sequential':
+            self._update_sequential(stage)
+        elif stype == 'parallel':
+            self._update_parallel(stage)
         elif stype == 'terminate':
             self._execute_terminate()
         else:
-            self.logger.warn(f"Unknown stage type '{stype}' at [{stage.get('id', '?')}], skipping")
+            self.logger.warn(f"Unknown stage type '{stype}' at [{current_id}], skipping")
             self._advance_stage()
+
+        # ---- Arm keep-alive: republish full arm state every N ms ----
+        # This is the deterministic guarantee — no matter what stage we are in,
+        # the arm state is continuously refreshed so the Arduino 200ms watchdog
+        # can never fire on stale data, even if downstream serial reconnects.
+        self._arm_keepalive_poll()
 
     # ------------------------------------------------------------------
     # Stage: navigate
     # ------------------------------------------------------------------
 
     def _update_navigate(self, stage):
-        wp = self.waypoints[stage['to']]
-        profile_name = stage.get('profile', 'normal')
+        # Normalize: support new 'chassis' block and old flat format
+        chassis = stage.get('chassis', {})
+        wp_name = chassis.get('to', stage.get('to'))
+        if wp_name is None:
+            self.logger.warn("Navigate/Action with no 'to' waypoint; treating as pure arm")
+            self._advance_stage()
+            return
+        wp = self.waypoints[wp_name]
+        profile_name = chassis.get('profile', stage.get('profile', 'normal'))
         profile = self.profiles.get(profile_name, {})
 
         end_pose = wp['pose']
@@ -412,7 +436,7 @@ class MissionExecutor:
             self.arrived_counter = 0
 
         if self.arrived_counter >= self.arrived_stable_count:
-            self.logger.info(f"Arrived at {stage['to']}")
+            self.logger.info(f"Arrived at {wp_name}")
             self.arrived_counter = 0
             self._pub_zero_driving()
             self._advance_stage()
@@ -630,7 +654,8 @@ class MissionExecutor:
         This is optional per stage. It lets a mission treat physical contact as
         arrival while keeping normal waypoint arrival as the default behavior.
         """
-        cfg = stage.get('torque_arrival') or {}
+        chassis = stage.get('chassis', {})
+        cfg = chassis.get('torque_arrival') or stage.get('torque_arrival') or {}
         if not cfg:
             return False
 
@@ -685,9 +710,11 @@ class MissionExecutor:
 
     def _navigate_timed_out(self, stage):
         """Return True when a navigate stage exceeds its optional timeout_s."""
-        if 'timeout_s' not in stage:
+        chassis = stage.get('chassis', {})
+        timeout_s = chassis.get('timeout_s', stage.get('timeout_s'))
+        if timeout_s is None:
             return False
-        timeout_s = float(stage.get('timeout_s', 0.0))
+        timeout_s = float(timeout_s)
         if timeout_s <= 0.0 or self._nav_start_time <= 0.0:
             return False
         elapsed = time.monotonic() - self._nav_start_time
@@ -733,29 +760,83 @@ class MissionExecutor:
         self.pub_target_pose.publish(msg)
 
     # ------------------------------------------------------------------
-    # Stage: arm
+    # Stage: arm (retained for backward compat; see also _update_action)
     # ------------------------------------------------------------------
 
     def _execute_arm(self, stage):
-        """Translate semantic arm commands → arm/joint_navigation + arm/pneu_navigation.
+        """Apply arm commands from a YAML stage/step and track state.
 
-        arm/joint_navigation uses triplet format:
-          [motor_id, position_rad, speed_rad_s, ...]
+        Supports both new 'arm' block and old inline actuator keys.
+        Called from pickup_sequence, red_area_cycle sequences, sequential
+        sub-steps, and top-level arm stages (via _on_stage_enter + keep-alive).
 
-        motor_id comes directly from the actuator definition in YAML.
-        position is looked up from the actuator's positions table.
-        speed is read from the actuator's speed field (default 3.0 rad/s).
+        Updates _current_arm_state so the keep-alive republish always sends
+        the full deterministic arm configuration.
         """
+        arm_state = self._extract_arm_state(stage)
+        if arm_state:
+            self._current_arm_state.update(arm_state)
+        self._publish_full_arm_state()
+
+    # ------------------------------------------------------------------
+    # Arm state extraction, publishing, keep-alive, and unified dispatch
+    # ------------------------------------------------------------------
+
+    def _extract_arm_state(self, stage):
+        """Extract arm state dict from a stage/step, supporting both formats.
+
+        New format:
+          arm:
+            arm_gripper: close
+            arm_lift: low
+            ...
+
+        Old format (inline actuator keys on arm-type stages):
+          type: arm
+          arm_gripper: close
+          arm_lift: low
+          ...
+        """
+        # New format: explicit 'arm' block
+        arm_block = stage.get('arm')
+        if isinstance(arm_block, dict) and arm_block:
+            result = {}
+            for name, value in arm_block.items():
+                if name in self.actuators:
+                    result[name] = value
+                else:
+                    self.logger.warn(f"arm block references unknown actuator '{name}'")
+            return result if result else None
+
+        # Old format: inline actuator keys on arm-type stages
+        stype = stage.get('type', '')
+        if stype in ('arm',):
+            result = {}
+            for key, value in stage.items():
+                if key in ('type', 'id', 'wait_motors',
+                           'motor_arrival_timeout_s', 'motor_arrival_tolerance_rad'):
+                    continue
+                if key in self.actuators:
+                    result[key] = value
+            return result if result else None
+
+        return None
+
+    def _publish_full_arm_state(self):
+        """Resolve _current_arm_state → joint/pneu messages and publish.
+
+        Sends every tracked actuator so arm_ctrl_node receives a complete
+        command frame. Called on stage entry and by the keep-alive timer.
+        """
+        if not self._current_arm_state:
+            return
+
         joint_triplets = []          # [motor_id, pos, speed, ...]
-        pneu_pairs = []              # ["name:value", ...]
+        pneu_pairs = []              # ["name:index", ...]
 
-        for name, value in stage.items():
-            if name == 'type' or name == 'id':
-                continue
-
+        for name, value in self._current_arm_state.items():
             act = self.actuators.get(name)
             if act is None:
-                self.logger.warn(f"Unknown actuator '{name}'")
                 continue
 
             if act['type'] == 'motor':
@@ -772,6 +853,126 @@ class MissionExecutor:
             self._pub_joint_cmd(joint_triplets)
         if pneu_pairs:
             self._pub_pneu_cmd(",".join(pneu_pairs))
+
+        self._last_arm_publish_time = time.monotonic()
+
+    def _on_stage_enter(self, stage):
+        """Apply optional arm block when entering a new stage.
+
+        Called exactly once per stage by update() when _active_stage_id changes.
+        If the stage declares an 'arm' block, those values merge into
+        _current_arm_state and are published immediately. Actuators NOT listed
+        in the arm block retain their previous values.
+        """
+        sid = stage.get('id', '?')
+        self._active_stage_id = sid
+        self.logger.info(f"Entering stage [{sid}] type={stage.get('type', '?')}")
+
+        arm_state = self._extract_arm_state(stage)
+        if arm_state:
+            self._current_arm_state.update(arm_state)
+            self._publish_full_arm_state()
+            self.logger.info(f"[{sid}] arm state: {list(arm_state.keys())}")
+
+    def _arm_keepalive_poll(self):
+        """Republish full arm state at configured interval to keep watchdog alive.
+
+        Called unconditionally from update() every cycle (50Hz). Only actually
+        publishes when enabled and the interval has elapsed. No-op when
+        _current_arm_state is empty (no arm commands issued yet).
+
+        The 100ms interval beats the Arduino's 200ms firmware watchdog, so even
+        if the downstream serial chain restarts or reconnects, the next
+        keep-alive beat restores commanded state before the watchdog fires.
+        """
+        if not self._arm_keepalive_enabled:
+            return
+        if not self._current_arm_state:
+            return
+        if (time.monotonic() - self._last_arm_publish_time
+                < self._arm_keepalive_interval_s):
+            return
+
+        self._publish_full_arm_state()
+
+    # ------------------------------------------------------------------
+    # Unified stage types: action, condition
+    # ------------------------------------------------------------------
+
+    def _update_action(self, stage):
+        """Unified handler for action / navigate / arm / stop_chassis.
+
+        - Has chassis.to  → navigate to waypoint (arm state maintained by keep-alive)
+        - Has chassis.stop → publish zero driving and advance
+        - No chassis      → pure arm action (arm state already applied by _on_stage_enter),
+                             advance immediately
+        """
+        chassis = stage.get('chassis', {})
+        if chassis:
+            if chassis.get('to'):
+                self._update_navigate(stage)
+                return
+            if chassis.get('stop'):
+                self._pub_zero_driving()
+                self._advance_stage()
+                return
+
+        # Pure arm action (or old arm/navigate with inline keys and chassis in top-level)
+        stype = stage.get('type', '')
+        if stype == 'arm':
+            self._advance_stage()
+            return
+        if stype == 'navigate':
+            self._update_navigate(stage)
+            return
+        if stype == 'stop_chassis':
+            self._pub_zero_driving()
+            self._advance_stage()
+            return
+
+        # New-style action with no chassis block = pure arm → advance
+        self._advance_stage()
+
+    def _update_condition(self, stage):
+        """Unified handler for condition / conditional / verify_ir.
+
+        Polls sensor_cache and branches via _jump_to. The arm state declared
+        in the stage's arm block is maintained by the keep-alive during the
+        polling loop.
+        """
+        cond = stage.get('condition', {})
+        field = cond.get('field')
+        op = cond.get('op', 'gt')
+        threshold = cond.get('value', 0)
+
+        sensor_data = self.sensor_cache.get(cond.get('topic'))
+        if sensor_data is None:
+            return  # hold in place, keep-alive maintains arm state
+
+        actual = sensor_data.get(field, 0)
+
+        if op == 'gt':
+            result = actual > threshold
+        elif op == 'lt':
+            result = actual < threshold
+        elif op == 'gte':
+            result = actual >= threshold
+        elif op == 'lte':
+            result = actual <= threshold
+        elif op == 'abs_gt':
+            result = abs(actual) > threshold
+        elif op == 'abs_gte':
+            result = abs(actual) >= threshold
+        else:
+            self.logger.warn(f"Unknown condition op '{op}'")
+            return
+
+        target_id = stage['then'] if result else stage['else']
+        self._jump_to(target_id)
+
+    # ------------------------------------------------------------------
+    # Low-level publish helpers
+    # ------------------------------------------------------------------
 
     def _pub_joint_cmd(self, targets):
         """Publish joint triplets to arm/joint_navigation.
@@ -1753,38 +1954,8 @@ class MissionExecutor:
     # Stage: conditional
     # ------------------------------------------------------------------
 
-    def _update_conditional(self, stage):
-        cond = stage.get('condition', {})
-        field = cond.get('field')
-        op = cond.get('op', 'gt')
-        threshold = cond.get('value', 0)
-
-        # Try to get sensor value from cache
-        sensor_data = self.sensor_cache.get(cond.get('topic'))
-        if sensor_data is None:
-            self.logger.warn(f"No sensor data for condition on {cond.get('topic')}")
-            return
-
-        actual = sensor_data.get(field, 0)
-
-        if op == 'gt':
-            result = actual > threshold
-        elif op == 'lt':
-            result = actual < threshold
-        elif op == 'gte':
-            result = actual >= threshold
-        elif op == 'lte':
-            result = actual <= threshold
-        elif op == 'abs_gt':
-            result = abs(actual) > threshold
-        elif op == 'abs_gte':
-            result = abs(actual) >= threshold
-        else:
-            self.logger.warn(f"Unknown op '{op}'")
-            return
-
-        target_id = stage['then'] if result else stage['else']
-        self._jump_to(target_id)
+    # _update_conditional() is superseded by _update_condition() above.
+    # The old name is aliased in update() dispatch for backward compat.
 
     def _jump_to(self, stage_id):
         """Jump to a stage by ID."""
@@ -1794,6 +1965,7 @@ class MissionExecutor:
                 self._seq_step_index = 0
                 self._parallel_active = []
                 self._wait_duration = 0.0
+                self._active_stage_id = None  # force _on_stage_enter on target
                 self._clear_navigation_state()
                 self._clear_weapon_state()
                 self._clear_red_cycle_state()
@@ -1851,6 +2023,8 @@ class MissionExecutor:
                 msg = String()
                 msg.data = ",".join(pneu_pairs)
                 self.pub_pneu.publish(msg)
+        self._current_arm_state = {}        # clear tracked state
+        self._last_arm_publish_time = 0.0
         self.phase = 'terminated'
         self.logger.info("Mission terminated")
 
@@ -1862,6 +2036,7 @@ class MissionExecutor:
         self._clear_navigation_state()
         self._clear_weapon_state()
         self._clear_red_cycle_state()
+        self._active_stage_id = None  # force _on_stage_enter on next stage
         self.stage_index += 1
 
     def _clear_navigation_state(self):
@@ -1913,6 +2088,9 @@ class MissionExecutor:
         self._seq_step_index = 0
         self._parallel_active = []
         self._wait_duration = 0.0
+        self._current_arm_state = {}
+        self._last_arm_publish_time = 0.0
+        self._active_stage_id = None
         self._clear_navigation_state()
         self._clear_weapon_state()
         self._clear_red_cycle_state()

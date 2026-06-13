@@ -3,4 +3,6 @@ global_navigation_node:
     mission_file: ""                    # set via launch arg; default -> routes/forward_0.5m.yaml
     control_rate_hz: 50.0
     arrived_stable_count: 5
-    pose_timeout_s: 0.5                   # 收不到 /state_pose2d 超过 0.5s → 零驱动停车
+    pose_timeout_s: 0.5                 # 收不到 /state_pose2d 超过 0.5s → 零驱动停车
+    arm_keepalive_interval_s: 0.1       # 手臂保活间隔秒数，必须 < 0.2s (Arduino 看门狗)
+    arm_keepalive_enabled: true         # 开启手臂保活重发

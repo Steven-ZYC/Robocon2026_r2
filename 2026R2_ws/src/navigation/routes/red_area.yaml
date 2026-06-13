@@ -112,12 +112,13 @@ stages:
 
   # --- 手臂就位 (rack 初始姿态) ---
   - id: arm_at_rack
-    type: arm
-    arm_yaw_motor: front
-    arm_roll_motor: up
-    arm_lift: low
-    arm_gripper: open
-    arm_stopper: low
+    type: action
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_lift: low
+      arm_gripper: open
+      arm_stopper: low
 
   # --- 等待手臂稳定 ---
   - id: wait_stable
@@ -132,16 +133,23 @@ stages:
 
   # --- 到达 head 1 后手臂待命 ---
   - id: arm_at_head_1
-    type: arm
-    arm_yaw_motor: front
-    arm_roll_motor: up
-    arm_lift: low
-    arm_gripper: open
-    arm_stopper: low
+    type: action
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_lift: low
+      arm_gripper: open
+      arm_stopper: low
 
   # --- IR 检测 weapon head，并按 YAML 内封装的抓取序列执行 ---
   - id: pickup_weapon_head
     type: weapon_head_pickup
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
     search_mode: scan_until_ir  # 可切换为 step_0p2m
     ir_topic: /arm/ir_status
     ir_field: ir

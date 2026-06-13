@@ -57,6 +57,16 @@
 - [x] `blue_point_1_point_2_test.sh` 增加窗口订阅 `/arm/ir_status`，用于现场观察 Arm Arduino IR 状态
 
 
+- [x] FSM 手臂保活：`_arm_keepalive_poll()` 每 100ms 重发全部手臂状态，Arduino 看门狗不触发
+- [x] FSM 简化为基础三 type：action / condition / wait，旧 type 名保留为别名
+- [x] 每个 stage 可声明 `arm` 块，所有关节在每个 node 中显式定义
+- [x] `weapon_pickup_test.sh` 改为新格式，check_torque 循环有保活不松夹
+- [x] `blue_point_1_point_2_test.sh` 的 weapon_head_pickup 增加 `arm` 块
+- [x] `red_area.yaml` 改为新格式
+- [ ] 实车验证 `weapon_pickup_test.sh`：check_torque 等待期间夹爪不松
+- [ ] 实车验证 `blue_point_1_point_2_test.sh`：micro_sweep 扫描期间夹爪不松
+- [ ] 实车压力测试：navigate 期间物理拔插 arm Arduino USB，夹爪不松
+
 - [x] 统一 Red Area 相关测试的 profile 口径：正常 Red Area 与 1/4 接近 REC 追踪速度
 - [x] 新增根目录 `fast_pid_adjustment.sh`，用 Red Area PID 前进到 `weapon_point_1` 并只显示 target/current plot_debug 图
 - [ ] 实车验证 `fast_pid_adjustment.sh` 的 `weapon_point_1` 坐标与前进方向是否符合当前场地摆位

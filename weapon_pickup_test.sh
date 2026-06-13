@@ -98,27 +98,30 @@ stages:
     type: wait
     duration_s: 2.0
 
-  # 步骤1-2: M5→-90°, gripper open, lift low, stopper low, M6 up
+  # 步骤1-2: 手臂初始姿态 (M5=front, M6=up, gripper=open, lift=low, stopper=low)
   - id: arm_start_pose
-    type: arm
-    arm_yaw_motor: front
-    arm_roll_motor: up
-    arm_gripper: open
-    arm_lift: low
-    arm_stopper: low
+    type: action
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
 
+  # M5 → -90° (right side), 其余保持
   - id: arm_ready
-    type: arm
-    arm_yaw_motor: minus_90deg
-    arm_roll_motor: up
-    arm_gripper: open
-    arm_lift: low
-    arm_stopper: low
+    type: action
+    arm:
+      arm_yaw_motor: minus_90deg
+      arm_roll_motor: up
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
 
-  # 步骤3: 轮询 IR sensor，触发后 gripper close
-  # else 跳回自己 → 50Hz 轮询直到 IR=true
+  # 步骤3: 轮询 IR sensor，触发后进入 gripper close
+  # else→self: 50Hz 轮询直到 IR=true。保活维持 arm 状态不丢失。
   - id: wait_ir
-    type: conditional
+    type: condition
     condition:
       topic: /arm/ir_status
       field: ir
@@ -126,85 +129,136 @@ stages:
       value: 0
     then: gripper_close
     else: wait_ir
+    arm:
+      arm_yaw_motor: minus_90deg
+      arm_roll_motor: up
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
 
-  # 步骤4 完成: gripper close, 其余保持
+  # 步骤4: gripper close（夹取）
   - id: gripper_close
-    type: arm
-    arm_yaw_motor: minus_90deg
-    arm_roll_motor: up
-    arm_gripper: close
-    arm_lift: low
-    arm_stopper: low
+    type: action
+    arm:
+      arm_yaw_motor: minus_90deg
+      arm_roll_motor: up
+      arm_gripper: close
+      arm_lift: low
+      arm_stopper: low
 
   - id: wait_1s
     type: wait
     duration_s: 1.0
+    arm:
+      arm_yaw_motor: minus_90deg
+      arm_roll_motor: up
+      arm_gripper: close
+      arm_lift: low
+      arm_stopper: low
 
-  # 步骤5: lift high
+  # 步骤5: lift high (提起 weapon head)
   - id: lift_up
-    type: arm
-    arm_yaw_motor: minus_90deg
-    arm_roll_motor: up
-    arm_gripper: close
-    arm_lift: high
-    arm_stopper: low
+    type: action
+    arm:
+      arm_yaw_motor: minus_90deg
+      arm_roll_motor: up
+      arm_gripper: close
+      arm_lift: high
+      arm_stopper: low
 
   - id: wait_0_8s
     type: wait
     duration_s: 0.8
+    arm:
+      arm_yaw_motor: minus_90deg
+      arm_roll_motor: up
+      arm_gripper: close
+      arm_lift: high
+      arm_stopper: low
 
-  # 步骤6:检查有无夹到，未触发IR sensor需要归位
-  # else 跳回自己 → 50Hz 轮询直到 IR=true
+  # 步骤6: IR 复检 —— 确认 weapon head 已夹起
+  #   IR=true  → yaw_to_front (继续释放流程)
+  #   IR=false → arm_ready (重新夹取)
   - id: verify_ir
-    type: verify_ir
-    expected_ir: true
-    on_true: yaw_to_front
-    on_false: arm_ready
+    type: condition
+    condition:
+      topic: /arm/ir_status
+      field: ir
+      op: gt
+      value: 0
+    then: yaw_to_front
+    else: arm_ready
+    arm:
+      arm_yaw_motor: minus_90deg
+      arm_roll_motor: up
+      arm_gripper: close
+      arm_lift: high
+      arm_stopper: low
 
-  # 步骤7: M5→front (0°)
+  # 步骤7: M5→front (0°), M6=up, gripper=close, lift=high
   - id: yaw_to_front
-    type: arm
-    arm_yaw_motor: front
-    arm_roll_motor: up
-    arm_gripper: close
-    arm_lift: high
-    arm_stopper: low
+    type: action
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_gripper: close
+      arm_lift: high
+      arm_stopper: low
 
   - id: wait_0_5s
     type: wait
     duration_s: 0.8
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_gripper: close
+      arm_lift: high
+      arm_stopper: low
 
-  # 步骤8: M6→+90°
+  # 步骤8: M6→+90° (roll right), lift→low
   - id: roll_right
-    type: arm
-    arm_yaw_motor: front
-    arm_roll_motor: right_90deg
-    arm_gripper: close
-    arm_lift: low
-    arm_stopper: low
+    type: action
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: right_90deg
+      arm_gripper: close
+      arm_lift: low
+      arm_stopper: low
 
   - id: wait_1s
     type: wait
     duration_s: 1.0
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: right_90deg
+      arm_gripper: close
+      arm_lift: low
+      arm_stopper: low
 
   # 步骤9: stopper high
   - id: stopper_up
-    type: arm
-    arm_yaw_motor: front
-    arm_roll_motor: right_90deg
-    arm_gripper: close
-    arm_lift: low
-    arm_stopper: high
+    type: action
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: right_90deg
+      arm_gripper: close
+      arm_lift: low
+      arm_stopper: high
 
-  - id: wait_0_5s
+  - id: wait_0_5s_stopper
     type: wait
     duration_s: 1.0
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: right_90deg
+      arm_gripper: close
+      arm_lift: low
+      arm_stopper: high
 
-  # 步骤10: 扭矩检测: M5 torque > |1.3| Nm → 松开 gripper
-  # 支持的 op 字段: gt(大于) lt(小于) gte(≥) lte(≤) abs_gt(绝对值大于) abs_gte(绝对值≥)
-  # 数据来源: /damiao_feedback → motor_5_tau (Nm)，由 global_navigation_node 缓存到 sensor_cache
+  # 步骤10: 扭矩检测 —— M5 torque > |1.3| Nm → 松开 gripper
+  #   保活机制每 100ms 刷新手臂状态，夹爪在等待期间不会释放
   - id: check_torque
-    type: conditional
+    type: condition
     condition:
       topic: /damiao_feedback
       field: motor_5_tau
@@ -212,33 +266,53 @@ stages:
       value: 1.3
     then: release_gripper
     else: check_torque
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: right_90deg
+      arm_gripper: close
+      arm_lift: low
+      arm_stopper: high
 
-  # 步骤11: 松开 gripper
+  # 步骤11: 松开 gripper (扭矩触发)
   - id: release_gripper
-    type: arm
-    arm_yaw_motor: front
-    arm_roll_motor: right_90deg
-    arm_gripper: open
-    arm_lift: low
-    arm_stopper: low
+    type: action
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: right_90deg
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
 
-  - id: wait_0_5s
+  - id: wait_0_5s_release
     type: wait
     duration_s: 0.5
-  
-  # 步骤12: 归位
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: right_90deg
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
+
+  # 步骤12: 归位 (init pose)
   - id: arm_init_pose
-    type: arm
-    arm_yaw_motor: front
-    arm_roll_motor: up
-    arm_gripper: open
-    arm_lift: low
-    arm_stopper: low
+    type: action
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
 
   # 终点
   - id: done
     type: wait
     duration_s: 0.0
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
 YAMLEOF
 
 echo "[weapon_pickup] mission: $MISSION_FILE"

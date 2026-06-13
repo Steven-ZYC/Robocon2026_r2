@@ -406,6 +406,7 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-13 | v0.27 — FSM 手臂保活 + 统一 action/condition 类型；`weapon_pickup_test.sh` 每个 stage 都有 `arm` 块，check_torque 不松夹 |
 | 2026-06-13 | v0.26 — `blue_point_1_point_2_test.sh` 增加窗口订阅 `/arm/ir_status`，用于现场确认 weapon_head_pickup 实际 IR 输入 |
 | 2026-06-13 | v0.25 — `blue_point_1_point_2_test.sh` 的 `weapon_head_pickup.micro_sweep` 改为 body +X 前后 10mm 扫动，避免误用 body +Y 侧向扫 |
 | 2026-06-13 | v0.24 — `navigate` 支持 `timeout_s` 超时推进；`point_1_point_2_test.sh` 的 `move_to_rack` 8 秒后自动进入下一 stage |
@@ -1781,3 +1782,175 @@ omega   = heading PID output, using k_heading_p and k_heading_d
 ### 超时与失效保护
 
 `timeout_s` 触发时会先发布零 `/local_driving`，再推进 stage。全局 `/state_pose2d` 超时仍由 `global_navigation_node.pose_timeout_s` 负责停车并暂停 FSM。
+
+---
+
+## v0.27 — FSM 手臂保活 + 统一 action/condition 类型（2026-06-13）
+
+### 问题背景
+
+在 `weapon_pickup_test.sh` 的 `check_torque` 条件循环期间（等待 M5 扭矩触发），FSM 不发送任何手臂/气动指令。夹爪 `close` 状态完全依赖 `arm_ctrl_node` 的 20Hz 重发。如果下游串口链路中断（`arm_arduino_node` USB 重连有 2 秒静默期），Arduino 的 200ms 看门狗触发，所有气动阀归零 → **夹爪在等待触摸时突然松脱**。
+
+### 变更目标
+
+1. **手臂状态保活**：FSM 内部追踪 `_current_arm_state`，每 100ms 重发全部手臂状态，不依赖 `arm_ctrl_node` 的重发链
+2. **FSM 简化为三种基础 type**：`action`（执行器）、`condition`（传感器分支）、`wait`（延时）
+3. **每个 stage 可声明 `arm` 块**：所有关节在每一个 node 中都有定义，形成确定的 FSM
+
+### YAML 新格式
+
+#### action（替代 navigate / arm / stop_chassis）
+
+```yaml
+# 纯手臂动作（等价旧 arm）
+- id: gripper_close
+  type: action
+  arm:
+    arm_yaw_motor: minus_90deg
+    arm_roll_motor: up
+    arm_gripper: close
+    arm_lift: low
+    arm_stopper: low
+
+# 底盘导航 + 手臂保持
+- id: move_to_rack
+  type: action
+  chassis:
+    to: wp_point_1
+    profile: red_area
+    timeout_s: 3.5
+    torque_arrival:
+      topic: /damiao_feedback
+      field: motor_1_tau
+      op: abs_gte
+      abs_threshold_nm: 2.5
+      max_age_s: 0.5
+      min_elapsed_s: 0.20
+  arm:
+    arm_yaw_motor: right
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+
+# 纯底盘（无 arm 块 = 不做手臂操作）
+- id: move_forward
+  type: navigate          # 旧格式兼容，不需要 chassis 块
+  to: wp_start
+  profile: slow
+```
+
+#### condition（替代 conditional / verify_ir）
+
+```yaml
+- id: check_torque
+  type: condition
+  condition:
+    topic: /damiao_feedback
+    field: motor_5_tau
+    op: abs_gt
+    value: 1.3
+  then: release_gripper
+  else: check_torque        # 自循环，50Hz 轮询
+  arm:                      # 轮询期间保活维持的手臂状态
+    arm_gripper: close
+    arm_lift: low
+    arm_stopper: high
+```
+
+#### wait
+
+```yaml
+- id: wait_stable
+  type: wait
+  duration_s: 1.0
+  arm:
+    arm_gripper: close
+    arm_lift: high
+    arm_stopper: low
+```
+
+### 向后兼容
+
+以下旧 type 名作为别名保留，dispatch 层自动映射：
+
+| 旧 type → | 新 type | 备注 |
+|-----------|---------|------|
+| `navigate` → | `action` | 使用 stage 顶层 `to`, `profile`, `timeout_s` 等字段 |
+| `arm` → | `action` | 使用 stage 顶层 actuator 键名 |
+| `stop_chassis` → | `action` | `chassis.stop: true` |
+| `conditional` → | `condition` | |
+| `verify_ir` → | `condition` | 顶层 verify_ir 现在合法可用 |
+
+**所有已有 YAML（包括 git tracked 的旧格式 `.sh` 脚本）无需修改即可运行。**
+
+### 保活参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `arm_keepalive_interval_s` | `0.1` | 手臂状态重发间隔（秒），必须 < 0.2 |
+| `arm_keepalive_enabled` | `true` | 是否开启保活 |
+
+配置于 `config/global_nav_params.yaml`，启动时可通过 launch file 覆盖：
+```bash
+ros2 run navigation global_navigation_node --ros-args \
+  -p arm_keepalive_interval_s:=0.05
+```
+
+### Stage 完成判定与状态残留说明
+
+**如何确认当前 stage 做完了才进入下一步？**
+
+| stage type | 完成条件 | 残留状态清理 |
+|-----------|---------|-------------|
+| `action`（有 chassis.to） | 到达 waypoint（pos+yaw 连续 `arrived_stable_count` 周期在容差内）OR `torque_arrival` 触发 OR `timeout_s` 超时 | advance 时清零 `_active_nav_stage_id`，下一个 stage 的 `_on_stage_enter()` 重新初始化 |
+| `action`（无 chassis） | 立即 advance（纯手臂） | 手臂状态不清零，由 `_current_arm_state` 显式追踪，合并新 stage 的 `arm` 块 |
+| `condition` | 条件为 true → `_jump_to(then)`；条件为 false → `_jump_to(else)` | `_jump_to()` 会将 `_active_stage_id` 置 None，触发新 stage 的 `_on_stage_enter()` |
+| `wait` | `time.time() - _wait_start >= duration_s` | advance 时正常流转 |
+| `weapon_head_pickup` | `pickup_sequence` 执行完毕 OR IR 检测到并完成 pick OR `on_miss` 触发 | `_clear_weapon_state()` 在 advance 和 jump_to 时调用，清除所有武器宏内部状态 |
+| `terminate` | 发布零驱动 + 零电机 + 零气动 → `phase = 'terminated'` | `_current_arm_state` 清空，保活停发 |
+
+**状态残留保证**：
+- 手臂状态 `_current_arm_state` 只在 `terminate` 或 `reset()` 时清空。advance / jump_to 都不清除它
+- 每个 stage 进入时 (`_on_stage_enter`) 用 YAML `arm` 块 merge 覆盖，未列出的执行器保持上一 stage 的值
+- 保活 `_arm_keepalive_poll()` 在每个 50Hz 周期末尾运行，每 100ms 重发，覆盖所有 stage type
+
+### 现有脚本格式状态
+
+以下为 git 追踪的 `.sh` 测试脚本及其格式版本：
+
+| 脚本 | 格式 | 备注 |
+|------|------|------|
+| `weapon_pickup_test.sh` | **新格式** (action/condition) | 每个 stage 有 `arm` 块，check_torque 有保活 |
+| `blue_point_1_point_2_test.sh` | **新格式** (action) | weapon_head_pickup 有 `arm` 块 |
+| `point_1_point_2_test.sh` | 旧格式兼容 | navigate + arm + weapon_head_pickup，保活机制自动生效 |
+| `red_area_test.sh` | 旧格式兼容 | red_area_weapon_cycle |
+| `joystick_nav_torque_test.sh` | 旧格式兼容 | arm + conditional |
+| `fast_pid_adjustment.sh` | 旧格式兼容 | 纯导航 |
+| `arm_damiao_test.sh` | 旧格式兼容 | 手臂测试 |
+| `clean.sh` | N/A | 清理脚本 |
+
+`routes/` 目录下 YAML：
+
+| 文件 | 格式 |
+|------|------|
+| `red_area.yaml` | **新格式** (action，pickup 有 arm 块) |
+| `red_area_torque_test.yaml` | 旧格式兼容（arm + conditional + terminate） |
+| `forward_0.5m.yaml` | 旧格式兼容（纯 navigate） |
+| `red_field.yaml` | N/A（场地几何，非 mission） |
+
+### 调试：确认手臂状态是否持续发送
+
+```bash
+# 在 check_torque 循环期间观察 /arm/pneu_ctrl 是否持续刷新
+ros2 topic echo /arm/pneu_ctrl
+
+# 观察保活日志（需临时调低 interval 或查看 /global_nav/status）
+ros2 topic echo /global_nav/status
+
+# 直接观察 arm_ctrl_node 收到的指令
+ros2 topic echo arm/joint_navigation
+ros2 topic echo arm/pneu_navigation
+```
+
+正常情况下，在 `check_torque` 等条件循环中，`arm/pneu_ctrl` 应每 100ms 收到一次刷新。若超过 200ms 无消息，说明保活未生效，检查 `arm_keepalive_enabled` 参数是否为 `true`。
