@@ -406,6 +406,8 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-14 | v0.29 — `weapon_head_pickup.pickup_sequence` 支持 `action/navigate/stop_chassis`，可在抓取序列内部执行短距离底盘动作 |
+| 2026-06-14 | v0.28 — `weapon_head_pickup.pickup_sequence` 支持 `condition/conditional`，修复 blue point 1/2 torque 检查被跳过；torque 条件增加 feedback freshness 保护 |
 | 2026-06-13 | v0.27 — FSM 手臂保活 + 统一 action/condition 类型；`weapon_pickup_test.sh` 每个 stage 都有 `arm` 块，check_torque 不松夹 |
 | 2026-06-13 | v0.26 — `blue_point_1_point_2_test.sh` 增加窗口订阅 `/arm/ir_status`，用于现场确认 weapon_head_pickup 实际 IR 输入 |
 | 2026-06-13 | v0.25 — `blue_point_1_point_2_test.sh` 的 `weapon_head_pickup.micro_sweep` 改为 body +X 前后 10mm 扫动，避免误用 body +Y 侧向扫 |
@@ -1215,6 +1217,8 @@ arm_gripper: open  →  states.index('open') = 0
 | `field` | str | 是 | — | 从缓存 dict 中取哪个键 |
 | `op` | str | 否 | `"gt"` | 比较操作符，见下表 |
 | `value` | float | 否 | `0` | 比较阈值 |
+| `max_age_s` | float | 否 | torque 默认 `0.25` | 数据最大允许年龄；`/damiao_feedback` 或 `*_tau` 字段过期时不触发条件 |
+| `stamp_field` | str | 否 | 自动推断 | 指定时间戳字段；如 `motor_5_tau` 默认使用 `motor_5_stamp` |
 
 **分支字段**：
 
@@ -1234,7 +1238,7 @@ arm_gripper: open  →  states.index('open') = 0
 | `abs_gt` | `abs(actual) > value` | 绝对值大于 | 双向扭矩超限 `abs(torque) > 1.3` |
 | `abs_gte` | `abs(actual) >= value` | 绝对值≥ | 双向扭矩含等于 |
 
-**Self-loop 查询模式**：`else` 设为自己的 `id`（如 `else: check_ir`），实现 50Hz 持续轮询直到条件满足。
+**Self-loop 查询模式**：`else` 设为自己的 `id`（如 `else: check_ir`），实现 50Hz 持续轮询直到条件满足。torque 条件会检查 feedback freshness，旧缓存不会触发 `then`。
 
 **可用的 sensor_cache 数据源**：
 
@@ -1401,7 +1405,36 @@ arm_gripper: open  →  states.index('open') = 0
 
 | 字段 | 类型 | 必需 | 说明 |
 |---|---|---|---|
-| `pickup_sequence` | list | 否 | `[{arm/wait step}, ...]`，每个 step 支持 `arm` 和 `wait` 两种 type |
+| `pickup_sequence` | list | 否 | 子步骤列表；支持 `arm`、`wait`、`verify_ir`、`condition`/`conditional`、`action`、`navigate`、`stop_chassis` |
+
+`pickup_sequence` 内的 `action` / `navigate` 复用顶层导航接口。带 `chassis.to` 或旧格式 `to` 的 step 会持续执行到底盘到达、`torque_arrival` 触发或 `timeout_s` 超时，然后只推进到下一个 pickup_sequence step，不会离开整个 `weapon_head_pickup` stage。示例：
+
+```yaml
+- id: micro_align
+  type: action
+  chassis:
+    to: wp_align
+    profile: head_rack_speed
+    timeout_s: 1.0
+  arm:
+    arm_gripper: close
+    arm_lift: low
+```
+
+`pickup_sequence` 内的 `condition` 与顶层 `condition` 使用相同字段。`then` / `else` 优先跳转到同一个 `pickup_sequence` 内的 step `id`；若找不到该 step，再按顶层 mission stage id 跳转。用于 torque self-loop 时示例：
+
+```yaml
+- id: check_torque
+  type: conditional
+  condition:
+    topic: /damiao_feedback
+    field: motor_5_tau
+    op: abs_gt
+    value: 2.0
+    max_age_s: 0.25
+  then: release_gripper
+  else: check_torque
+```
 
 ---
 
@@ -1782,6 +1815,43 @@ omega   = heading PID output, using k_heading_p and k_heading_d
 ### 超时与失效保护
 
 `timeout_s` 触发时会先发布零 `/local_driving`，再推进 stage。全局 `/state_pose2d` 超时仍由 `global_navigation_node.pose_timeout_s` 负责停车并暂停 FSM。
+
+---
+
+## v0.29 — pickup_sequence 支持 action / navigate（2026-06-14）
+
+### 变更目标
+
+`weapon_head_pickup.pickup_sequence` 现在可以在抓取内部执行短距离底盘动作，例如夹住后微调位置、停车、再等待 torque release。这样 point 1/2 不需要把一段抓取流程拆成多个顶层 stage。
+
+### 支持的 step type
+
+- `action`：支持 `arm` 块、`chassis.to`、`chassis.stop`。
+- `navigate`：兼容旧格式 `to/profile/timeout_s/torque_arrival`。
+- `stop_chassis`：发布零 `/local_driving` 后进入下一 step。
+
+### 完成与失效保护
+
+sequence 内 navigate step 复用普通 `_update_navigate()`，完成条件相同：到达 waypoint、`torque_arrival` 触发或 `timeout_s` 超时。完成后只推进 pickup_sequence 的 step index，不会 advance 顶层 mission stage。`/state_pose2d` 超时仍由 `global_navigation_node.pose_timeout_s` 统一停车并暂停 FSM。
+
+---
+
+## v0.28 — pickup_sequence 支持 torque condition（2026-06-14）
+
+### 问题背景
+
+`blue_point_1_point_2_test.sh` 的 `check_torque` 写在 `weapon_head_pickup.pickup_sequence` 内，但旧 executor 只支持 `arm`、`wait`、`verify_ir`。因此 `type: conditional` 会被当作 unknown step 跳过，后面的 wait/release 顺序执行，表现为 motor 5 torque 未达到阈值也释放 gripper。
+
+### 变更内容
+
+- `pickup_sequence` 新增 `condition` / `conditional` step 支持。
+- `then` / `else` 优先跳转到同一个 pickup sequence 内的 step `id`，支持 `else: check_torque` 自循环。
+- torque 条件默认检查 feedback freshness：`/damiao_feedback` 或 `*_tau` 字段默认 `max_age_s=0.25s`。
+- feedback 缺失、字段缺失或时间戳过期时，条件保持等待，不会触发 release。
+
+### 超时与失效保护
+
+`max_age_s` 可在 YAML condition 内覆盖。默认 motor torque freshness 为 `0.25s`，`motor_5_tau` 自动使用 `motor_5_stamp`；旧缓存不会使 `check_torque` 误判成功。等待期间 `_arm_keepalive_poll()` 仍每 100ms 重发当前手臂/气动状态，夹爪保持 close。
 
 ---
 

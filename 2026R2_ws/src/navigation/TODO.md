@@ -62,9 +62,16 @@
 - [x] 每个 stage 可声明 `arm` 块，所有关节在每个 node 中显式定义
 - [x] `weapon_pickup_test.sh` 改为新格式，check_torque 循环有保活不松夹
 - [x] `blue_point_1_point_2_test.sh` 的 weapon_head_pickup 增加 `arm` 块
+- [x] 修复 `blue_point_1_point_2_test.sh` 中 pickup_sequence 的 torque conditional 被跳过问题
+- [x] `weapon_head_pickup.pickup_sequence` 支持 `condition` / `conditional` step 自循环等待 torque
+- [x] `weapon_head_pickup.pickup_sequence` 支持 `action` / `navigate` / `stop_chassis` step
+- [x] torque condition 增加 `max_age_s` freshness 检查，避免旧 `/damiao_feedback` cache 误触发
 - [x] `red_area.yaml` 改为新格式
 - [ ] 实车验证 `weapon_pickup_test.sh`：check_torque 等待期间夹爪不松
 - [ ] 实车验证 `blue_point_1_point_2_test.sh`：micro_sweep 扫描期间夹爪不松
+- [ ] 实车验证 `blue_point_1_point_2_test.sh`：motor_5_tau 未超过 2.0Nm 时不 release
+- [ ] 实车验证 `blue_point_1_point_2_test.sh`：motor_5_tau 超过 2.0Nm 后 release_gripper
+- [ ] 实车验证 pickup_sequence 内 navigate step：到点/timeout 后只推进 sequence，不跳出 weapon_head_pickup
 - [ ] 实车压力测试：navigate 期间物理拔插 arm Arduino USB，夹爪不松
 
 - [x] 统一 Red Area 相关测试的 profile 口径：正常 Red Area 与 1/4 接近 REC 追踪速度

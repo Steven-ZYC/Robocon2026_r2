@@ -102,6 +102,7 @@ class MissionExecutor:
         self._weapon_scan_start_pose = None
         self._weapon_scan_start_time = 0.0
         self._weapon_wait_start = 0.0
+        self._weapon_sequence_action_index = -1
         self._weapon_warned_missing_ir = False
         self._weapon_warned_ir_timeout = False
         self._weapon_ir_timeout_start = 0.0
@@ -940,35 +941,72 @@ class MissionExecutor:
         in the stage's arm block is maintained by the keep-alive during the
         polling loop.
         """
-        cond = stage.get('condition', {})
-        field = cond.get('field')
-        op = cond.get('op', 'gt')
-        threshold = cond.get('value', 0)
-
-        sensor_data = self.sensor_cache.get(cond.get('topic'))
-        if sensor_data is None:
-            return  # hold in place, keep-alive maintains arm state
-
-        actual = sensor_data.get(field, 0)
-
-        if op == 'gt':
-            result = actual > threshold
-        elif op == 'lt':
-            result = actual < threshold
-        elif op == 'gte':
-            result = actual >= threshold
-        elif op == 'lte':
-            result = actual <= threshold
-        elif op == 'abs_gt':
-            result = abs(actual) > threshold
-        elif op == 'abs_gte':
-            result = abs(actual) >= threshold
-        else:
-            self.logger.warn(f"Unknown condition op '{op}'")
+        result = self._evaluate_condition(stage.get('condition', {}))
+        if result is None:
             return
 
         target_id = stage['then'] if result else stage['else']
         self._jump_to(target_id)
+
+    def _evaluate_condition(self, cond, default_max_age_s=None):
+        """Evaluate a sensor_cache condition.
+
+        Returns True/False when the condition can be evaluated. Returns None
+        when required data is missing or stale so the caller can hold state.
+        Torque feedback defaults to a freshness check because stale motor
+        contact data can release a gripper before the current docking attempt.
+        """
+        topic = cond.get('topic')
+        field = cond.get('field')
+        op = cond.get('op', 'gt')
+        threshold = float(cond.get('value', 0.0))
+
+        sensor_data = self.sensor_cache.get(topic)
+        if sensor_data is None or field not in sensor_data:
+            return None
+
+        max_age_s = cond.get('max_age_s', default_max_age_s)
+        if max_age_s is None and self._condition_field_needs_freshness(topic, field):
+            max_age_s = 0.25
+        if max_age_s is not None and not self._condition_data_is_fresh(cond, sensor_data, field, float(max_age_s)):
+            return None
+
+        actual = float(sensor_data.get(field, 0.0))
+        if op == 'gt':
+            return actual > threshold
+        if op == 'lt':
+            return actual < threshold
+        if op == 'gte':
+            return actual >= threshold
+        if op == 'lte':
+            return actual <= threshold
+        if op == 'abs_gt':
+            return abs(actual) > threshold
+        if op == 'abs_gte':
+            return abs(actual) >= threshold
+
+        self.logger.warn(f"Unknown condition op '{op}'")
+        return None
+
+    def _condition_field_needs_freshness(self, topic, field):
+        """Return True for feedback fields that must not use stale cache."""
+        return topic == '/damiao_feedback' or str(field).endswith('_tau')
+
+    def _condition_data_is_fresh(self, cond, sensor_data, field, max_age_s):
+        """Check timestamp freshness for condition data."""
+        stamp_field = cond.get('stamp_field')
+        if stamp_field is None:
+            if str(field).startswith('motor_') and str(field).endswith('_tau'):
+                stamp_field = str(field).replace('_tau', '_stamp')
+            elif str(field).startswith('chassis_motor_'):
+                stamp_field = 'chassis_motor_stamp'
+            else:
+                stamp_field = '_stamp'
+
+        stamp = sensor_data.get(stamp_field, sensor_data.get('_stamp'))
+        if stamp is None:
+            return False
+        return time.monotonic() - float(stamp) <= max_age_s
 
     # ------------------------------------------------------------------
     # Low-level publish helpers
@@ -1097,6 +1135,7 @@ class MissionExecutor:
         self._weapon_scan_start_pose = None
         self._weapon_scan_start_time = 0.0
         self._weapon_wait_start = 0.0
+        self._weapon_sequence_action_index = -1
         self._weapon_warned_missing_ir = False
         self._weapon_warned_ir_timeout = False
         self._weapon_ir_timeout_start = 0.0
@@ -1356,10 +1395,102 @@ class MissionExecutor:
                 self._weapon_pickup_step_index += 1
         elif stype == 'verify_ir':
             self._update_weapon_verify_ir_step(stage, step)
+        elif stype in ('condition', 'conditional'):
+            self._update_weapon_condition_step(stage, step, sequence)
+        elif stype in ('action', 'navigate', 'stop_chassis'):
+            self._update_weapon_action_step(stage, step)
         else:
             self.logger.warn(f"Unknown pickup_sequence step type '{stype}', skipping")
             self._weapon_pickup_step_index += 1
             self._weapon_wait_start = 0.0
+
+    def _update_weapon_action_step(self, stage, step):
+        """Execute action/navigate/stop_chassis inside pickup_sequence.
+
+        Navigation sub-steps reuse the normal navigate controller, but their
+        completion advances only the pickup sequence step instead of leaving the
+        surrounding weapon_head_pickup stage.
+        """
+        self._enter_weapon_action_step_once(step)
+        chassis = step.get('chassis', {}) or {}
+        stype = step.get('type', '')
+
+        if chassis.get('to') or stype == 'navigate':
+            self._update_weapon_navigate_step(stage, step)
+            return
+
+        if chassis.get('stop') or stype == 'stop_chassis':
+            self._pub_zero_driving()
+            self._advance_weapon_sequence_step(clear_navigation=True)
+            return
+
+        # Pure action with only an arm block: apply once and continue.
+        self._advance_weapon_sequence_step(clear_navigation=False)
+
+    def _enter_weapon_action_step_once(self, step):
+        """Apply an action step's arm state once when entering that step."""
+        if self._weapon_sequence_action_index == self._weapon_pickup_step_index:
+            return
+        self._weapon_sequence_action_index = self._weapon_pickup_step_index
+        if self._extract_arm_state(step):
+            self._execute_arm(step)
+
+    def _update_weapon_navigate_step(self, stage, step):
+        """Run a navigate step without letting _update_navigate advance stages."""
+        nav_step = dict(step)
+        if not nav_step.get('id'):
+            nav_step['id'] = (
+                f"{stage.get('id', 'weapon_head_pickup')}"
+                f":pickup_step_{self._weapon_pickup_step_index}"
+            )
+
+        original_advance_stage = self._advance_stage
+
+        def advance_pickup_step():
+            self._advance_weapon_sequence_step(clear_navigation=True)
+
+        self._advance_stage = advance_pickup_step
+        try:
+            self._update_navigate(nav_step)
+        finally:
+            self._advance_stage = original_advance_stage
+
+    def _advance_weapon_sequence_step(self, clear_navigation=False):
+        """Advance one pickup_sequence step and clear per-step state."""
+        if clear_navigation:
+            self._clear_navigation_state()
+        self._weapon_pickup_step_index += 1
+        self._weapon_wait_start = 0.0
+        self._weapon_sequence_action_index = -1
+
+    def _update_weapon_condition_step(self, stage, step, sequence):
+        """Poll a pickup_sequence condition and branch inside the sequence.
+
+        Blue point 1/2 uses this for motor 5 torque docking. A false branch can
+        target the same step id to form a non-blocking 50Hz polling loop while
+        the global arm keep-alive continues to refresh the gripper state.
+        """
+        result = self._evaluate_condition(step.get('condition', {}), default_max_age_s=0.25)
+        if result is None:
+            return
+
+        target = step.get('then' if result else 'else')
+        if not target:
+            self._weapon_pickup_step_index += 1
+            self._weapon_wait_start = 0.0
+            return
+
+        self._jump_within_weapon_sequence_or_stage(stage, sequence, str(target))
+
+    def _jump_within_weapon_sequence_or_stage(self, stage, sequence, target):
+        """Jump to a pickup_sequence step id, falling back to mission stage ids."""
+        for i, step in enumerate(sequence):
+            if step.get('id') == target:
+                self._weapon_pickup_step_index = i
+                self._weapon_wait_start = 0.0
+                return
+
+        self._jump_to(target)
 
     def _update_weapon_verify_ir_step(self, stage, step):
         """Re-check IR during pickup_sequence and optionally branch the mission.
@@ -2058,6 +2189,7 @@ class MissionExecutor:
         self._weapon_scan_start_pose = None
         self._weapon_scan_start_time = 0.0
         self._weapon_wait_start = 0.0
+        self._weapon_sequence_action_index = -1
         self._weapon_warned_missing_ir = False
         self._weapon_warned_ir_timeout = False
         self._weapon_ir_timeout_start = 0.0
