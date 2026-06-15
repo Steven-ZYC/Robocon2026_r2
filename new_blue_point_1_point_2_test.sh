@@ -303,15 +303,9 @@ stages:
           topic: /damiao_feedback
           field: motor_5_tau
           op: abs_gt
-          value: 2.0
-        then: check_torque_timeout
+          value: 1.3
+        then: release_gripper
         else: check_torque
-
-      - id: check_torque_timeout
-        type: wait
-        duration_s: 0.3
-        on_timeout: release_gripper
-        on_event: check_torque
 
       # 7: gripper open（释放）
       - id: release_gripper
