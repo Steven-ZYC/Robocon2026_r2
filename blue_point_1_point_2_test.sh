@@ -70,11 +70,15 @@ waypoints:
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
   wp_point_1:
-    pose: { x: 0.36, y: -0.87, yaw: 0.0 }
+    pose: { x: 0.36, y: -0.875, yaw: 0.0 }
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
+  wp_point_1_back:
+    pose: { x: 0.36, y: -0.75, yaw: 0.0 }
+    pos_tolerance: 0.01
+    yaw_tolerance_deg: 1.0
   wp_point_2:
-    pose: { x: 0.36, y: -0.87, yaw: 0.0 }
+    pose: { x: 0.36, y: -1.075, yaw: 0.0 }
     pos_tolerance: 0.017
     yaw_tolerance_deg: 1.0
 
@@ -98,9 +102,9 @@ profiles:
     curve: cubic_ease
 
   head_rack_speed:
-    # Approach/REC tracking profile = 1/4 Red Area profile speed limits.
-    speed_mps: 0.1
-    yaw_rate_rps: 0.075
+    # Approach/REC tracking profile = 1/2 Red Area profile speed limits.
+    speed_mps: 0.2
+    yaw_rate_rps: 0.15
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
@@ -112,8 +116,8 @@ profiles:
     k_d_y: 0.25
     k_heading_p: 0.06
     k_heading_d: 0.0
-    max_body_x_mps: 0.25
-    max_body_y_mps: 0.25
+    max_body_x_mps: 0.55
+    max_body_y_mps: 0.5
 
 actuators:
   arm_yaw_motor:
@@ -184,12 +188,12 @@ stages:
     type: navigate
     to: wp_point_1
     profile: red_area
-    timeout_s: 3.5
+    timeout_s: 2.5
     torque_arrival:
       topic: /damiao_feedback
       field: motor_1_tau
       op: abs_gte
-      abs_threshold_nm: 2.5
+      abs_threshold_nm: 4.0
       max_age_s: 0.5
       min_elapsed_s: 0.20
 
@@ -251,15 +255,23 @@ stages:
         arm_stopper: low
 
       - type: wait
-        duration_s: 1.0
+        duration_s: 1.5
 
-      # 步骤6:检查有无夹到，未触发IR sensor需要归位
-      # else 跳回自己 → 50Hz 轮询直到 IR=true
+      # 检查有无夹到，未触发IR sensor需要归位
+      #  IR=true  → continue：继续释放流程
       #- id: verify_ir
       # type: verify_ir
       #  expected_ir: true
       #  on_true: yaw_to_front
       #  on_false: prepare_point_2_after_failed_grab
+
+      - type: wait
+        duration_s: 1.5
+
+      - id: move_to_point_1_back
+        type: navigate
+        to: wp_point_1_back
+        profile: head_rack_speed
 
       # 步骤7: M5→front (0°)
       - id: yaw_to_front
@@ -272,7 +284,7 @@ stages:
 
       - id: wait_1s
         type: wait
-        duration_s: 1.0
+        duration_s: 2.0
 
       # 步骤8: M6→+90°
       - id: roll_right
@@ -285,7 +297,7 @@ stages:
 
       - id: wait_1s
         type: wait
-        duration_s: 1.0
+        duration_s: 1.5
 
       # 步骤9: stopper high
       - id: stopper_up
@@ -309,15 +321,9 @@ stages:
           topic: /damiao_feedback
           field: motor_5_tau
           op: abs_gt
-          value: 2.0
+          value: 1.3
         then: release_gripper
         else: check_torque
-
-      - id: check_torque_timeout
-        type: wait
-        duration_s: 0.3
-        on_timeout: release_gripper
-        on_event: check_torque
 
       # 步骤11: 松开 gripper
       - id: release_gripper
@@ -350,8 +356,8 @@ stages:
       - type: verify_ir
         label: point_1_after_release_sensor_clear
         expected: false
-        on_true: point_1_done
-        on_false: point_1_done
+        on_true: wait_before_point_2
+        on_false: wait_before_point_2
 
   # ================================================================
   # Point 1 失败恢复路径 (verify_ir on_false 跳转到这里)
@@ -370,7 +376,7 @@ stages:
   # ---- 等待安全姿态就位 ----
   - id: wait_before_point_2
     type: wait
-    duration_s: 0.2
+    duration_s: 2.0
 
   # ---- 底盘导航到 point 2（rack 第二个 slot 位置） ----
   - id: move_to_point_2
@@ -390,7 +396,7 @@ stages:
 
   - id: point_2_settle
     type: wait
-    duration_s: 0.2
+    duration_s: 2.0
 
   - id: arm_ready_point_2
     type: action
@@ -438,20 +444,25 @@ stages:
       pos_tolerance: 0.02
       yaw_tolerance: 0.05
     pickup_sequence:
+    
       # 步骤1: gripper close（夹取）
       - type: arm
         arm_gripper: close
         arm_lift: low
         arm_stopper: low
+
       - type: wait
-        duration_s: 0.15
+        duration_s: 1.0
+
       # 步骤2: lift high（提起）
       - type: arm
         arm_gripper: close
         arm_lift: high
         arm_stopper: low
+
       - type: wait
-        duration_s: 0.20
+        duration_s: 1.0
+
       # 步骤3: verify_ir 复检 —— 确认抓取
       #   IR=true  → continue：继续释放流程
       #   IR=false → point_2_failed_safe_pose：安全姿态 → terminate
@@ -460,26 +471,89 @@ stages:
         expected: true
         on_true: continue
         on_false: point_2_failed_safe_pose
-      # 步骤4: lift low, gripper open（放回）
-      - type: arm
+
+      # 步骤7: M5→front (0°)
+      - id: yaw_to_front
+        type: arm
+        arm_yaw_motor: front
+        arm_roll_motor: up
+        arm_gripper: close
+        arm_lift: high
+        arm_stopper: low
+
+      - id: wait_1s
+        type: wait
+        duration_s: 2.0
+
+      # 步骤8: M6→+90°
+      - id: roll_right
+        type: arm
+        arm_yaw_motor: front
+        arm_roll_motor: left_90deg
         arm_gripper: close
         arm_lift: low
         arm_stopper: low
+
+      - id: wait_1s
+        type: wait
+        duration_s: 1.5
+
+      # 步骤9: stopper high
+      - id: stopper_up
+        type: arm
+        arm_yaw_motor: front
+        arm_roll_motor: left_90deg
+        arm_gripper: close
+        arm_lift: low
+        arm_stopper: high
+
       - type: wait
-        duration_s: 0.15
-      - type: arm
+        duration_s: 1.0
+
+      - id: move_to_point_1_back
+        type: navigate
+        to: wp_point_1_back
+        profile: head_rack_speed
+
+      # 步骤10: 扭矩检测: M5 torque > |2.0| Nm → 松开 gripper
+      # 支持的 op 字段: gt(大于) lt(小于) gte(≥) lte(≤) abs_gt(绝对值大于) abs_gte(绝对值≥)
+      # 数据来源: /damiao_feedback → motor_5_tau (Nm)，由 global_navigation_node 缓存到 sensor_cache
+      - id: check_torque
+        type: conditional
+        condition:
+          topic: /damiao_feedback
+          field: motor_5_tau
+          op: abs_gt
+          value: 1.3
+        then: release_gripper
+        else: check_torque
+
+      # 步骤11: 松开 gripper
+      - id: release_gripper
+        type: arm
+        arm_yaw_motor: front
+        arm_roll_motor: left_90deg
         arm_gripper: open
         arm_lift: low
         arm_stopper: low
-      - type: wait
-        duration_s: 0.20
-      # 步骤5: lift high, arm 离开 rack
-      - type: arm
+
+      - id: wait_1s
+        type: wait
+        duration_s: 1.0
+      
+      # 步骤12: 归位
+      - id: arm_init_pose
+        type: arm
+        arm_yaw_motor: front
+        arm_roll_motor: up
         arm_gripper: open
-        arm_lift: high
+        arm_lift: low
         arm_stopper: low
-      - type: wait
-        duration_s: 0.20
+
+      - id: wait_1s
+        type: wait
+        duration_s: 1.0
+
       # 步骤6: verify_ir 复检 —— 确认 sensor 清空
       - type: verify_ir
         label: point_2_after_release_sensor_clear
