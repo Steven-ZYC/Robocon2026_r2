@@ -406,6 +406,7 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-15 | v0.30 — YAML 启动时全量字段校验：waypoint/profile/actuator/stage 含子块 unknown-key 检测 + arm block 值合法检查；`mission_viz_node` 支持 `action` 类型 waypoint 渲染；删除死代码 `route_loader.py`/`action_executor.py`/`START_GUIDE.md`；`setup.py` routes glob 支持子目录 |
 | 2026-06-14 | v0.29 — `weapon_head_pickup.pickup_sequence` 支持 `action/navigate/stop_chassis`，可在抓取序列内部执行短距离底盘动作 |
 | 2026-06-14 | v0.28 — `weapon_head_pickup.pickup_sequence` 支持 `condition/conditional`，修复 blue point 1/2 torque 检查被跳过；torque 条件增加 feedback freshness 保护 |
 | 2026-06-13 | v0.27 — FSM 手臂保活 + 统一 action/condition 类型；`weapon_pickup_test.sh` 每个 stage 都有 `arm` 块，check_torque 不松夹 |
@@ -1833,6 +1834,50 @@ omega   = heading PID output, using k_heading_p and k_heading_d
 ### 完成与失效保护
 
 sequence 内 navigate step 复用普通 `_update_navigate()`，完成条件相同：到达 waypoint、`torque_arrival` 触发或 `timeout_s` 超时。完成后只推进 pickup_sequence 的 step index，不会 advance 顶层 mission stage。`/state_pose2d` 超时仍由 `global_navigation_node.pose_timeout_s` 统一停车并暂停 FSM。
+
+---
+
+## v0.30 — YAML 全量启动校验 + viz 修复 + 代码清理（2026-06-15）
+
+### YAML 未知字段启动时显式警告
+
+`MissionExecutor._validate_stages()` 原先只检查少数几个引用是否存在（waypoint 名、profile 名、actuator 名、stage ID），不检查字段拼写错误。`proifle` 代替 `profile`、`duratoin_s` 代替 `duration_s`、`searc_mode` 代替 `search_mode` 这类 typo 会**静默被忽略**，实车现场难以发现。
+
+本版本新增：
+- **关键 block 字段白名单校验**：waypoint、profile、actuator、每个 stage type、chassis、torque_arrival、condition、scan、step、micro_sweep、search 均有已知 key 集合，多余 key 一律 warn
+- **arm block 值合法检查**：`arm_gripper: clsoe` 这类 state/position 拼写错误也会在 load 阶段 warn
+- **pickup_sequence 子步骤全量覆盖**：`arm`、`wait`、`verify_ir`、`condition`/`conditional`、`action`/`navigate`、`stop_chassis` 的子 key 均校验
+- **red_area_weapon_cycle 的内部序列**：`prepare_sequence`、`pickup_sequence`、`miss_sequence` 等的 step 类型和字段均校验
+- **sequential / parallel 子步骤**：key 校验
+
+> `_warn_unknown()` 只发 `warn`，不阻塞 mission 加载。已有 YAML 中无效字段（如 blue point 1的 `check_torque_timeout.on_timeout` / `on_event`）现在会被显式报告。
+
+### mission_viz_node：渲染 action 类型导航路径
+
+`mission_viz_node._load_mission()` 原先只匹配 `type: navigate` stage 的 `to` 字段提取 route 连线。新版 YAML 使用 `type: action` + `chassis.to`，route line strip 在 RViz 中不显示。
+
+本版本改为同时匹配：
+- `type: navigate` → 取 `to`
+- `type: action` → 取 `chassis.to`
+
+使用新格式（action/condition/wait）的 mission 文件现在也能在 RViz 中看到完整的航点路线。
+
+### 删除死代码
+
+移除以下不再被任何代码 import 或使用的文件：
+
+| 文件 | 原因 |
+|------|------|
+| `navigation/route_loader.py` | v0.2 MissionExecutor 取代后废弃 |
+| `navigation/action_executor.py` | v0.2 MissionExecutor 取代后废弃 |
+
+### 删除过时文档
+
+移除 `START_GUIDE.md`。其内容已严重过时（引用不存在的 route_A.yaml、错误的 theta 单位、不存在的 launch 文件），README.md 已覆盖所有启动说明。
+
+### setup.py routes glob 支持子目录
+
+`data_files` 中 routes 的 glob 从 `routes/*.yaml` 改为 `routes/*.yaml + routes/*/*.yaml`，确保 `routes/blue/` 和 `routes/red/` 下的 YAML 在 `colcon build --packages-select navigation` 时被正确安装。
 
 ---
 

@@ -157,10 +157,15 @@ class MissionVizNode(Node):
 
         if 'stages' in data:
             for stage in data['stages']:
-                if stage.get('type') == 'navigate':
+                stype = stage.get('type', '')
+                wp_name = None
+                if stype == 'navigate':
                     wp_name = stage.get('to')
-                    if wp_name and wp_name in self._waypoints:
-                        self._route_sequence.append(wp_name)
+                elif stype == 'action':
+                    chassis = stage.get('chassis', {}) or {}
+                    wp_name = chassis.get('to')
+                if wp_name and wp_name in self._waypoints:
+                    self._route_sequence.append(wp_name)
 
     # ------------------------------------------------------------------
     # Pose 回调

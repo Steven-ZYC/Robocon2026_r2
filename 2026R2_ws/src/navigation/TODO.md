@@ -1,6 +1,10 @@
 # Navigation TODO
 
-- [x] 新增 plot_node 实时底盘位置可视化节点（已 deprecated，由 mission_viz_node 取代）
+- [x] `MissionExecutor._validate_stages()` 启动时全量 YAML 字段校验：白名单检测 unknown key（含子块 chassis/torque_arrival/condition/scan/step/micro_sweep/search + pickup_sequence 各步骤类型 + sequential/parallel + arm block 值合法检查）
+- [x] 删除死代码 `route_loader.py`（v0.2 MissionExecutor 后废弃）和 `action_executor.py`（v0.2 后废弃）
+- [x] 删除过时文档 `START_GUIDE.md`（引用不存在的文件与参数，README 已覆盖所有启动说明）
+- [x] `mission_viz_node._load_mission()` 支持 `type: action` + `chassis.to` 提取 waypoint 路线，新格式 mission 在 RViz 中也显示 route line strip
+- [x] `setup.py` routes glob 改为 `routes/*.yaml + routes/*/*.yaml`，支持 `routes/blue/` 和 `routes/red/` 子目录
 - [x] 新增 mission_viz_node：RViz Marker/MarkerArray 可视化，支持场地 YAML 与红蓝镜像
 - [x] 新增 `routes/red_field.yaml` 场地几何定义
 - [x] 新增 `launch/viz.launch.py` 一键启动 viz + RViz2

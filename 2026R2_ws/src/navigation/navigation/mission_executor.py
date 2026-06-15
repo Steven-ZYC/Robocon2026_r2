@@ -266,27 +266,190 @@ class MissionExecutor:
             normalized[name] = wp
         return normalized
 
+    # Known-key whitelists for YAML validation
+    # 用于 _validate_stages() 中检测拼写错误 / 不存在的字段
+    _KNOWN_WAYPOINT_KEYS = {'pose', 'pos_tolerance', 'yaw_tolerance', 'yaw_tolerance_deg'}
+    _KNOWN_POSE_KEYS = {'x', 'y', 'yaw'}
+    _KNOWN_PROFILE_KEYS = {
+        'speed_mps', 'yaw_rate_rps', 'start_radius_m', 'end_radius_m',
+        'min_speed_scale', 'curve', 'k_cte_p', 'k_heading_p', 'k_heading_d',
+        'max_lateral_mps', 'k_p_x', 'k_p_y', 'k_i_x', 'k_i_y', 'k_d_x', 'k_d_y',
+        'xy_integral_max', 'max_body_x_mps', 'max_body_y_mps',
+    }
+    _KNOWN_ACTUATOR_MOTOR_KEYS = {'type', 'motor_id', 'speed', 'positions'}
+    _KNOWN_ACTUATOR_PNEU_KEYS = {'type', 'states'}
+    _STAGE_COMMON_KEYS = {'id', 'type', 'arm'}
+    _KNOWN_CHASSIS_KEYS = {'to', 'profile', 'timeout_s', 'torque_arrival', 'stop'}
+    _KNOWN_TORQUE_ARRIVAL_KEYS = {
+        'topic', 'field', 'op', 'abs_threshold_nm', 'threshold_nm',
+        'value', 'max_age_s', 'min_elapsed_s', 'stamp_field',
+    }
+    _KNOWN_CONDITION_KEYS = {'topic', 'field', 'op', 'value', 'max_age_s', 'stamp_field'}
+    _KNOWN_SCAN_KEYS = {'direction_rad', 'speed_mps', 'max_distance_m', 'timeout_s'}
+    _KNOWN_STEP_KEYS = {'profile', 'settle_s', 'pos_tolerance', 'yaw_tolerance'}
+    _KNOWN_MICRO_SWEEP_KEYS = {
+        'direction_rad', 'back_distance_m', 'forward_distance_m', 'speed_mps',
+        'timeout_s', 'max_distance_m', 'profile', 'pos_tolerance', 'yaw_tolerance',
+    }
+    _KNOWN_SEARCH_KEYS = _KNOWN_MICRO_SWEEP_KEYS | {'mode'}
+    _KNOWN_VERIFY_IR_KEYS = {
+        'type', 'label', 'expected', 'on_true', 'on_false', 'on_match', 'on_mismatch',
+    }
+
+    def _warn_unknown(self, label, data, known):
+        """对 data 中不在 known 集合里的 key 各发一次 warn。"""
+        if not isinstance(data, dict):
+            return
+        for key in data:
+            if key not in known:
+                self.logger.warn(
+                    f"{label}: unknown key '{key}' "
+                    f"(valid: {', '.join(sorted(known))})"
+                )
+
     def _validate_stages(self):
-        """Check that all referenced stage IDs, waypoints, and profiles exist."""
+        """Check that all referenced IDs / waypoints / profiles exist,
+        AND warn about unrecognized YAML keys in every block."""
+
+        actuator_names = set(self.actuators.keys())
         stage_ids = {s['id'] for s in self.stages}
+
+        # ---- 0. Validate waypoints, profiles, actuators at block level ----
+        for name, wp in self.waypoints.items():
+            self._warn_unknown(f"waypoint '{name}'", wp, self._KNOWN_WAYPOINT_KEYS)
+            pose = wp.get('pose')
+            if isinstance(pose, dict):
+                self._warn_unknown(f"waypoint '{name}'.pose", pose, self._KNOWN_POSE_KEYS)
+
+        for name, prof in self.profiles.items():
+            self._warn_unknown(f"profile '{name}'", prof, self._KNOWN_PROFILE_KEYS)
+
+        for name, act in self.actuators.items():
+            if act.get('type') == 'motor':
+                self._warn_unknown(f"actuator '{name}'", act, self._KNOWN_ACTUATOR_MOTOR_KEYS)
+            elif act.get('type') == 'pneumatic':
+                self._warn_unknown(f"actuator '{name}'", act, self._KNOWN_ACTUATOR_PNEU_KEYS)
+
+        # ---- 1. Stage-level unknown-key + reference checks ----
         for s in self.stages:
             sid = s.get('id', '?')
             stype = s.get('type', '?')
 
+            # -- stage-level unknown keys --
+            # Per declared type: known = common + type-specific extra
+            if stype == 'navigate':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS | {'to', 'profile', 'timeout_s', 'torque_arrival'})
+            elif stype == 'arm':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS | actuator_names)
+            elif stype == 'action':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS | {'chassis'})
+            elif stype in ('condition', 'conditional'):
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS | {'condition', 'then', 'else'})
+            elif stype == 'verify_ir':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS | self._KNOWN_VERIFY_IR_KEYS)
+            elif stype == 'wait':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS | {'duration_s'})
+            elif stype == 'stop_chassis':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS)
+            elif stype == 'sequential':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS | {'steps'})
+            elif stype == 'parallel':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS | {'actions', 'wait_until'})
+            elif stype == 'weapon_head_pickup':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS | {
+                    'search_mode', 'ir_topic', 'ir_field', 'ir_timeout_s',
+                    'slot_count', 'slot_spacing_m', 'on_miss',
+                    'scan', 'step', 'micro_sweep', 'pickup_sequence',
+                })
+            elif stype == 'red_area_weapon_cycle':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS - {'arm'} | {
+                    'start_waypoint', 'slot_count', 'slot_spacing_m', 'slot_direction_rad',
+                    'slot_profile', 'target_success_count', 'max_retry_per_slot',
+                    'ir_topic', 'ir_field', 'ir_timeout_s',
+                    'docking_torque_topic', 'docking_torque_field', 'docking_torque_abs_threshold_nm',
+                    'slot_pos_tolerance', 'slot_yaw_tolerance', 'slot_yaw_tolerance_deg',
+                    'prepare_sequence', 'pickup_sequence', 'miss_sequence',
+                    'dock_release_sequence', 'final_sequence', 'search', 'micro_sweep',
+                })
+            elif stype == 'terminate':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS)
+            else:
+                self.logger.warn(f"[{sid}] unknown stage type '{stype}'")
+
+            # -- arm block content validation (all stage types can have it) --
+            arm_block = s.get('arm')
+            if isinstance(arm_block, dict):
+                self._warn_unknown(f"[{sid}] arm", arm_block, actuator_names)
+                for act_name, act_value in arm_block.items():
+                    act = self.actuators.get(act_name)
+                    if act is None:
+                        continue  # warned as unknown key above
+                    if act.get('type') == 'motor':
+                        positions = act.get('positions', {})
+                        if act_value not in positions:
+                            self.logger.warn(
+                                f"[{sid}] arm.{act_name}: unknown position '{act_value}' "
+                                f"(valid: {list(positions.keys())})"
+                            )
+                    elif act.get('type') == 'pneumatic':
+                        states = act.get('states', [])
+                        if act_value not in states:
+                            self.logger.warn(
+                                f"[{sid}] arm.{act_name}: unknown state '{act_value}' "
+                                f"(valid: {states})"
+                            )
+
+            # -- sub-block unknown keys --
+            chassis = s.get('chassis') or {}
+            if isinstance(chassis, dict):
+                self._warn_unknown(f"[{sid}] chassis", chassis, self._KNOWN_CHASSIS_KEYS)
+                ta = chassis.get('torque_arrival')
+                if isinstance(ta, dict):
+                    self._warn_unknown(f"[{sid}] chassis.torque_arrival", ta, self._KNOWN_TORQUE_ARRIVAL_KEYS)
+            ta2 = s.get('torque_arrival')
+            if isinstance(ta2, dict):
+                self._warn_unknown(f"[{sid}] torque_arrival", ta2, self._KNOWN_TORQUE_ARRIVAL_KEYS)
+
+            cond = s.get('condition')
+            if isinstance(cond, dict):
+                self._warn_unknown(f"[{sid}] condition", cond, self._KNOWN_CONDITION_KEYS)
+
+            scan = s.get('scan') or {}
+            if isinstance(scan, dict):
+                self._warn_unknown(f"[{sid}] scan", scan, self._KNOWN_SCAN_KEYS)
+            step_cfg = s.get('step') or {}
+            if isinstance(step_cfg, dict):
+                self._warn_unknown(f"[{sid}] step", step_cfg, self._KNOWN_STEP_KEYS)
+            ms = s.get('micro_sweep') or {}
+            if isinstance(ms, dict):
+                self._warn_unknown(f"[{sid}] micro_sweep", ms, self._KNOWN_MICRO_SWEEP_KEYS)
+            search_cfg = s.get('search') or {}
+            if isinstance(search_cfg, dict):
+                self._warn_unknown(f"[{sid}] search", search_cfg, self._KNOWN_SEARCH_KEYS)
+
+            # -- reference checks (duplicate existing logic, enhanced for new types) --
             if stype == 'navigate':
                 if s.get('to') not in self.waypoints:
                     self.logger.warn(f"[{sid}] waypoint '{s.get('to')}' not found")
                 if s.get('profile') not in self.profiles:
                     self.logger.warn(f"[{sid}] profile '{s.get('profile')}' not found")
 
+            elif stype == 'action':
+                ch = s.get('chassis') or {}
+                if isinstance(ch, dict):
+                    if ch.get('to') and ch['to'] not in self.waypoints:
+                        self.logger.warn(f"[{sid}] chassis.to waypoint '{ch['to']}' not found")
+                    if ch.get('profile') and ch['profile'] not in self.profiles:
+                        self.logger.warn(f"[{sid}] chassis.profile '{ch['profile']}' not found")
+
             elif stype == 'arm':
                 for key in s:
-                    if key == 'type' or key == 'id':
+                    if key in ('type', 'id'):
                         continue
                     if key not in self.actuators:
                         self.logger.warn(f"[{sid}] actuator '{key}' not defined")
 
-            elif stype == 'conditional':
+            elif stype in ('condition', 'conditional'):
                 then_id = s.get('then')
                 else_id = s.get('else')
                 if then_id and then_id not in stage_ids:
@@ -294,14 +457,83 @@ class MissionExecutor:
                 if else_id and else_id not in stage_ids:
                     self.logger.warn(f"[{sid}] else stage '{else_id}' not found")
 
+            elif stype == 'verify_ir':
+                for branch_key in ('on_true', 'on_false', 'on_match', 'on_mismatch'):
+                    target_id = s.get(branch_key)
+                    if target_id and target_id not in ('continue', 'advance', 'terminate') and target_id not in stage_ids:
+                        self.logger.warn(f"[{sid}] {branch_key} stage '{target_id}' not found")
+
             elif stype == 'sequential':
                 for step in s.get('steps', []):
-                    if step.get('type') == 'arm':
+                    stp_type = step.get('type', '?')
+                    if stp_type == 'arm':
                         for key in step:
-                            if key == 'type':
+                            if key in ('type',):
                                 continue
                             if key not in self.actuators:
-                                self.logger.warn(f"[{sid}] actuator '{key}' not defined")
+                                self.logger.warn(f"[{sid}] steps arm: actuator '{key}' not defined")
+                    elif stp_type == 'wait':
+                        self._warn_unknown(f"[{sid}] steps wait", step, {'type', 'duration_s'})
+                    elif stp_type == 'stop_chassis':
+                        self._warn_unknown(f"[{sid}] steps stop_chassis", step, {'type'})
+                    else:
+                        self.logger.warn(f"[{sid}] steps: unknown step type '{stp_type}'")
+
+            elif stype == 'parallel':
+                for action in s.get('actions', []):
+                    act_type = action.get('type', '?')
+                    if act_type == 'arm':
+                        for key in action:
+                            if key in ('type',):
+                                continue
+                            if key not in self.actuators:
+                                self.logger.warn(f"[{sid}] actions arm: actuator '{key}' not defined")
+                    else:
+                        self.logger.warn(f"[{sid}] actions: unknown action type '{act_type}'")
+
+            elif stype == 'weapon_head_pickup':
+                mode = s.get('search_mode', 'scan_until_ir')
+                if mode not in ('scan_until_ir', 'step_0p2m', 'micro_sweep_10mm'):
+                    self.logger.warn(f"[{sid}] unknown search_mode '{mode}'")
+                for step in s.get('pickup_sequence', []):
+                    stp_type = step.get('type', '?')
+                    if stp_type == 'arm':
+                        for key in step:
+                            if key in ('type', 'id'):
+                                continue
+                            if key not in self.actuators:
+                                self.logger.warn(f"[{sid}] pickup arm: actuator '{key}' not defined")
+                        self._warn_unknown(f"[{sid}] pickup arm", step, {'type', 'id'} | actuator_names)
+                    elif stp_type == 'wait':
+                        self._warn_unknown(f"[{sid}] pickup wait", step, {'type', 'id', 'duration_s'})
+                    elif stp_type == 'verify_ir':
+                        self._warn_unknown(f"[{sid}] pickup verify_ir", step, self._KNOWN_VERIFY_IR_KEYS)
+                        for branch_key in ('on_true', 'on_false', 'on_match', 'on_mismatch'):
+                            target_id = step.get(branch_key)
+                            if target_id and target_id not in ('continue', 'advance', 'terminate') and target_id not in stage_ids:
+                                self.logger.warn(f"[{sid}] pickup verify_ir {branch_key} stage '{target_id}' not found")
+                    elif stp_type in ('condition', 'conditional'):
+                        self._warn_unknown(f"[{sid}] pickup condition", step, {'type', 'id', 'condition', 'then', 'else'})
+                        cond_cfg = step.get('condition') or {}
+                        if isinstance(cond_cfg, dict):
+                            self._warn_unknown(f"[{sid}] pickup condition.condition", cond_cfg, self._KNOWN_CONDITION_KEYS)
+                        for b in ('then', 'else'):
+                            t = step.get(b)
+                            if t and t not in stage_ids:
+                                seq_ids = {x.get('id') for x in s.get('pickup_sequence', []) if x.get('id')}
+                                if t not in seq_ids:
+                                    self.logger.warn(f"[{sid}] pickup condition {b} '{t}' not found in pickup_sequence or stages")
+                    elif stp_type == 'action':
+                        self._warn_unknown(f"[{sid}] pickup action", step, {'type', 'id', 'arm', 'chassis'})
+                        ch = step.get('chassis') or {}
+                        if isinstance(ch, dict):
+                            self._warn_unknown(f"[{sid}] pickup action chassis", ch, self._KNOWN_CHASSIS_KEYS)
+                    elif stp_type in ('navigate',):
+                        self._warn_unknown(f"[{sid}] pickup navigate", step, {'type', 'id', 'to', 'profile', 'timeout_s', 'torque_arrival'})
+                    elif stp_type == 'stop_chassis':
+                        self._warn_unknown(f"[{sid}] pickup stop_chassis", step, {'type', 'id'})
+                    else:
+                        self.logger.warn(f"[{sid}] pickup_sequence: unknown step type '{stp_type}'")
 
             elif stype == 'red_area_weapon_cycle':
                 if s.get('start_waypoint') not in self.waypoints:
@@ -309,39 +541,28 @@ class MissionExecutor:
                 profile_name = s.get('slot_profile', 'head_rack_speed')
                 if profile_name not in self.profiles:
                     self.logger.warn(f"[{sid}] slot_profile '{profile_name}' not found")
-                search_cfg = s.get('search', {}) or {}
-                search_profile = search_cfg.get('profile')
-                if search_profile and search_profile not in self.profiles:
-                    self.logger.warn(f"[{sid}] search profile '{search_profile}' not found")
+                srch = s.get('search', {}) or {}
+                if isinstance(srch, dict) and srch.get('profile') and srch['profile'] not in self.profiles:
+                    self.logger.warn(f"[{sid}] search profile '{srch['profile']}' not found")
+                ms2 = s.get('micro_sweep') or {}
+                if isinstance(ms2, dict) and ms2.get('profile') and ms2['profile'] not in self.profiles:
+                    self.logger.warn(f"[{sid}] micro_sweep profile '{ms2['profile']}' not found")
                 for seq_name in ('prepare_sequence', 'pickup_sequence', 'miss_sequence',
                                  'dock_release_sequence', 'final_sequence'):
                     for step in s.get(seq_name, []):
-                        step_type = step.get('type', 'wait')
-                        if step_type == 'arm':
+                        stp_type = step.get('type', 'wait')
+                        if stp_type == 'arm':
                             for key in step:
-                                if key == 'type':
+                                if key in ('type',):
                                     continue
                                 if key not in self.actuators:
                                     self.logger.warn(f"[{sid}] {seq_name} actuator '{key}' not defined")
-                        elif step_type not in ('wait', 'stop_chassis'):
-                            self.logger.warn(f"[{sid}] {seq_name} has unknown step type '{step_type}'")
-
-            elif stype == 'weapon_head_pickup':
-                mode = s.get('search_mode', 'scan_until_ir')
-                if mode not in ('scan_until_ir', 'step_0p2m', 'micro_sweep_10mm'):
-                    self.logger.warn(f"[{sid}] unknown search_mode '{mode}'")
-                for step in s.get('pickup_sequence', []):
-                    if step.get('type') == 'arm':
-                        for key in step:
-                            if key == 'type':
-                                continue
-                            if key not in self.actuators:
-                                self.logger.warn(f"[{sid}] actuator '{key}' not defined")
-                    elif step.get('type') == 'verify_ir':
-                        for branch_key in ('on_true', 'on_false', 'on_match', 'on_mismatch'):
-                            target_id = step.get(branch_key)
-                            if target_id and target_id not in ('continue', 'advance', 'terminate') and target_id not in stage_ids:
-                                self.logger.warn(f"[{sid}] {branch_key} stage '{target_id}' not found")
+                        elif stp_type == 'wait':
+                            self._warn_unknown(f"[{sid}] {seq_name} wait", step, {'type', 'duration_s'})
+                        elif stp_type == 'stop_chassis':
+                            self._warn_unknown(f"[{sid}] {seq_name} stop_chassis", step, {'type'})
+                        else:
+                            self.logger.warn(f"[{sid}] {seq_name} has unknown step type '{stp_type}'")
 
     # ------------------------------------------------------------------
     # Main update loop (called at control rate, e.g. 50Hz)
