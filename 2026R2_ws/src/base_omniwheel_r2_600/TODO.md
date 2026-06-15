@@ -21,6 +21,7 @@
 - [x] 移除 v_y/rotation 符号补丁，MOTOR_DIRECTION 全部置 1
 - [x] 恢复 `local_navigation_node` 对上游 `local_driving` 失效的主动零速保护
 - [x] 新增 `forward_0_1mps_5s.sh`：用 gnome 窗口手动启动底盘所需 node，并以 0.1 m/s 前进 5 秒后停车
+- [x] 新增 `timed_forward_test.sh`：支持用变量/参数控制底盘前进时间和速度，计时结束自动停车
 - [x] 恢复 `damiao_node.py` 与 `DM_CAN.py`，作为底盘 1-4 号电机独立 USB-CAN driver
 - [x] 注册 `ros2 run base_omniwheel_r2_600 damiao_node` console entry
 - [ ] 上车实测修正后的运动学是否方向正确，必要时重新确认 MOTOR_DIRECTION

@@ -195,6 +195,46 @@ ros2 run base_omniwheel_r2_600 local_navigation_node
 
 ## Test Scripts
 
+### `timed_forward_test.sh` — 参数化前进计时停车测试
+
+用于快速测试底盘直线前进。脚本假设以下两个节点已经运行：
+
+```bash
+ros2 launch damiao_ctrl damiao_ctrl.launch.py
+ros2 run base_omniwheel_r2_600 local_navigation_node
+```
+
+脚本会按设定频率持续发布 `/local_driving = [direction_rad, speed_m/s, rotation_rad/s]`，内部用 `timeout` 作为计时器。计时结束或 Ctrl+C 中断时，脚本会连续发布三次 `[0.0, 0.0, 0.0]` 停车命令。
+
+默认值：
+- `DRIVE_SECONDS=5 s`
+- `NEW_RED_POINT_1_POINT_2_SPEED_MPS=0.2 m/s`，参考 `new_red_point_1_point_2_test.sh` 的 `head_rack_speed.speed_mps`
+- `FORWARD_SPEED_MPS=$NEW_RED_POINT_1_POINT_2_SPEED_MPS`，可用参数 2 或环境变量覆盖
+- `DRIVE_DIRECTION_RAD=0.0 rad`（机器人 +X 正前方）
+- `ROTATION_RAD_S=0.0 rad/s`
+- `COMMAND_RATE_HZ=20 Hz`
+
+运行：
+
+```bash
+cd ~/robotics/Robocon2026_r2/2026R2_ws
+
+# 默认：0.2 m/s 前进 5 秒后停车（参考 new_red_point_1_point_2 head_rack_speed）
+bash src/base_omniwheel_r2_600/timed_forward_test.sh
+
+# 参数 1 = 时间(s)，参数 2 = 前进速度(m/s)
+bash src/base_omniwheel_r2_600/timed_forward_test.sh 3 0.05
+
+# 也可以用环境变量改默认值
+DRIVE_SECONDS=8 FORWARD_SPEED_MPS=0.08 bash src/base_omniwheel_r2_600/timed_forward_test.sh
+```
+
+超时与失效保护：
+- 脚本自身计时到 `DRIVE_SECONDS` 后主动发布零速停车。
+- 如果脚本异常退出，`trap` 会尽量发送零速停车。
+- 如果发布链路中断，`local_navigation_node` 的 `command_timeout` 默认 `0.5 s` 后会向 `base/damiao_control` 刷新零轮速。
+- 如果 `base/damiao_control` 断联，`damiao_ctrl/damiao_node` 的 chassis watchdog 会停止 1-4 号底盘电机。
+
 ### `forward_0_1mps_5s.sh` — 底盘前进 0.1 m/s × 5s 手动测试
 
 用 `gnome-terminal` 分别打开 `damiao_ctrl/damiao_node`、`local_navigation_node` 和指令窗口，方便手动查看每个 node 的日志。
@@ -210,6 +250,10 @@ bash src/base_omniwheel_r2_600/forward_0_1mps_5s.sh
 ```
 
 ## Changelog
+
+### 2026-06-14
+- 新增 `timed_forward_test.sh`：用变量控制前进时间和速度，计时结束后自动发布零速停车；文档补充脚本自身 timer 与 ROS2 watchdog 的安全行为。
+- `timed_forward_test.sh` 默认速度显式对齐 `new_red_point_1_point_2_test.sh` 的 `head_rack_speed.speed_mps = 0.2 m/s`。
 
 ### 2026-02-02
 - **Kinematics Calibration**: Completed hardware testing and coordinate system calibration
