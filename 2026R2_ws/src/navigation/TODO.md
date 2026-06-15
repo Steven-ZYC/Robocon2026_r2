@@ -1,5 +1,9 @@
 # Navigation TODO
 
+- [x] 新增 `routes/blue/full_fsm.yaml`：蓝场 5 slot 全流程 FSM（12 waypoints, 55 stages, 含 miss 偏移 + IR 重试），通过 `_validate_stages()` 零 warn
+- [x] 新增 `routes/red/full_fsm.yaml`：红场 5 slot 全流程 FSM，与蓝场结构一致，差异仅 Y 坐标符号、arm yaw 方向、PID 参数
+- [x] 新增根目录 `blue_full_fsm_test.sh` / `red_full_fsm_test.sh`：蓝/红场一键启停脚本
+- [x] `_KNOWN_VERIFY_IR_KEYS` 加入 `id` 字段，修复 `pickup_sequence` 内 `verify_ir` 作为 jump target 时的误报 warn
 - [x] `MissionExecutor._validate_stages()` 启动时全量 YAML 字段校验：白名单检测 unknown key（含子块 chassis/torque_arrival/condition/scan/step/micro_sweep/search + pickup_sequence 各步骤类型 + sequential/parallel + arm block 值合法检查）
 - [x] 删除死代码 `route_loader.py`（v0.2 MissionExecutor 后废弃）和 `action_executor.py`（v0.2 后废弃）
 - [x] 删除过时文档 `START_GUIDE.md`（引用不存在的文件与参数，README 已覆盖所有启动说明）
@@ -10,7 +14,7 @@
 - [x] 新增 `launch/viz.launch.py` 一键启动 viz + RViz2
 - [x] 新增 `rviz/navigation_viz.rviz` RViz 配置文件
 - [ ] 根据实际比赛场地尺寸校准 `red_field.yaml` 中的 boundary/obstacles/zones 坐标
-- [ ] 编写 `routes/blue_area.yaml` 比赛任务（蓝场，配合 mirror_y:=true 使用）
+- [x] 编写蓝场比赛任务 YAML（由 `routes/blue/full_fsm.yaml` 取代原 `blue_area.yaml` mirror 方案）
 - [x] 将 `navigation.launch.py` 默认 mission 改为存在的 `routes/forward_5m.yaml`
 - [x] 新增 `routes/forward_5m.yaml`，用于底盘沿 world/body +X 前进 5 m 的最小链路测试
 - [x] 修正 README 中 Integration 节对 motor control package 的过时引用（base_omniwheel → damiao_ctrl）(2026-06-03)

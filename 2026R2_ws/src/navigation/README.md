@@ -406,6 +406,7 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-15 | v0.31 — 新增 `routes/blue/full_fsm.yaml` 和 `routes/red/full_fsm.yaml`：蓝/红场各 5 slot 全流程 FSM（origin→middle→point→pickup→docking，含 miss 偏移恢复 + IR 重试）；新增根目录 `blue_full_fsm_test.sh` / `red_full_fsm_test.sh` 一键启停脚本 |
 | 2026-06-15 | v0.30 — YAML 启动时全量字段校验：waypoint/profile/actuator/stage 含子块 unknown-key 检测 + arm block 值合法检查；`mission_viz_node` 支持 `action` 类型 waypoint 渲染；删除死代码 `route_loader.py`/`action_executor.py`/`START_GUIDE.md`；`setup.py` routes glob 支持子目录 |
 | 2026-06-14 | v0.29 — `weapon_head_pickup.pickup_sequence` 支持 `action/navigate/stop_chassis`，可在抓取序列内部执行短距离底盘动作 |
 | 2026-06-14 | v0.28 — `weapon_head_pickup.pickup_sequence` 支持 `condition/conditional`，修复 blue point 1/2 torque 检查被跳过；torque 条件增加 feedback freshness 保护 |
@@ -1878,6 +1879,58 @@ sequence 内 navigate step 复用普通 `_update_navigate()`，完成条件相�
 ### setup.py routes glob 支持子目录
 
 `data_files` 中 routes 的 glob 从 `routes/*.yaml` 改为 `routes/*.yaml + routes/*/*.yaml`，确保 `routes/blue/` 和 `routes/red/` 下的 YAML 在 `colcon build --packages-select navigation` 时被正确安装。
+
+---
+
+## v0.31 — Blue/Red 全场地 5 Slot FSM（2026-06-15）
+
+### 新增文件
+
+| 文件 | 用途 |
+|------|------|
+| `routes/blue/full_fsm.yaml` | 蓝场 5 个 weapon head slot 全流程 mission（12 waypoints, 55 stages） |
+| `routes/red/full_fsm.yaml` | 红场 5 个 weapon head slot 全流程 mission（12 waypoints, 55 stages） |
+| `blue_full_fsm_test.sh` | 蓝场一键启动脚本（根目录） |
+| `red_full_fsm_test.sh` | 红场一键启动脚本（根目录） |
+
+### 每 Slot 流程
+
+```
+to_origin → to_middle → arm_side → wait_pre → to_point (torque+timeout) → settle → pickup
+                                                                              ├─ success → docking → slot{N}_success → next slot
+                                                                              └─ miss → offset → cross → miss_next → next slot (skip origin/middle)
+```
+
+### pickup_sequence 内部
+
+```
+grip → lift high → check_ir_1 (conditional)
+  ├─ IR=true → docking (grip_front → stopper → docking_nav → torque → release → init_pose)
+  └─ IR=false → retry_arm → 重新 grip/lift → check_ir_2 (conditional)
+       ├─ IR=true → docking
+       └─ IR=false → exit_miss (advance 到 miss 恢复路径)
+```
+
+### Blue vs Red 关键差异
+
+| | Blue | Red |
+|--|------|-----|
+| rack Y | -0.875（负方向） | +0.875（正方向） |
+| arm yaw 夹取 | `right` (+1.5708) | `left` (-1.5708) |
+| docking roll | `right_90deg` (+1.5708) | `left_90deg` (+1.5708) |
+| `k_p_x` | 0.081 | 0.071 |
+| `head_rack_speed` | 0.1 m/s | 0.2 m/s |
+
+### 启动方式
+
+```bash
+bash blue_full_fsm_test.sh   # 蓝场
+bash red_full_fsm_test.sh    # 红场
+```
+
+### verify_ir whitelist 修复
+
+`_KNOWN_VERIFY_IR_KEYS` 加入 `id` 字段，允许 `verify_ir` step 在 `pickup_sequence` 内作为 `conditional` 跳转目标被引用。
 
 ---
 

@@ -293,7 +293,7 @@ class MissionExecutor:
     }
     _KNOWN_SEARCH_KEYS = _KNOWN_MICRO_SWEEP_KEYS | {'mode'}
     _KNOWN_VERIFY_IR_KEYS = {
-        'type', 'label', 'expected', 'on_true', 'on_false', 'on_match', 'on_mismatch',
+        'id', 'type', 'label', 'expected', 'on_true', 'on_false', 'on_match', 'on_mismatch',
     }
 
     def _warn_unknown(self, label, data, known):
