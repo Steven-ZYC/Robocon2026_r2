@@ -183,7 +183,7 @@ class GlobalNavigationNode(Node):
         without subscribing to all four base motors.
         """
         motor_id = int(msg.motor_id)
-        if motor_id not in (1, 2, 5):
+        if motor_id not in (1, 2, 3, 4, 5):
             return
 
         cache = self.mission.sensor_cache.setdefault('/damiao_feedback', {})
