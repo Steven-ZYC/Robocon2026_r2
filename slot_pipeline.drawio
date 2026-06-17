@@ -1,241 +1,239 @@
-<?xml version='1.0' encoding='UTF-8'?>
+<?xml version="1.0" encoding="UTF-8"?>
 <mxfile host="app.diagrams.net" version="24.0.0">
   <diagram name="Slot Pickup Pipeline" id="pipeline">
     <mxGraphModel dx="1169" dy="1654" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="1654" math="0" shadow="0">
       <root>
-        <mxCell id="0" />
-        <mxCell id="1" parent="0" />
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
 
-        
-        <mxCell id="title" value="&lt;b&gt;Slot Pickup Pipeline&lt;/b&gt;  —  grip → IR → docking → torque → release" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="30" y="10" width="500" height="30" as="geometry" />
+        <!-- TITLE -->
+        <mxCell id="title" value="&lt;b&gt;Slot Pickup Pipeline&lt;/b&gt;  —  grip → IR → docking → torque → release&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#666&quot;&gt;Red: yaw=left / roll_dock=left_90deg &amp;nbsp;|&amp;nbsp; Blue: yaw=right / roll_dock=right_90deg&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="30" y="10" width="600" height="35" as="geometry"/>
         </mxCell>
-        <mxCell id="subtitle" value="Red: yaw=left / roll_dock=left_90deg &amp;nbsp;&amp;nbsp;|&amp;nbsp;&amp;nbsp; Blue: yaw=right / roll_dock=right_90deg" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=10;fontColor=#666;" vertex="1" parent="1">
-          <mxGeometry x="30" y="35" width="450" height="20" as="geometry" />
-        </mxCell>
-
-        
         <mxCell id="sep" value="" style="endArrow=none;html=1;strokeColor=#ccc;" edge="1" parent="1">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="30" y="60" as="sourcePoint" />
-            <mxPoint x="1140" y="60" as="targetPoint" />
+            <mxPoint x="30" y="50" as="sourcePoint"/>
+            <mxPoint x="1140" y="50" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
 
-        
-        
-        <mxCell id="to_point" value="&lt;b&gt;slotN_to_point&lt;/b&gt; (action)&lt;br&gt;chassis → wp_point_N&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#555&quot;&gt;arm: yaw=L/R, roll=up, grip=open, lift=low, stop=low&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#888&quot;&gt;timeout_s + torque_arrival(motor_1_tau abs_gte 4.0Nm)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="80" width="310" height="60" as="geometry" />
+        <!-- ===== COLUMN HEADERS ===== -->
+        <mxCell id="hdr_main" value="&lt;b&gt;Main Path&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="30" y="60" width="350" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="hdr_retry" value="&lt;b&gt;Retry &amp; Miss Recovery&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=11;fontColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="430" y="60" width="280" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="hdr_info" value="&lt;b&gt;Reference&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="770" y="60" width="100" height="20" as="geometry"/>
         </mxCell>
 
-        
-        <mxCell id="settle" value="&lt;b&gt;slotN_settle&lt;/b&gt;&lt;br&gt;wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="160" width="310" height="35" as="geometry" />
+        <!-- ============ MAIN COLUMN (x=30..380) ============ -->
+        <mxCell id="to_point" value="&lt;b&gt;slotN_to_point&lt;/b&gt; (action)&lt;br&gt;chassis → wp_point_N&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;arm: yaw=L/R, roll=up, grip=open, lift=low, stop=low&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:7px;color:#888&quot;&gt;timeout_s + torque_arrival (motor_1) abs_gte 4.0Nm&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="88" width="350" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="settle" value="&lt;b&gt;slotN_settle&lt;/b&gt;  wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="158" width="350" height="28" as="geometry"/>
+        </mxCell>
+        <mxCell id="pickup" value="&lt;b&gt;slotN_pickup&lt;/b&gt; (weapon_head_pickup)&lt;br&gt;micro_sweep_10mm @ wp_point_N&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;IR search /arm/ir_status, ir_timeout_s=2.0&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="200" width="350" height="46" as="geometry"/>
         </mxCell>
 
-        
-        <mxCell id="pickup" value="&lt;b&gt;slotN_pickup&lt;/b&gt; (weapon_head_pickup)&lt;br&gt;micro_sweep_10mm @ wp_point_N&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#555&quot;&gt;IR search /arm/ir_status, ir_timeout_s=2.0&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="215" width="310" height="50" as="geometry" />
-        </mxCell>
-
-        
+        <!-- TEMPLATE: slot_pickup box (y=260..548) -->
         <mxCell id="tmpl" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9673a6;dashed=1;dashPattern=6 4;" vertex="1" parent="1">
-          <mxGeometry x="25" y="280" width="340" height="313" as="geometry" />
+          <mxGeometry x="18" y="258" width="374" height="292" as="geometry"/>
         </mxCell>
-        <mxCell id="tmpl_lbl" value="&lt;font style=&quot;font-size:9px;color:#9673a6&quot;&gt;template: slot_pickup (prefix, roll_dock, release_wait_s)&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;" vertex="1" parent="1">
-          <mxGeometry x="35" y="282" width="320" height="16" as="geometry" />
-        </mxCell>
-
-        
-        <mxCell id="gw0" value="wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="305" width="310" height="28" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="g1" value="&lt;b&gt;grip close + lift low&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#555&quot;&gt;grip=close, lift=low, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="346" width="310" height="40" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="gw1" value="wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="399" width="310" height="28" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="g2" value="&lt;b&gt;lift high&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#555&quot;&gt;grip=close, lift=high, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="440" width="310" height="40" as="geometry" />
-        </mxCell>
-        
-        <mxCell id="gw2" value="wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="493" width="310" height="28" as="geometry" />
+        <mxCell id="tmpl_lbl" value="&lt;font style=&quot;font-size:9px;color:#9673a6&quot;&gt;template: slot_pickup (vars: prefix, roll_dock, release_wait_s)&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="30" y="260" width="350" height="14" as="geometry"/>
         </mxCell>
 
-        
-        <mxCell id="ir1" value="&lt;b&gt;{prefix}_check_ir_1&lt;/b&gt;&lt;br&gt;/arm/ir_status::ir &gt; 0 ?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="55" y="538" width="280" height="55" as="geometry" />
+        <mxCell id="gw0" value="wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="280" width="350" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="g1" value="&lt;b&gt;grip close + lift low&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;grip=close, lift=low, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="314" width="350" height="34" as="geometry"/>
+        </mxCell>
+        <mxCell id="gw1" value="wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="360" width="350" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="g2" value="&lt;b&gt;lift high&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;grip=close, lift=high, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="394" width="350" height="34" as="geometry"/>
+        </mxCell>
+        <mxCell id="gw2" value="wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="440" width="350" height="22" as="geometry"/>
         </mxCell>
 
-        
-
-        
-        <mxCell id="d1" value="&lt;b&gt;{prefix}_docking_start&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#555&quot;&gt;yaw=front, roll=up, grip=close, lift=low, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="611" width="310" height="40" as="geometry" />
-        </mxCell>
-        <mxCell id="dw1" value="wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="664" width="310" height="28" as="geometry" />
-        </mxCell>
-        <mxCell id="d2" value="&lt;b&gt;{prefix}_stopper_up&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#555&quot;&gt;yaw=front, roll=up, grip=close, lift=low, stop=high&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="704" width="310" height="40" as="geometry" />
-        </mxCell>
-        <mxCell id="dw2" value="wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="756" width="310" height="28" as="geometry" />
-        </mxCell>
-        <mxCell id="d_nav" value="&lt;b&gt;{prefix}_docking_nav&lt;/b&gt; (action)&lt;br&gt;chassis → wp_docking  (profile: head_rack_speed)&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#555&quot;&gt;yaw=front, roll={roll_dock}, grip=close, lift=low, stop=high&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="796" width="310" height="55" as="geometry" />
+        <mxCell id="ir1" value="&lt;b&gt;{prefix}_check_ir_1&lt;/b&gt;&lt;br&gt;/arm/ir_status::ir &gt; 0 ?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="55" y="476" width="300" height="46" as="geometry"/>
         </mxCell>
 
-        
-        <mxCell id="tq" value="&lt;b&gt;{prefix}_check_torque&lt;/b&gt;&lt;br&gt;motor_5_tau abs_gt 1.3 Nm ?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="55" y="871" width="280" height="50" as="geometry" />
+        <!-- DOCKING (outside template) -->
+        <mxCell id="d1" value="&lt;b&gt;{prefix}_docking_start&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;yaw=front, roll=up, grip=close, lift=low, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="538" width="350" height="34" as="geometry"/>
+        </mxCell>
+        <mxCell id="dw1" value="wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="584" width="350" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="d2" value="&lt;b&gt;{prefix}_stopper_up&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;yaw=front, roll=up, grip=close, lift=low, stop=high&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="618" width="350" height="34" as="geometry"/>
+        </mxCell>
+        <mxCell id="dw2" value="wait 1s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="664" width="350" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="d_nav" value="&lt;b&gt;{prefix}_docking_nav&lt;/b&gt; (action)&lt;br&gt;chassis → wp_docking  (profile: head_rack_speed)&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;yaw=front, roll={roll_dock}, grip=close, lift=low, stop=high&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="698" width="350" height="50" as="geometry"/>
         </mxCell>
 
-        
-        <mxCell id="rel" value="&lt;b&gt;{prefix}_release&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#555&quot;&gt;yaw=front, roll={roll_dock}, grip=open, lift=low, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="944" width="310" height="40" as="geometry" />
-        </mxCell>
-        <mxCell id="rw" value="wait {release_wait_s}s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="996" width="310" height="28" as="geometry" />
-        </mxCell>
-        <mxCell id="r_up" value="&lt;b&gt;roll back to up&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#555&quot;&gt;yaw=front, roll=up, grip=open, lift=low, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="1036" width="310" height="40" as="geometry" />
-        </mxCell>
-        <mxCell id="vfy" value="&lt;b&gt;verify_ir&lt;/b&gt;  sensor clear (expected=false)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="55" y="1091" width="280" height="45" as="geometry" />
-        </mxCell>
-        <mxCell id="done" value="&lt;b&gt;slotN_success&lt;/b&gt;  → next slot" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="40" y="1156" width="310" height="35" as="geometry" />
+        <mxCell id="tq" value="&lt;b&gt;{prefix}_check_torque&lt;/b&gt;&lt;br&gt;motor_5_tau abs_gt 1.3 Nm ?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="55" y="762" width="300" height="46" as="geometry"/>
         </mxCell>
 
-        
-        <mxCell id="r_hdr" value="&lt;b&gt;Retry Path&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;fontColor=#d79b00;" vertex="1" parent="1">
-          <mxGeometry x="440" y="80" width="200" height="20" as="geometry" />
+        <mxCell id="rel" value="&lt;b&gt;{prefix}_release&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;yaw=front, roll={roll_dock}, grip=open, lift=low, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="824" width="350" height="34" as="geometry"/>
         </mxCell>
-        <mxCell id="r_arm" value="&lt;b&gt;{prefix}_retry_arm&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px;color:#555&quot;&gt;yaw=L/R, roll=up, grip=open, lift=low, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="440" y="105" width="230" height="45" as="geometry" />
+        <mxCell id="rw" value="wait {release_wait_s}s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="870" width="350" height="22" as="geometry"/>
         </mxCell>
-        <mxCell id="r_grip" value="&lt;b&gt;retry_grip&lt;/b&gt; (pipeline)&lt;br&gt;wait 1s → close → wait → lift high → wait" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="440" y="166" width="230" height="40" as="geometry" />
+        <mxCell id="r_up" value="&lt;b&gt;roll back to up&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;yaw=front, roll=up, grip=open, lift=low, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="904" width="350" height="34" as="geometry"/>
         </mxCell>
-        <mxCell id="r_ir2" value="&lt;b&gt;{prefix}_check_ir_2&lt;/b&gt;&lt;br&gt;/arm/ir_status::ir &gt; 0 ?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="450" y="225" width="210" height="48" as="geometry" />
+        <mxCell id="vfy" value="&lt;b&gt;verify_ir&lt;/b&gt;  sensor clear (expected=false)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="55" y="952" width="300" height="40" as="geometry"/>
         </mxCell>
-
-        
-        <mxCell id="m_hdr" value="&lt;b&gt;Miss Recovery&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;fontColor=#b85450;" vertex="1" parent="1">
-          <mxGeometry x="440" y="310" width="200" height="20" as="geometry" />
-        </mxCell>
-        <mxCell id="m_exit" value="&lt;b&gt;{prefix}_exit_miss&lt;/b&gt;&lt;br&gt;verify_ir (expected=true, on_false=advance)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="440" y="335" width="230" height="40" as="geometry" />
-        </mxCell>
-        <mxCell id="m1" value="&lt;b&gt;slotN_miss_offset&lt;/b&gt;&lt;br&gt;chassis → wp_point_N_offset" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="440" y="392" width="230" height="40" as="geometry" />
-        </mxCell>
-        <mxCell id="m2" value="&lt;b&gt;slotN_miss_cross&lt;/b&gt;&lt;br&gt;chassis → wp_point_(N+1)_offset" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="440" y="446" width="230" height="40" as="geometry" />
-        </mxCell>
-        <mxCell id="m3" value="&lt;b&gt;slotN_miss_next&lt;/b&gt;&lt;br&gt;chassis → wp_point_(N+1)&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#888&quot;&gt;timeout_s + torque_arrival&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="440" y="500" width="230" height="50" as="geometry" />
+        <mxCell id="done" value="&lt;b&gt;slotN_success&lt;/b&gt;  → next slot" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="30" y="1008" width="350" height="30" as="geometry"/>
         </mxCell>
 
-        
-        <mxCell edge="1" parent="1" source="to_point" target="settle"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="settle" target="pickup"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="pickup" target="gw0" />
-        <mxCell edge="1" parent="1" source="gw0" target="g1"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="g1" target="gw1"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="gw1" target="g2"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="g2" target="gw2"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="gw2" target="ir1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <!-- ===== MAIN EDGES ===== -->
+        <mxCell edge="1" parent="1" source="to_point" target="settle"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="settle" target="pickup"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="pickup" target="gw0"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="gw0" target="g1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="g1" target="gw1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="gw1" target="g2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="g2" target="gw2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="gw2" target="ir1"><mxGeometry relative="1" as="geometry"/></mxCell>
 
-        
-        <mxCell id="e_ir1_ok" value="ir=1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#009900;fontColor=#009900;fontSize=9;" edge="1" parent="1" source="ir1" target="d1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_ir1_ok" value="ir=1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#009900;fontColor=#009900;fontSize=9;" edge="1" parent="1" source="ir1" target="d1"><mxGeometry relative="1" as="geometry"/></mxCell>
 
-        
-        <mxCell edge="1" parent="1" source="d1" target="dw1"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="dw1" target="d2"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="d2" target="dw2"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="dw2" target="d_nav"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="d_nav" target="tq"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell edge="1" parent="1" source="d1" target="dw1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="dw1" target="d2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="d2" target="dw2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="dw2" target="d_nav"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="d_nav" target="tq"><mxGeometry relative="1" as="geometry"/></mxCell>
 
-        
-        <mxCell id="e_tq_ok" value="abs(tau)&gt;1.3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#009900;fontColor=#009900;fontSize=9;" edge="1" parent="1" source="tq" target="rel"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_tq_ok" value="abs(tau)&gt;1.3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#009900;fontColor=#009900;fontSize=9;" edge="1" parent="1" source="tq" target="rel"><mxGeometry relative="1" as="geometry"/></mxCell>
 
-        <mxCell edge="1" parent="1" source="rel" target="rw"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="rw" target="r_up"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="r_up" target="vfy"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="vfy" target="done"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell edge="1" parent="1" source="rel" target="rw"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="rw" target="r_up"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="r_up" target="vfy"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="vfy" target="done"><mxGeometry relative="1" as="geometry"/></mxCell>
 
-        
-        <mxCell id="e_ir1_no" value="ir=0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#d79b00;fontColor=#d79b00;fontSize=9;" edge="1" parent="1" source="ir1" target="r_arm"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <!-- tq self-loop -->
+        <mxCell id="e_tq_loop" value="abs(tau)&lt;1.3 (loop)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=1;entryY=0.75;strokeColor=#cc0000;fontColor=#cc0000;fontSize=8;" edge="1" parent="1" source="tq" target="tq"><mxGeometry relative="1" as="geometry"/></mxCell>
 
-        
-        <mxCell edge="1" parent="1" source="r_arm" target="r_grip"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="r_grip" target="r_ir2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <!-- ============ RETRY / MISS COLUMN (x=430..730) ============ -->
+        <mxCell id="r_arm" value="&lt;b&gt;{prefix}_retry_arm&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;yaw=L/R, roll=up, grip=open, lift=low, stop=low&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="430" y="88" width="260" height="38" as="geometry"/>
+        </mxCell>
+        <mxCell id="r_grip" value="&lt;b&gt;retry_grip&lt;/b&gt; (pipeline)&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;wait 1s → grip close → wait → lift high → wait&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="430" y="140" width="260" height="38" as="geometry"/>
+        </mxCell>
+        <mxCell id="r_ir2" value="&lt;b&gt;{prefix}_check_ir_2&lt;/b&gt;&lt;br&gt;/arm/ir_status::ir &gt; 0 ?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="455" y="194" width="210" height="44" as="geometry"/>
+        </mxCell>
 
-        
-        <mxCell id="e_ir2_no" value="ir=0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#b85450;fontColor=#b85450;fontSize=9;" edge="1" parent="1" source="r_ir2" target="m_exit"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m_exit" value="&lt;b&gt;{prefix}_exit_miss&lt;/b&gt; (verify_ir)&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#555&quot;&gt;expected=true, on_false=advance&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="430" y="290" width="260" height="38" as="geometry"/>
+        </mxCell>
+        <mxCell id="m1" value="&lt;b&gt;slotN_miss_offset&lt;/b&gt;&lt;br&gt;chassis → wp_point_N_offset" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="430" y="344" width="260" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="m2" value="&lt;b&gt;slotN_miss_cross&lt;/b&gt;&lt;br&gt;chassis → wp_point_(N+1)_offset" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="430" y="394" width="260" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="m3" value="&lt;b&gt;slotN_miss_next&lt;/b&gt;&lt;br&gt;chassis → wp_point_(N+1)&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#888&quot;&gt;timeout_s + torque_arrival&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="430" y="444" width="260" height="46" as="geometry"/>
+        </mxCell>
 
-        
-        <mxCell edge="1" parent="1" source="m_exit" target="m1"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="m1" target="m2"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell edge="1" parent="1" source="m2" target="m3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <!-- ===== MISS LABEL ===== -->
+        <mxCell id="miss_label" value="&lt;b&gt;Miss Recovery (IR double-fail)&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=9;fontColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="430" y="270" width="260" height="16" as="geometry"/>
+        </mxCell>
 
-        
+        <!-- ===== RETRY/MISS EDGES ===== -->
+        <mxCell id="e_ir1_no" value="ir=0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#d79b00;fontColor=#d79b00;fontSize=9;" edge="1" parent="1" source="ir1" target="r_arm"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell edge="1" parent="1" source="r_arm" target="r_grip"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="r_grip" target="r_ir2"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="e_ir2_no" value="ir=0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#b85450;fontColor=#b85450;fontSize=9;" edge="1" parent="1" source="r_ir2" target="m_exit"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell edge="1" parent="1" source="m_exit" target="m1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="m1" target="m2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell edge="1" parent="1" source="m2" target="m3"><mxGeometry relative="1" as="geometry"/></mxCell>
+
         <mxCell id="e_ir2_ok" value="ir=1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;entryX=1;entryY=0.5;strokeColor=#009900;fontColor=#009900;fontSize=9;" edge="1" parent="1" source="r_ir2" target="d1"><mxGeometry relative="1" as="geometry">
           <Array as="points">
-            <mxPoint x="400" y="249" />
-            <mxPoint x="400" y="631" />
+            <mxPoint x="405" y="216"/>
+            <mxPoint x="405" y="555"/>
           </Array>
         </mxGeometry></mxCell>
 
-        
-        <mxCell id="e_tq_loop" value="abs(tau)&lt;1.3 (loop)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=1;entryY=0.75;strokeColor=#cc0000;fontColor=#cc0000;fontSize=9;" edge="1" parent="1" source="tq" target="tq"><mxGeometry relative="1" as="geometry" /></mxCell>
-
-        
-        <mxCell id="sum" value="&lt;b&gt;Arm state summary&lt;/b&gt;&lt;br&gt;grip: open → &lt;font color=&quot;#82b366&quot;&gt;close&lt;/font&gt; → &lt;font color=&quot;#b85450&quot;&gt;open&lt;/font&gt; (release)&lt;br&gt;lift: low → &lt;font color=&quot;#82b366&quot;&gt;high&lt;/font&gt; (after grip) → &lt;font color=&quot;#b85450&quot;&gt;low&lt;/font&gt; (docking)&lt;br&gt;stopper: low → &lt;font color=&quot;#82b366&quot;&gt;high&lt;/font&gt; (docking) → &lt;font color=&quot;#b85450&quot;&gt;low&lt;/font&gt;&lt;br&gt;yaw: L/R → &lt;font color=&quot;#82b366&quot;&gt;front&lt;/font&gt; (docking)&lt;br&gt;roll: up → &lt;font color=&quot;#82b366&quot;&gt;{roll_dock}&lt;/font&gt; (docking) → &lt;font color=&quot;#b85450&quot;&gt;up&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;Chassis waypoints&lt;/b&gt;&lt;br&gt;pickup: wp_point_N&lt;br&gt;docking: wp_docking&lt;br&gt;miss: wp_point_N_offset → wp_point_(N+1)_offset → wp_point_(N+1)&lt;br&gt;&lt;br&gt;&lt;b&gt;Conditions&lt;/b&gt;&lt;br&gt;IR: /arm/ir_status::ir &gt; 0 (Arm Arduino 2)&lt;br&gt;torque: motor_1_tau abs_gte 4.0 (chassis contact)&lt;br&gt;torque: motor_5_tau abs_gt 1.3 (docking contact)" style="text;html=1;strokeColor=#ccc;fillColor=#fafafa;align=left;verticalAlign=top;whiteSpace=wrap;rounded=1;fontSize=9;" vertex="1" parent="1">
-          <mxGeometry x="720" y="80" width="380.0" height="210" as="geometry" />
+        <!-- ============ SUMMARY (x=770..1140) ============ -->
+        <mxCell id="sum1" value="&lt;b&gt;Chassis waypoints&lt;/b&gt;&lt;br&gt;pickup: wp_point_N&lt;br&gt;docking: wp_docking&lt;br&gt;miss: offset → cross → next point&lt;br&gt;&lt;br&gt;&lt;b&gt;Sensors&lt;/b&gt;&lt;br&gt;IR: /arm/ir_status::ir &gt; 0 (Arduino 2)&lt;br&gt;torque chassis: motor_1 abs_gte 4.0Nm&lt;br&gt;torque arm: motor_5 abs_gt 1.3Nm&lt;br&gt;&lt;br&gt;&lt;b&gt;Timeouts&lt;/b&gt;&lt;br&gt;to_point: timeout_s 2.35-3.5s&lt;br&gt;pickup: ir_timeout_s 2.0s&lt;br&gt;micro_sweep: timeout_s 2.0s" style="text;html=1;strokeColor=#ccc;fillColor=#fafafa;align=left;verticalAlign=top;whiteSpace=wrap;rounded=1;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="770" y="88" width="370" height="188" as="geometry"/>
         </mxCell>
 
-        
-        <mxCell id="lg_hdr" value="Legend" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=10;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="720" y="580" width="60" height="20" as="geometry" />
+        <mxCell id="sum2" value="&lt;b&gt;Arm state by stage&lt;/b&gt;&lt;br&gt;pickup approach: yaw=L/R, roll=up, grip=open, lift=low, stop=low&lt;br&gt;grip: grip=close, lift=low → high&lt;br&gt;docking: yaw=front, roll={roll_dock}, grip=close, lift=low, stop=high&lt;br&gt;release: grip=open, stop=low, roll=up&lt;br&gt;&lt;br&gt;&lt;b&gt;Red vs Blue (vars)&lt;/b&gt;&lt;br&gt;roll_dock: Red=left_90deg, Blue=right_90deg&lt;br&gt;yaw: Red=left, Blue=right&lt;br&gt;release_wait_s: 0.8 (Red slot1=1.0)&lt;br&gt;&lt;br&gt;&lt;b&gt;Pipelines&lt;/b&gt;&lt;br&gt;slot_pickup: wait→grip→wait→lift→wait→IR→docking&lt;br&gt;retry_grip: wait→close→wait→high→wait" style="text;html=1;strokeColor=#ccc;fillColor=#fafafa;align=left;verticalAlign=top;whiteSpace=wrap;rounded=1;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="770" y="290" width="370" height="210" as="geometry"/>
+        </mxCell>
+
+        <!-- Legend -->
+        <mxCell id="lg_hdr" value="&lt;b&gt;Legend&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="770" y="520" width="60" height="18" as="geometry"/>
         </mxCell>
         <mxCell id="lg1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
-          <mxGeometry x="720" y="605" width="20" height="14" as="geometry" />
+          <mxGeometry x="770" y="542" width="16" height="12" as="geometry"/>
         </mxCell>
         <mxCell id="lg1t" value="Chassis navigate" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
-          <mxGeometry x="746" y="602" width="100" height="20" as="geometry" />
+          <mxGeometry x="792" y="538" width="120" height="20" as="geometry"/>
         </mxCell>
         <mxCell id="lg2" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
-          <mxGeometry x="720" y="624" width="20" height="14" as="geometry" />
+          <mxGeometry x="770" y="558" width="16" height="12" as="geometry"/>
         </mxCell>
-        <mxCell id="lg2t" value="Arm change" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
-          <mxGeometry x="746" y="621" width="80" height="20" as="geometry" />
+        <mxCell id="lg2t" value="Arm state change" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="792" y="554" width="120" height="20" as="geometry"/>
         </mxCell>
         <mxCell id="lg3" value="" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
-          <mxGeometry x="720" y="643" width="20" height="14" as="geometry" />
+          <mxGeometry x="770" y="574" width="16" height="12" as="geometry"/>
         </mxCell>
-        <mxCell id="lg3t" value="Conditional" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
-          <mxGeometry x="746" y="640" width="80" height="20" as="geometry" />
+        <mxCell id="lg3t" value="Conditional / torque / IR" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="792" y="570" width="150" height="20" as="geometry"/>
         </mxCell>
         <mxCell id="lg4" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999;dashed=1;" vertex="1" parent="1">
-          <mxGeometry x="720" y="662" width="20" height="14" as="geometry" />
+          <mxGeometry x="770" y="590" width="16" height="12" as="geometry"/>
         </mxCell>
-        <mxCell id="lg4t" value="Wait" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
-          <mxGeometry x="746" y="659" width="40" height="20" as="geometry" />
+        <mxCell id="lg4t" value="Wait / timer" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="792" y="586" width="80" height="20" as="geometry"/>
         </mxCell>
         <mxCell id="lg5" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9673a6;dashed=1;" vertex="1" parent="1">
-          <mxGeometry x="720" y="681" width="20" height="14" as="geometry" />
+          <mxGeometry x="770" y="606" width="16" height="12" as="geometry"/>
         </mxCell>
-        <mxCell id="lg5t" value="Template" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
-          <mxGeometry x="746" y="678" width="60" height="20" as="geometry" />
+        <mxCell id="lg5t" value="Template boundary" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="792" y="602" width="120" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg6" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="770" y="622" width="16" height="12" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg6t" value="Retry path" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="792" y="618" width="80" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg7" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="770" y="638" width="16" height="12" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg7t" value="Miss recovery" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="792" y="634" width="100" height="20" as="geometry"/>
         </mxCell>
 
       </root>
