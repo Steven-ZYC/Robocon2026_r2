@@ -1,5 +1,14 @@
 # TODO List - arduino_sensor_driver
 
+## v0.4.1 已完成 (2026-06-17)
+- [x] **协议升级 v4：IMU_OK 掉线标志**
+  - Arduino 新增 `IMU_OK=<0|1>` 标志位，掉线时 `IMU_OK=0` 且 IMU 字段为 `na`
+  - parser regex 适配 `na` → `float('nan')`，CRC 不受影响
+  - `/arduino/raw_sensor_data` 新增 `imu_ok` 字段
+  - `update_odometry()`：imu_ok=false 时跳过，发零速，不发 `/state_pose2d`
+  - navigation `global_navigation_node` 检查 imu_ok 并 WARN
+  - README 协议段、字段表、超时段同步 v4
+
 ## v0.3.0 已完成 (2026-05-31)
 - [x] **协议升级 v3：`<>` 帧边界 + `*XX` CRC，解决串口上下帧粘连**
   - Arduino 端每帧以 `<>` 包裹，`>` 前为 `,*XX` CRC（替代旧 `crc=XX` 格式）

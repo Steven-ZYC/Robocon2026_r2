@@ -40,10 +40,21 @@ class GlobalNavigationNode(Node):
         self.declare_parameter('pose_timeout_s', 0.5)
         self.declare_parameter('arm_keepalive_interval_s', 0.1)
         self.declare_parameter('arm_keepalive_enabled', True)
+        self.declare_parameter('imu_offline_mode', 'stop')
+        # imu_offline_mode:
+        #   'stop'    — IMU NaN → warn + zero driving (default, safest)
+        #   'degraded' — IMU NaN → use last valid yaw, disable rotation PID
+        #                 If yaw was NaN from startup (no last value), fall back to stop.
 
         mission_file = self.get_parameter('mission_file').value
         control_rate = self.get_parameter('control_rate_hz').value
         self.pose_timeout_s = self.get_parameter('pose_timeout_s').value
+        self.imu_offline_mode = self.get_parameter('imu_offline_mode').value
+        if self.imu_offline_mode not in ('stop', 'degraded'):
+            self.get_logger().warn(
+                f"Unknown imu_offline_mode '{self.imu_offline_mode}', falling back to 'stop'"
+            )
+            self.imu_offline_mode = 'stop'
 
         # Mission executor
         self.mission = MissionExecutor(self.get_logger(), self)
@@ -94,12 +105,18 @@ class GlobalNavigationNode(Node):
         self._last_pose_time = time.monotonic()
         self._pose_timeout_warned = False
 
+        # IMU offline state
+        self._imu_degraded = False
+        self._last_valid_yaw_deg = None   # cached yaw for degraded mode
+        self._imu_offline_warned = False
+
         # Timer
         self.timer = self.create_timer(1.0 / control_rate, self.control_loop)
 
         self.get_logger().info(
             f'Global Navigation Node started @ {control_rate}Hz, '
-            f'pose_timeout={self.pose_timeout_s}s'
+            f'pose_timeout={self.pose_timeout_s}s, '
+            f'imu_offline_mode={self.imu_offline_mode}'
         )
 
     def _setup_sensor_subs(self):
@@ -148,12 +165,14 @@ class GlobalNavigationNode(Node):
 
     def _arduino_sensor_callback(self, msg):
         """Cache arduino sensor fields for conditional evaluation."""
+        imu_ok = bool(getattr(msg, 'imu_ok', True))
         self.mission.sensor_cache['/arduino/raw_sensor_data'] = {
             'imu_heading_deg': msg.imu_heading_deg,
             'imu_rate_rad_s': msg.imu_rate_rad_s,
             'imu_ax': msg.imu_ax,
             'imu_ay': msg.imu_ay,
             'imu_az': msg.imu_az,
+            'imu_ok': imu_ok,
             'enc_x_counts': msg.enc_x_counts,
             'enc_y_counts': msg.enc_y_counts,
             'weapon_head_detected': bool(getattr(msg, 'weapon_head_detected', False)),
@@ -161,6 +180,12 @@ class GlobalNavigationNode(Node):
             '_stamp': time.monotonic(),
             'crc_valid': msg.crc_valid,
         }
+
+        if not imu_ok:
+            self.get_logger().warn(
+                'IMU offline — heading unavailable, navigation pose may be stale',
+                throttle_duration_sec=1.0,
+            )
 
     def _arm_ir_callback(self, msg):
         """Cache arm-side IR sensor status for conditional stage evaluation.
@@ -211,11 +236,39 @@ class GlobalNavigationNode(Node):
         if self._pose_timeout_warned:
             self.get_logger().info('Pose recovered')
             self._pose_timeout_warned = False
+
+        theta_deg = msg.theta
+        if math.isnan(theta_deg):
+            # IMU offline — parser publishes NaN theta to distinguish
+            # from serial disconnect (which would stop pose entirely)
+            self._imu_degraded = True
+            if self._last_valid_yaw_deg is not None:
+                yaw_rad = math.radians(self._last_valid_yaw_deg)
+                if not self._imu_offline_warned:
+                    self.get_logger().warn(
+                        'IMU offline — using last valid heading, rotation disabled'
+                    )
+                    self._imu_offline_warned = True
+            else:
+                # Never had valid IMU — can't navigate at all
+                if not self._imu_offline_warned:
+                    self.get_logger().error(
+                        'IMU offline from startup — no heading reference, stopping'
+                    )
+                    self._imu_offline_warned = True
+                return  # don't pass NaN yaw to mission
+        else:
+            self._imu_degraded = False
+            self._imu_offline_warned = False
+            self._last_valid_yaw_deg = theta_deg
+            yaw_rad = math.radians(theta_deg)
+
         self.mission.set_pose({
             'x': msg.x,
             'y': msg.y,
-            'yaw': math.radians(msg.theta),
+            'yaw': yaw_rad,
         })
+        self.mission.set_imu_degraded(self._imu_degraded)
 
     def _pose_timed_out(self):
         return (time.monotonic() - self._last_pose_time) > self.pose_timeout_s
@@ -228,6 +281,23 @@ class GlobalNavigationNode(Node):
                     throttle_duration_sec=2.0,
                 )
                 self._pose_timeout_warned = True
+            self._pub_zero_driving()
+            return
+
+        if self._imu_degraded and self.imu_offline_mode == 'stop':
+            self.get_logger().error(
+                'IMU offline — stopping (imu_offline_mode=stop)',
+                throttle_duration_sec=2.0,
+            )
+            self._pub_zero_driving()
+            return
+
+        # Even in degraded mode, can't proceed without any heading reference
+        if self._imu_degraded and self._last_valid_yaw_deg is None:
+            self.get_logger().error(
+                'IMU offline from startup — no heading reference, stopping',
+                throttle_duration_sec=2.0,
+            )
             self._pub_zero_driving()
             return
 

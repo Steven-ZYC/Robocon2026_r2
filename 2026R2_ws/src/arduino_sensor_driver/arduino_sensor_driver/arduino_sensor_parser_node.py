@@ -13,9 +13,12 @@ Arduino Sensor Parser Node
 - 使用 LPBUS 协议 IMU（输出航向角与角速度）
 - Arduino 通过 Serial 输出格式化文本行
 
-协议格式（v3，<> 帧边界 + *XX CRC）：
-<ID=<pkg_id> T=<ms> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt>,*<crc_hex>>
+协议格式（v4，支持 IMU_OK 标志位）：
+<ID=<pkg_id> T=<ms> IMU_OK=<0|1> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt>,*<crc_hex>>
 
+当 IMU_OK=0（IMU 掉线）时，IMU 字段为 "na" 而非数值，encoder 仍正常。
+parser 将 IMU 字段置为 NaN，imu_ok=False，跳过 odometry 更新并发布零速。
+帧结构：
 帧结构：
 - '<' 帧头，'>' 帧尾，用于解决串口上下帧粘连问题
 - CRC8-ATM 校验值位于 '*XX' 中，XX 为 hex 格式
@@ -310,9 +313,10 @@ class ArduinoSensorParser(Node):
             self._stat_lines += 1
             self._stat_crc_fail += 1
 
-        # 解析 payload 字段
+        # 解析 payload 字段（v4 协议：IMU_OK + 支持 "na" 占位）
         match = re.match(
-            r"ID=(\d+) T=(\d+) IMU=([\d\.\-]+),([\d\.\-]+),([\d\.\-]+),([\d\.\-]+),([\d\.\-]+) "
+            r"ID=(\d+) T=(\d+) IMU_OK=([01]) "
+            r"IMU=([\d\.\-]+|na),([\d\.\-]+|na),([\d\.\-]+|na),([\d\.\-]+|na),([\d\.\-]+|na) "
             r"ENC=([\-\d]+),([\-\d]+)",
             payload,
         )
@@ -321,15 +325,19 @@ class ArduinoSensorParser(Node):
             self._stat_parse_fail += 1
             return None
 
+        def _imu_val(raw: str) -> float:
+            return float('nan') if raw == 'na' else float(raw)
+
         pkg_id = int(match.group(1))
         ts_ms = int(match.group(2))
-        hdg = float(match.group(3))
-        rate = float(match.group(4))
-        ax = float(match.group(5))
-        ay = float(match.group(6))
-        az = float(match.group(7))
-        enc_x = int(match.group(8))
-        enc_y = int(match.group(9))
+        imu_ok = (match.group(3) == '1')
+        hdg = _imu_val(match.group(4))
+        rate = _imu_val(match.group(5))
+        ax = _imu_val(match.group(6))
+        ay = _imu_val(match.group(7))
+        az = _imu_val(match.group(8))
+        enc_x = int(match.group(9))
+        enc_y = int(match.group(10))
 
         if crc_valid:
             self._stat_lines += 1
@@ -338,6 +346,7 @@ class ArduinoSensorParser(Node):
         return {
             "pkg_id": pkg_id,
             "ts_ms": ts_ms,
+            "imu_ok": imu_ok,
             "imu": {"hdg": hdg, "rate": rate, "ax": ax, "ay": ay, "az": az},
             "enc": {"x": enc_x, "y": enc_y},
             "crc_valid": crc_valid,
@@ -474,6 +483,8 @@ class ArduinoSensorParser(Node):
         msg.imu_ay = data["imu"]["ay"]
         msg.imu_az = data["imu"]["az"]
 
+        msg.imu_ok = data.get("imu_ok", True)
+
         msg.enc_x_counts = data["enc"]["x"]
         msg.enc_y_counts = data["enc"]["y"]
         # v2 Arduino 已移除 DEG= 字段，置 0 保留消息兼容性
@@ -501,6 +512,16 @@ class ArduinoSensorParser(Node):
         """
         enc_x = data["enc"]["x"]  # forward counts
         enc_y = data["enc"]["y"]  # left counts
+
+        # IMU 掉线时跳过 odometry 更新 — heading 不可靠，不做积分
+        if not data.get("imu_ok", True):
+            self._publish_timeout_odom(publish_pose2d_nan=True)
+            self.get_logger().warn(
+                "IMU offline — skipping odometry update, publishing zero velocity",
+                throttle_duration_sec=2.0,
+            )
+            return
+
         absolute_heading_deg = data["imu"]["hdg"] + self.imu_yaw_offset_deg
         rate_rad_s = data["imu"]["rate"]
         ts_ms = data["ts_ms"]
@@ -647,10 +668,12 @@ class ArduinoSensorParser(Node):
                 pass
             self.serial = None
 
-    def _publish_timeout_odom(self):
+    def _publish_timeout_odom(self, publish_pose2d_nan=False):
         """
-        超时时发布零速度 Odometry，但**不发布 /state_pose2d**。
-        下游 global_navigation 因收不到 pose 更新而触发超时 → 安全停车。
+        超时时发布零速度 Odometry。
+
+        当 publish_pose2d_nan=True（IMU 掉线）时，同时发布 theta=NaN 的
+        /state_pose2d，让 navigation 区分"IMU 故障"与"串口断连"。
         """
         odom = Odometry()
         odom.header.stamp = self.get_clock().now().to_msg()
@@ -668,7 +691,14 @@ class ArduinoSensorParser(Node):
         odom.twist.twist.angular.z = 0.0
 
         self.odom_pub.publish(odom)
-        # 故意不调 publish_pose2d() —— 让下游感知数据中断
+
+        if publish_pose2d_nan:
+            msg = Pose2D()
+            msg.x = self.odom_x
+            msg.y = self.odom_y
+            msg.theta = float('nan')
+            self.pose2d_pub.publish(msg)
+        # 其他超时（串口/CBC断连）不发布 /state_pose2d
 
         if self.publish_tf:
             self.publish_transform(odom)

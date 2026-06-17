@@ -95,6 +95,9 @@ class MissionExecutor:
         self.sensor_cache = {}
         self._condition_result = None
 
+        # IMU degraded mode — heading unavailable, use last valid yaw, no rotation
+        self._imu_degraded = False
+
         # Weapon head pickup state
         self._weapon_stage_id = None
         self._weapon_state = 'idle'
@@ -865,6 +868,9 @@ class MissionExecutor:
             max_omega = profile.get('yaw_rate_rps', 1.5)
             omega = max(-max_omega, min(max_omega, omega_raw))
 
+            if self._imu_degraded:
+                omega = 0.0
+
             self._pub_driving_body(vx_body, vy_body, omega)
             return
 
@@ -918,6 +924,9 @@ class MissionExecutor:
         # --- heading 独立限幅 ---
         max_omega = profile.get('yaw_rate_rps', 1.5)
         omega = max(-max_omega, min(max_omega, omega_raw))
+
+        if self._imu_degraded:
+            omega = 0.0
 
         # --- 世界系 → 机体系旋转变换 ---
         vx_body =  vx_world * cos_yaw + vy_world * sin_yaw
@@ -2000,6 +2009,8 @@ class MissionExecutor:
         )
         max_omega = float(profile.get('yaw_rate_rps', 1.5))
         omega = max(-max_omega, min(max_omega, omega_raw))
+        if self._imu_degraded:
+            omega = 0.0
         self._pub_driving_body(vx_body, vy_body, omega)
         return False
 
@@ -2524,6 +2535,10 @@ class MissionExecutor:
 
     def set_pose(self, pose):
         self.current_pose = pose
+
+    def set_imu_degraded(self, degraded):
+        """Called by navigation when IMU heading is NaN (offline)."""
+        self._imu_degraded = degraded
 
     def reset(self):
         self.stage_index = 0

@@ -22,3 +22,4 @@ float32 enc_x_deg          # Unit: deg, currently published as 0.0
 float32 enc_y_deg          # Unit: deg, currently published as 0.0
 
 bool crc_valid             # CRC8-ATM validation result, unitless
+bool imu_ok                 # IMU health flag from Arduino (IMU_OK=1 means connected)

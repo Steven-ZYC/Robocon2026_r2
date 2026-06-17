@@ -2,6 +2,15 @@
 
 ## 项目进度（Changelog）
 
+### v0.4.1 (2026-06-17)
+- ✅ **协议升级 v4：IMU_OK 掉线标志**
+  - Arduino 新增 `IMU_OK=<0|1>` 字段，IMU 掉线时 `IMU_OK=0` 且数值字段为 `na`（如 `<ID=13 T=3560 IMU_OK=0 IMU=na,na,na,na,na ENC=1024,2048,*XX>`）
+  - parser regex 适配 `IMU_OK=` 及 `na` 占位符，IMU 掉线时 `imu_*=NaN`、`imu_ok=false`
+  - `/arduino/raw_sensor_data` 新增 `imu_ok` 字段（bool）
+  - `update_odometry()`：IMU 掉线时跳过航位推算，发布零速 Odometry，不发布 `/state_pose2d`
+  - navigation `global_navigation_node`：检测到 `imu_ok=false` 时每秒 WARN "IMU offline"
+  - CRC 不受影响：`na` 作为普通 ASCII 参与计算
+
 ### v0.3.0 (2026-05-31)
 - ✅ **协议升级 v3：`<>` 帧边界 + `*XX` CRC 格式**
   - Arduino 端每帧用 `<>` 包裹，帧尾 `>` 前为 `,*XX` CRC（例如 `<ID=4836 T=48400 IMU=-0.11,0.02,-0.985,-0.073,-0.077 ENC=68,31039,*D8>`）
@@ -231,19 +240,27 @@ Encoder position coordinates use the robot body frame:
 
 ## 数据协议
 
-### v3 当前协议（<> 帧边界 + *XX CRC）
+### v4 当前协议（IMU_OK + <> 帧边界 + *XX CRC）
 Arduino 以 `<` `>` 包裹每帧数据，帧尾 `>` 前以 `,*XX` 格式附加 CRC8-ATM 校验值。
 
 **格式**：
 ```
-<ID=<pkg_id> T=<ms> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt>,*<crc_hex>>
+<ID=<pkg_id> T=<ms> IMU_OK=<0|1> IMU=<hdg>,<rate>,<ax>,<ay>,<az> ENC=<x_cnt>,<y_cnt>,*<crc_hex>>
 ```
 
-**示例**：
+**IMU 正常示例**：
 ```
-<ID=4836 T=48400 IMU=-0.11,0.02,-0.985,-0.073,-0.077 ENC=68,31039,*D8>
+<ID=4836 T=48400 IMU_OK=1 IMU=-0.11,0.02,-0.985,-0.073,-0.077 ENC=68,31039,*D8>
 ```
 
+**IMU 掉线示例**：
+```
+<ID=13 T=3560 IMU_OK=0 IMU=na,na,na,na,na ENC=1024,2048,*XX>
+```
+
+当 `IMU_OK=0` 时，IMU 五个字段均为 `na`，encoder 数据正常。ROS 端 parser 将 `na` 转为 `NaN`，`imu_ok=false`。
+
+### v3 历史协议（<> 帧边界 + *XX CRC）
 **帧结构说明**：
 - `<` 帧头，`>` 帧尾：ROS 端以此为边界提取完整帧，解决串口上下帧粘连问题
 - `,*XX`：CRC8-ATM 校验值（hex 大写），CRC 仅计算 `,*` 之前的 payload 部分
@@ -264,12 +281,13 @@ ID=4836 T=48400 IMU=-0.11,0.02,-0.985,-0.073,-0.077 ENC=68,31039 crc=D8
 |------|------|------|
 | `ID` | 数据包 ID（递增） | - |
 | `T` | Arduino 时间戳（millis） | ms |
-| `IMU[0]` | 航向角 heading | deg |
-| `IMU[1]` | 绕 Z 轴角速度 yaw rate | rad/s |
-| `IMU[2..4]` | 加速度 X/Y/Z，当前按 IMU 归一化输出直接透传 | g |
+| `IMU_OK` | IMU 健康标志（1=正常，0=掉线） | - |
+| `IMU[0]` | 航向角 heading，IMU 掉线时为 `na`（ROS 端 = NaN） | deg |
+| `IMU[1]` | 绕 Z 轴角速度 yaw rate，IMU 掉线时为 `na` | rad/s |
+| `IMU[2..4]` | 加速度 X/Y/Z，IMU 掉线时为 `na` | g |
 | `ENC[0]` | REP X（向前）累计计数 | counts |
 | `ENC[1]` | REP Y（向左）累计计数 | counts |
-| `crc` | CRC8-ATM 校验值（不含 "crc=XX" 部分） | hex |
+| `crc` | CRC8-ATM 校验值（`*XX` hex 格式） | hex |
 
 **ENC 字段说明**：Arduino 端应完成坐标系转换，直接输出符合 REP 103 标准的计数。物理安装上 e1 为横向（右正）、e2 为纵向（前正），输出时应映射为 `ENC=e2_cnt,-e1_cnt`。
 
@@ -579,6 +597,17 @@ v_fused = α * v_encoder + (1-α) * (v_prev + a*dt)
 ### CRC 超时
 - **触发条件**：连续 `crc_timeout_sec` 秒（默认 0.5s）未收到 CRC 校验通过的数据包
 - **超时行为**：同数据超时，发布零速度 Odometry
+
+### IMU 掉线保护（v4 协议新增）
+- **触发条件**：Arduino 上报 `IMU_OK=0`（IMU 物理断连/故障），IMU 字段为 `na`
+- **超时行为**：
+  - `/arduino/raw_sensor_data` 消息：`imu_ok=false`，`imu_*` 字段为 `NaN`
+  - `/state_odom`：发布零速度
+  - `/state_pose2d`：发布 `theta=NaN`（让 navigation 区分 IMU 故障与串口断连）
+- **navigation 响应**（由 `imu_offline_mode` 参数控制）：
+  - `stop`（默认）：检测到 `theta=NaN` → 停车 + ERROR 日志
+  - `degraded`：使用最后一次有效 yaw，禁用旋转 PID，仅保留平移控制
+    - 若 IMU 从启动就是 NaN（无历史 yaw），回退为 stop
 
 ### 串口断连自动重连（v0.2.8 引入，v0.2.10 修复）
 - **定时重连**：每 2s 检查一次串口状态，若已断开则尝试重连
