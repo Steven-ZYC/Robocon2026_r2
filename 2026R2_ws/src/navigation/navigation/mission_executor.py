@@ -12,6 +12,8 @@ Python code only does interpretation and publishing — no hardcoded values.
 import os
 import time
 import math
+import copy
+import re
 import numpy as np
 import yaml
 
@@ -211,6 +213,9 @@ class MissionExecutor:
         self.stages = data.get('stages', [])
         self.frame_id = data.get('frame_id', 'map')
 
+        # Expand pipeline templates before validation so referenced IDs resolve
+        self._expand_templates(data)
+
         self.logger.info(
             f"Mission loaded: {len(self.waypoints)} waypoints, "
             f"{len(self.profiles)} profiles, "
@@ -296,6 +301,86 @@ class MissionExecutor:
         'id', 'type', 'label', 'expected', 'on_true', 'on_false', 'on_match', 'on_mismatch',
     }
 
+    # ------------------------------------------------------------------
+    # Pipeline template expansion
+    # ------------------------------------------------------------------
+
+    def _expand_templates(self, data):
+        """Replace ``type: pipeline`` stages with expanded template steps.
+
+        Called once at load time, before validation. Templates may be nested
+        (a template step may itself be a pipeline), so expansion is recursive.
+        """
+        templates = data.get('templates', {})
+        if not templates:
+            return
+
+        self.stages = self._expand_stage_list(self.stages, templates)
+
+        for stage in self.stages:
+            stype = stage.get('type', '')
+            if stype == 'weapon_head_pickup':
+                seq = stage.get('pickup_sequence', [])
+                if seq:
+                    stage['pickup_sequence'] = self._expand_stage_list(seq, templates)
+            elif stype == 'sequential':
+                for seq_name in ('prepare_sequence', 'pickup_sequence', 'miss_sequence',
+                                 'rollback_sequence', 'steps'):
+                    seq = stage.get(seq_name, [])
+                    if seq:
+                        stage[seq_name] = self._expand_stage_list(seq, templates)
+
+    def _expand_stage_list(self, stages, templates):
+        """Walk a stage list, replacing pipeline refs with template steps."""
+        result = []
+        for stage in stages:
+            if stage.get('type') == 'pipeline':
+                tpl_name = stage.get('template', '')
+                tpl = templates.get(tpl_name, [])
+                if not tpl:
+                    self.logger.warn(
+                        f"Pipeline references unknown template '{tpl_name}', skipping"
+                    )
+                    continue
+                expanded = self._instantiate_template(tpl, stage.get('vars', {}))
+                expanded = self._expand_stage_list(expanded, templates)
+                result.extend(expanded)
+            else:
+                result.append(stage)
+        return result
+
+    def _instantiate_template(self, template, vars_dict):
+        """Deep-copy template and substitute ``{var}`` placeholders."""
+        expanded = copy.deepcopy(template)
+        self._substitute_placeholders(expanded, vars_dict)
+        return expanded
+
+    def _substitute_placeholders(self, obj, vars_dict):
+        """Recursively replace ``{var}`` in every string value within *obj*."""
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if isinstance(value, str):
+                    obj[key] = self._format_placeholders(value, vars_dict)
+                elif isinstance(value, (dict, list)):
+                    self._substitute_placeholders(value, vars_dict)
+        elif isinstance(obj, list):
+            for i, item in enumerate(obj):
+                if isinstance(item, str):
+                    obj[i] = self._format_placeholders(item, vars_dict)
+                elif isinstance(item, (dict, list)):
+                    self._substitute_placeholders(item, vars_dict)
+
+    def _format_placeholders(self, s, vars_dict):
+        """Replace ``{var_name}`` in *s*, leaving unmatched patterns intact."""
+        def _replace(match):
+            var = match.group(1)
+            return str(vars_dict.get(var, match.group(0)))
+        return re.sub(r'\{(\w+)\}', _replace, s)
+
+    # ------------------------------------------------------------------
+    # Validation helpers
+    # ------------------------------------------------------------------
+
     def _warn_unknown(self, label, data, known):
         """对 data 中不在 known 集合里的 key 各发一次 warn。"""
         if not isinstance(data, dict):
@@ -371,6 +456,8 @@ class MissionExecutor:
                     'prepare_sequence', 'pickup_sequence', 'miss_sequence',
                     'dock_release_sequence', 'final_sequence', 'search', 'micro_sweep',
                 })
+            elif stype == 'pipeline':
+                self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS | {'template', 'vars'})
             elif stype == 'terminate':
                 self._warn_unknown(f"[{sid}]", s, self._STAGE_COMMON_KEYS)
             else:
@@ -476,6 +563,8 @@ class MissionExecutor:
                         self._warn_unknown(f"[{sid}] steps wait", step, {'type', 'duration_s'})
                     elif stp_type == 'stop_chassis':
                         self._warn_unknown(f"[{sid}] steps stop_chassis", step, {'type'})
+                    elif stp_type == 'pipeline':
+                        self._warn_unknown(f"[{sid}] steps pipeline", step, {'type', 'template', 'vars'})
                     else:
                         self.logger.warn(f"[{sid}] steps: unknown step type '{stp_type}'")
 
@@ -532,6 +621,8 @@ class MissionExecutor:
                         self._warn_unknown(f"[{sid}] pickup navigate", step, {'type', 'id', 'to', 'profile', 'timeout_s', 'torque_arrival'})
                     elif stp_type == 'stop_chassis':
                         self._warn_unknown(f"[{sid}] pickup stop_chassis", step, {'type', 'id'})
+                    elif stp_type == 'pipeline':
+                        self._warn_unknown(f"[{sid}] pickup pipeline", step, {'type', 'template', 'vars'})
                     else:
                         self.logger.warn(f"[{sid}] pickup_sequence: unknown step type '{stp_type}'")
 
