@@ -38,6 +38,8 @@ DEFAULT_ARM_MOTOR_IDS = [5, 6]
 DEFAULT_ARM_MOTOR_MODES = [2, 2]
 DEFAULT_ARM_CONTROL_TOPIC = "arm/damiao_control"
 DAMIAO_GEAR_RATIO = 19.227
+DEFAULT_MAX_SPEED_RAD_S = 12.0     # 输出端最大速度 (rad/s)
+DEFAULT_MAX_ACCEL_RAD_S2 = 15.0   # 输出端最大加速度 (rad/s²)，0 表示关闭斜坡
 FALLBACK_CONTROL_MODE = Control_Type.VEL
 RECONNECT_INTERVAL = 2.0
 RECONNECT_MAX_ATTEMPTS = 5
@@ -70,6 +72,12 @@ class MotorControllerNode(Node):
         self.gear_ratio = float(
             self.declare_parameter("gear_ratio", DAMIAO_GEAR_RATIO).value
         )
+        self.max_speed_rad_s = float(
+            self.declare_parameter("max_speed_rad_s", DEFAULT_MAX_SPEED_RAD_S).value
+        )
+        self.max_accel_rad_s2 = float(
+            self.declare_parameter("max_accel_rad_s2", DEFAULT_MAX_ACCEL_RAD_S2).value
+        )
         self.torque_sense_topic = str(
             self.declare_parameter(
                 "torque_sense_topic", "arm/damiao_torque_sense"
@@ -93,6 +101,10 @@ class MotorControllerNode(Node):
         self._torque_sense_timers = {}   # motor_id -> Timer
         self._torque_sense_positions = {}  # motor_id -> target position (rad, output side)
         self._torque_sense_last_msg = {}   # motor_id -> last message timestamp
+
+        # Acceleration ramp state
+        self._last_speed = {}      # motor_id -> last commanded speed (rad/s, output side)
+        self._last_speed_time = {} # motor_id -> timestamp of last speed update
 
         # Create feedback publisher before hardware init so the topic is visible
         # even while motors are initializing.
@@ -133,7 +145,9 @@ class MotorControllerNode(Node):
         self.get_logger().info(
             f"Damiao grouped controller initialized: device_id={self.device_id}, "
             f"groups={self._group_summary()}, timeout={self.command_timeout:.2f}s, "
-            f"gear_ratio={self.gear_ratio:.6f}"
+            f"gear_ratio={self.gear_ratio:.6f}, "
+            f"max_speed={self.max_speed_rad_s:.1f} rad/s, "
+            f"max_accel={self.max_accel_rad_s2:.1f} rad/s²"
         )
 
     def _int_list_parameter(self, name, default):
@@ -476,7 +490,6 @@ class MotorControllerNode(Node):
         motor_id = int(msg.data[0])
         mode = int(msg.data[1])
         input_speed = float(msg.data[2])
-        motor_speed = self._to_motor_speed(input_speed)
 
         if self.motor_to_group.get(motor_id) != group_name:
             if motor_id not in self.ignored_motor_ids:
@@ -498,6 +511,22 @@ class MotorControllerNode(Node):
 
         self.last_control_time[group_name] = time.monotonic()
         self.timeout_stop_sent[group_name] = False
+
+        # Speed clamp + acceleration ramp (output side, before gear_ratio)
+        input_speed = max(-self.max_speed_rad_s,
+                          min(self.max_speed_rad_s, input_speed))
+        if self.max_accel_rad_s2 > 0.0:
+            now = time.monotonic()
+            if motor_id in self._last_speed:
+                dt = now - self._last_speed_time.get(motor_id, now)
+                if dt > 0.0:
+                    max_delta = self.max_accel_rad_s2 * dt
+                    prev = self._last_speed[motor_id]
+                    input_speed = max(prev - max_delta,
+                                      min(prev + max_delta, input_speed))
+            self._last_speed[motor_id] = input_speed
+            self._last_speed_time[motor_id] = now
+        motor_speed = self._to_motor_speed(input_speed)
 
         try:
             if mode == 0:
