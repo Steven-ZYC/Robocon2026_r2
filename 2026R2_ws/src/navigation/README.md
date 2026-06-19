@@ -406,6 +406,10 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-20 | v0.35 — Blue full FSM 抓取并升起等待 1 秒后，保持 arm high 退到对应 `wp_point_N_offset`，再降 arm、等待 1 秒、回 front、转 M6、等待后升 stopper，再前往 docking |
+| 2026-06-20 | v0.34 — Blue full FSM 的 Slot 1–5 统一采用 new blue Point 1 微扫参数：前后各 10mm、0.02m/s、2.0s |
+| 2026-06-20 | v0.33 — Blue full FSM 的微扫参数严格同步 `new_blue_point_1_point_2_test.sh`：Slot 1 使用前后各 10mm、0.02m/s、2.0s；Slot 2–5 使用前后各 10mm、0.015m/s、5.0s |
+| 2026-06-19 | v0.32 — Red full FSM 的 Slot 5 成功或 miss 均先进入明确收尾姿态：yaw `front`、roll `up`、gripper `open`、lift/stopper `low`，保持 1.0s 后再执行 `terminate` |
 | 2026-06-15 | v0.31 — 新增 `routes/blue/full_fsm.yaml` 和 `routes/red/full_fsm.yaml`：蓝/红场各 5 slot 全流程 FSM（origin→middle→point→pickup→docking，含 miss 偏移恢复 + IR 重试）；新增根目录 `blue_full_fsm_test.sh` / `red_full_fsm_test.sh` 一键启停脚本 |
 | 2026-06-15 | v0.30 — YAML 启动时全量字段校验：waypoint/profile/actuator/stage 含子块 unknown-key 检测 + arm block 值合法检查；`mission_viz_node` 支持 `action` 类型 waypoint 渲染；删除死代码 `route_loader.py`/`action_executor.py`/`START_GUIDE.md`；`setup.py` routes glob 支持子目录 |
 | 2026-06-14 | v0.29 — `weapon_head_pickup.pickup_sequence` 支持 `action/navigate/stop_chassis`，可在抓取序列内部执行短距离底盘动作 |
@@ -2122,3 +2126,18 @@ ros2 topic echo arm/pneu_navigation
 ```
 
 正常情况下，在 `check_torque` 等条件循环中，`arm/pneu_ctrl` 应每 100ms 收到一次刷新。若超过 200ms 无消息，说明保活未生效，检查 `arm_keepalive_enabled` 参数是否为 `true`。
+
+## v0.32 — Red Slot 5 终止前明确收尾姿态（2026-06-19）
+
+`routes/red/full_fsm.yaml` 的 Slot 5 不再从 miss 分支直接调用 `terminate`。成功和 miss 统一进入以下收尾状态：
+
+```text
+slot5_finish_pose
+  yaw=front, roll=up, gripper=open, lift=low, stopper=low
+→ slot5_finish_wait (1.0s，FSM keep-alive 持续发送完整状态)
+→ slot5_done (terminate)
+```
+
+终止前增加 1.0 秒等待，用于持续发送并保持 `front/up/open/low/low` 收尾目标。等待期间底盘保持上一条停止输出，手臂状态每 100ms 重发。随后 `terminate` 发布底盘零速、motor 5/6 的 `position=0/speed=0`，并将气动输出设为 `open/low/low`。
+
+---

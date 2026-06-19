@@ -1,5 +1,9 @@
 # Navigation TODO
 
+- [x] Blue full FSM 抓取后保持 arm high 退到 point N back，再降 arm、等待 1 秒、回 front、转 M6、升 stopper 后 docking（v0.35，2026-06-20）
+- [x] Blue full FSM Slot 1–5 微扫统一为前后各 10mm、0.02m/s、2.0s（v0.34，2026-06-20）
+- [x] Blue full FSM 微扫严格同步 new blue 两点测试：Slot 1 使用前后各 10mm、0.02m/s、2.0s，Slot 2–5 使用前后各 10mm、0.015m/s、5.0s（2026-06-20）
+- [x] Red full FSM Slot 5 成功或 miss 均先切换到 `front/up/open/low/low`，保持 1.0s 后再 `terminate`（2026-06-19）
 - [x] 新增 `routes/blue/full_fsm.yaml`：蓝场 5 slot 全流程 FSM（12 waypoints, 55 stages, 含 miss 偏移 + IR 重试），通过 `_validate_stages()` 零 warn
 - [x] 新增 `routes/red/full_fsm.yaml`：红场 5 slot 全流程 FSM，与蓝场结构一致，差异仅 Y 坐标符号、arm yaw 方向、PID 参数
 - [x] 新增根目录 `blue_full_fsm_test.sh` / `red_full_fsm_test.sh`：蓝/红场一键启停脚本

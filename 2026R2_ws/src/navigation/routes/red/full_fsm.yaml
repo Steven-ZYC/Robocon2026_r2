@@ -197,9 +197,33 @@ templates:
     - type: wait
       duration_s: 1.0
 
-  # Docking release sequence: front → roll → stopper → navigate → torque → release.
-  # Vars: {prefix} (e.g. slot1), {roll_dock} (left_90deg), {release_wait_s}
+  # Docking release sequence: retreat high → lower → front → roll → stopper
+  # → navigate docking → torque → release.
+  # Vars: {prefix} (e.g. slot1), {back_point}, {roll_dock} (left_90deg),
+  #       {release_wait_s}
   docking_release:
+    - id: "{prefix}_back_nav"
+      type: action
+      arm:
+        arm_yaw_motor: left
+        arm_roll_motor: up
+        arm_gripper: close
+        arm_lift: high
+        arm_stopper: low
+      chassis:
+        to: "{back_point}"
+        profile: head_rack_speed
+
+    - id: "{prefix}_lower"
+      type: arm
+      arm_yaw_motor: left
+      arm_roll_motor: up
+      arm_gripper: close
+      arm_lift: low
+      arm_stopper: low
+    - type: wait
+      duration_s: 1.0
+
     - id: "{prefix}_docking_start"
       type: arm
       arm_yaw_motor: front
@@ -401,6 +425,7 @@ stages:
         template: docking_release
         vars:
           prefix: slot1
+          back_point: wp_point_1_offset
           roll_dock: left_90deg
           release_wait_s: 1.0
       - id: "slot1_ir_confirmed"
@@ -552,6 +577,7 @@ stages:
         template: docking_release
         vars:
           prefix: slot2
+          back_point: wp_point_2_offset
           roll_dock: left_90deg
           release_wait_s: 0.8
       - id: "slot2_ir_confirmed"
@@ -702,6 +728,7 @@ stages:
         template: docking_release
         vars:
           prefix: slot3
+          back_point: wp_point_3_offset
           roll_dock: left_90deg
           release_wait_s: 0.8
       - id: "slot3_ir_confirmed"
@@ -852,6 +879,7 @@ stages:
         template: docking_release
         vars:
           prefix: slot4
+          back_point: wp_point_4_offset
           roll_dock: left_90deg
           release_wait_s: 0.8
       - id: "slot4_ir_confirmed"
@@ -952,7 +980,9 @@ stages:
     ir_topic: /arm/ir_status
     ir_field: ir
     ir_timeout_s: 2.0
-    on_miss: terminate
+    # Slot 5 has no next rack point. Both search miss and pickup result
+    # converge on the explicit final arm pose below before terminate.
+    on_miss: advance
     micro_sweep:
       direction_rad: 0.0
       back_distance_m: 0.04
@@ -997,17 +1027,37 @@ stages:
       - id: "slot5_exit_miss"
         type: verify_ir
         expected: true
-        on_false: "terminate"
+        on_false: "slot5_finish_pose"
       - type: pipeline
         template: docking_release
         vars:
           prefix: slot5
+          back_point: wp_point_5_offset
           roll_dock: left_90deg
           release_wait_s: 0.8
       - id: "slot5_ir_confirmed"
         type: verify_ir
         expected: true
-        on_true: "slot5_done"
+        on_true: "slot5_finish_pose"
+
+  - id: slot5_finish_pose
+    type: action
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
+
+  - id: slot5_finish_wait
+    type: wait
+    duration_s: 1.0
+    arm:
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
 
   - id: slot5_done
     type: terminate
