@@ -122,8 +122,8 @@ actuators:
     speed: 1.0
     positions:
       up: 0.0
-      right_90deg: 1.5708
-      left_90deg: -1.5708
+      right_90deg: -1.5708
+      left_90deg: 1.5708
 
   arm_gripper:
     type: pneumatic
@@ -142,13 +142,19 @@ templates:
   retry_grip:
     - type: wait
       duration_s: 1.0
+
     - type: arm
+      arm_yaw_motor: right
+      arm_roll_motor: up
       arm_gripper: close
       arm_lift: low
       arm_stopper: low
     - type: wait
       duration_s: 1.0
+
     - type: arm
+      arm_yaw_motor: right
+      arm_roll_motor: up
       arm_gripper: close
       arm_lift: high
       arm_stopper: low
@@ -161,12 +167,16 @@ templates:
   # parent pickup_sequence, outside this template.
   slot_pickup:
     # -- grip + lift --
+    - type: wait
+      duration_s: 1.0
+
     - type: arm
       arm_gripper: close
       arm_lift: low
       arm_stopper: low
     - type: wait
       duration_s: 1.0
+
     - type: arm
       arm_gripper: close
       arm_lift: high
@@ -240,8 +250,8 @@ templates:
     - type: verify_ir
       label: "{prefix}_after_release_sensor_clear"
       expected: false
-      on_true: continue
-      on_false: continue
+      on_true: advance
+      on_false: advance
 
 
 stages:
@@ -309,7 +319,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -405,7 +415,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -469,7 +479,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -564,7 +574,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -627,7 +637,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -722,7 +732,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -785,7 +795,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -880,7 +890,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -943,7 +953,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5

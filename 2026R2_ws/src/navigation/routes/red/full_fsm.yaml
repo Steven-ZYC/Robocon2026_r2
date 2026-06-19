@@ -4,9 +4,11 @@ angle_unit: deg
 
 # Red field: full FSM for 5 weapon head rack points.
 # Robot starts near origin, arm at init pose.
-# Each cycle: origin → wp_middle → arm left → wp_point_N (torque early quit + timeout)
-# → weapon_head_pickup (micro_sweep_10mm) → docking at wp_docking → next point.
-# Miss path: offset 2.5cm body-Y → cross to next point X → approach next point.
+# Point 1: origin → wp_middle → arm left → wp_point_1 (torque early quit + timeout)
+# Points 2-5: arm left → wp_point_N_offset → wp_point_N (torque early quit + timeout)
+# All points: → weapon_head_pickup (micro_sweep_10mm) → docking at wp_docking → next point.
+# Success path:  release at wp_docking → arm left → next offset → next point.
+# Miss path:     offset retreat → cross to next point X → approach next point.
 #
 # Red vs Blue differences:
 #   - rack at +Y (right side of field), all Y signs flipped positive
@@ -32,6 +34,11 @@ waypoints:
 
   wp_point_1:
     pose: { x: 0.36, y: 0.875, yaw: 0.0 }
+    pos_tolerance: 0.01
+    yaw_tolerance_deg: 1.0
+
+  wp_point_1_offset:
+    pose: { x: 0.36, y: 0.85, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
@@ -82,7 +89,7 @@ profiles:
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
-    k_p_x: 0.071
+    k_p_x: 0.061
     k_p_y: 0.115
     k_i_y: 0.0
     k_i_x: 0.0
@@ -95,9 +102,9 @@ profiles:
     curve: cubic_ease
 
   head_rack_speed:
-    # 1/2 Red Area profile speed limits.
-    speed_mps: 0.2
-    yaw_rate_rps: 0.15
+    # 1/4 Red Area profile speed limits.
+    speed_mps: 0.1
+    yaw_rate_rps: 0.075
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
@@ -109,8 +116,8 @@ profiles:
     k_d_y: 0.25
     k_heading_p: 0.06
     k_heading_d: 0.0
-    max_body_x_mps: 0.55
-    max_body_y_mps: 0.5
+    max_body_x_mps: 0.25
+    max_body_y_mps: 0.25
 
 actuators:
   arm_yaw_motor:
@@ -167,15 +174,15 @@ templates:
     - type: wait
       duration_s: 1.0
 
-  # Full slot pickup: grip → IR check → docking → torque-wait → release.
-  # Vars: {prefix} (e.g. slot1), {roll_dock} (left_90deg), {release_wait_s}
-  # Jumps to {prefix}_retry_arm on IR miss — that step is defined in the
-  # parent pickup_sequence, outside this template.
+  # Full slot pickup: grip → lift.
+  # IR retry and docking release are handled in the pickup_sequence steps
+  # and docking_release template after weapon_head_pickup completes.
+  # Vars: {prefix} (e.g. slot1)
   slot_pickup:
     # -- grip + lift --
     - type: wait
       duration_s: 1.0
-    
+
     - type: arm
       arm_gripper: close
       arm_lift: low
@@ -189,17 +196,10 @@ templates:
       arm_stopper: low
     - type: wait
       duration_s: 1.0
-    # -- IR check 1 --
-    - id: "{prefix}_check_ir_1"
-      type: conditional
-      condition:
-        topic: /arm/ir_status
-        field: ir
-        op: gt
-        value: 0
-      then: "{prefix}_docking_start"
-      else: "{prefix}_retry_arm"
-    # === DOCKING PATH ===
+
+  # Docking release sequence: front → roll → stopper → navigate → torque → release.
+  # Vars: {prefix} (e.g. slot1), {roll_dock} (left_90deg), {release_wait_s}
+  docking_release:
     - id: "{prefix}_docking_start"
       type: arm
       arm_yaw_motor: front
@@ -208,16 +208,28 @@ templates:
       arm_lift: low
       arm_stopper: low
     - type: wait
-      duration_s: 1.0
+      duration_s: 1.5
+
+    - id: "{prefix}_roll"
+      type: arm
+      arm_yaw_motor: front
+      arm_roll_motor: "{roll_dock}"
+      arm_gripper: close
+      arm_lift: low
+      arm_stopper: low
+    - type: wait
+      duration_s: 2.0
+
     - id: "{prefix}_stopper_up"
       type: arm
       arm_yaw_motor: front
-      arm_roll_motor: up
+      arm_roll_motor: "{roll_dock}"
       arm_gripper: close
       arm_lift: low
       arm_stopper: high
     - type: wait
       duration_s: 1.0
+
     - id: "{prefix}_docking_nav"
       type: action
       arm:
@@ -229,6 +241,7 @@ templates:
       chassis:
         to: wp_docking
         profile: head_rack_speed
+
     - id: "{prefix}_check_torque"
       type: conditional
       condition:
@@ -246,18 +259,16 @@ templates:
       arm_lift: low
       arm_stopper: low
     - type: wait
-      duration_s: "{release_wait_s}"
+      duration_s: 1.0
+
     - type: arm
-      arm_yaw_motor: front
+      arm_yaw_motor: left
       arm_roll_motor: up
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
-    - type: verify_ir
-      label: "{prefix}_after_release_sensor_clear"
-      expected: false
-      on_true: continue
-      on_false: continue
+    - type: wait
+      duration_s: 1.0
 
 stages:
   # ================================================================
@@ -277,28 +288,15 @@ stages:
       arm_stopper: low
 
   # ================================================================
-  # Slot 1 — wp_point_1 (0.36, 0.875)
+  # Slot 1 — wp_point_1 (0.36, 0.875)  from origin via middle
   # ================================================================
-  - id: slot1_to_origin
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-    chassis:
-      to: wp_origin
-      profile: red_area
-
   - id: slot1_to_middle
     type: action
     chassis:
       to: wp_middle
       profile: red_area
-      timeout_s: 1.5
 
-  - id: slot1_arm_right
+  - id: slot1_arm_left
     type: action
     arm:
       arm_yaw_motor: left
@@ -325,7 +323,7 @@ stages:
       timeout_s: 2.35
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_2_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -359,7 +357,7 @@ stages:
       back_distance_m: 0.01
       forward_distance_m: 0.01
       speed_mps: 0.015
-      timeout_s: 2.0
+      timeout_s: 2.5
       profile: head_rack_speed
       pos_tolerance: 0.003
       yaw_tolerance: 0.05
@@ -368,34 +366,49 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot1
-          roll_dock: left_90deg
-          release_wait_s: 1.0
-      # retry
-      - id: slot1_retry_arm
-        type: arm
-        arm_yaw_motor: left
-        arm_roll_motor: up
-        arm_gripper: open
-        arm_lift: low
-        arm_stopper: low
-        
-      - type: pipeline
-        template: retry_grip
-      - id: slot1_check_ir_2
+      - id: "slot1_check_ir_1"
         type: conditional
         condition:
           topic: /arm/ir_status
           field: ir
           op: gt
           value: 0
-        then: slot1_docking_start
-        else: slot1_exit_miss
-      - id: slot1_exit_miss
+        then: "slot1_docking_start"
+        else: "slot1_retry_arm"
+      - id: "slot1_retry_arm"
+        type: arm
+        arm_yaw_motor: left
+        arm_roll_motor: up
+        arm_gripper: open
+        arm_lift: low
+        arm_stopper: low
+      - type: pipeline
+        template: retry_grip
+      - id: "slot1_check_ir_2"
+        type: conditional
+        condition:
+          topic: /arm/ir_status
+          field: ir
+          op: gt
+          value: 0
+        then: "slot1_docking_start"
+        else: "slot1_exit_miss"
+      - id: "slot1_exit_miss"
         type: verify_ir
         expected: true
-        on_false: advance
+        on_false: "slot1_miss_offset"
+      - type: pipeline
+        template: docking_release
+        vars:
+          prefix: slot1
+          roll_dock: left_90deg
+          release_wait_s: 1.0
+      - id: "slot1_ir_confirmed"
+        type: verify_ir
+        expected: true
+        on_true: "slot2_arm_left"
 
-  # miss recovery: offset 2.5cm body-Y → cross to point 2 X → approach point 2
+  # point 1: direct to wp_docking (no intermediate back point)
   - id: slot1_miss_offset
     type: action
     chassis:
@@ -422,44 +435,13 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
         min_elapsed_s: 0.20
 
-  # success: prepare for slot 2
-  - id: slot1_success
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-
-  # ================================================================
-  # Slot 2 — wp_point_2 (0.56, 0.875)
-  # ================================================================
-  - id: slot2_to_origin
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-    chassis:
-      to: wp_origin
-      profile: red_area
-
-  - id: slot2_to_middle
-    type: action
-    chassis:
-      to: wp_middle
-      profile: red_area
-
-  - id: slot2_arm_right
+  - id: slot2_arm_left
     type: action
     arm:
       arm_yaw_motor: left
@@ -467,6 +449,12 @@ stages:
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
+
+  - id: slot2_to_offset
+    type: action
+    chassis:
+      to: wp_point_2_offset
+      profile: red_area
 
   - id: slot2_wait_pre
     type: wait
@@ -486,7 +474,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -520,7 +508,7 @@ stages:
       back_distance_m: 0.01
       forward_distance_m: 0.01
       speed_mps: 0.015
-      timeout_s: 2.0
+      timeout_s: 2.5
       profile: head_rack_speed
       pos_tolerance: 0.003
       yaw_tolerance: 0.05
@@ -529,10 +517,16 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot2
-          roll_dock: left_90deg
-          release_wait_s: 0.8
-      # retry
-      - id: slot2_retry_arm
+      - id: "slot2_check_ir_1"
+        type: conditional
+        condition:
+          topic: /arm/ir_status
+          field: ir
+          op: gt
+          value: 0
+        then: "slot2_docking_start"
+        else: "slot2_retry_arm"
+      - id: "slot2_retry_arm"
         type: arm
         arm_yaw_motor: left
         arm_roll_motor: up
@@ -541,19 +535,29 @@ stages:
         arm_stopper: low
       - type: pipeline
         template: retry_grip
-      - id: slot2_check_ir_2
+      - id: "slot2_check_ir_2"
         type: conditional
         condition:
           topic: /arm/ir_status
           field: ir
           op: gt
           value: 0
-        then: slot2_docking_start
-        else: slot2_exit_miss
-      - id: slot2_exit_miss
+        then: "slot2_docking_start"
+        else: "slot2_exit_miss"
+      - id: "slot2_exit_miss"
         type: verify_ir
         expected: true
-        on_false: advance
+        on_false: "slot2_miss_offset"
+      - type: pipeline
+        template: docking_release
+        vars:
+          prefix: slot2
+          roll_dock: left_90deg
+          release_wait_s: 0.8
+      - id: "slot2_ir_confirmed"
+        type: verify_ir
+        expected: true
+        on_true: "slot3_arm_left"
 
   - id: slot2_miss_offset
     type: action
@@ -581,43 +585,13 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
         min_elapsed_s: 0.20
 
-  - id: slot2_success
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-
-  # ================================================================
-  # Slot 3 — wp_point_3 (0.76, 0.875)
-  # ================================================================
-  - id: slot3_to_origin
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-    chassis:
-      to: wp_origin
-      profile: red_area
-
-  - id: slot3_to_middle
-    type: action
-    chassis:
-      to: wp_middle
-      profile: red_area
-
-  - id: slot3_arm_right
+  - id: slot3_arm_left
     type: action
     arm:
       arm_yaw_motor: left
@@ -625,6 +599,12 @@ stages:
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
+
+  - id: slot3_to_offset
+    type: action
+    chassis:
+      to: wp_point_3_offset
+      profile: red_area
 
   - id: slot3_wait_pre
     type: wait
@@ -644,7 +624,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -678,7 +658,7 @@ stages:
       back_distance_m: 0.01
       forward_distance_m: 0.01
       speed_mps: 0.015
-      timeout_s: 2.0
+      timeout_s: 2.5
       profile: head_rack_speed
       pos_tolerance: 0.003
       yaw_tolerance: 0.05
@@ -687,10 +667,16 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot3
-          roll_dock: left_90deg
-          release_wait_s: 0.8
-      # retry
-      - id: slot3_retry_arm
+      - id: "slot3_check_ir_1"
+        type: conditional
+        condition:
+          topic: /arm/ir_status
+          field: ir
+          op: gt
+          value: 0
+        then: "slot3_docking_start"
+        else: "slot3_retry_arm"
+      - id: "slot3_retry_arm"
         type: arm
         arm_yaw_motor: left
         arm_roll_motor: up
@@ -699,19 +685,29 @@ stages:
         arm_stopper: low
       - type: pipeline
         template: retry_grip
-      - id: slot3_check_ir_2
+      - id: "slot3_check_ir_2"
         type: conditional
         condition:
           topic: /arm/ir_status
           field: ir
           op: gt
           value: 0
-        then: slot3_docking_start
-        else: slot3_exit_miss
-      - id: slot3_exit_miss
+        then: "slot3_docking_start"
+        else: "slot3_exit_miss"
+      - id: "slot3_exit_miss"
         type: verify_ir
         expected: true
-        on_false: advance
+        on_false: "slot3_miss_offset"
+      - type: pipeline
+        template: docking_release
+        vars:
+          prefix: slot3
+          roll_dock: left_90deg
+          release_wait_s: 0.8
+      - id: "slot3_ir_confirmed"
+        type: verify_ir
+        expected: true
+        on_true: "slot4_arm_left"
 
   - id: slot3_miss_offset
     type: action
@@ -739,43 +735,13 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
         min_elapsed_s: 0.20
 
-  - id: slot3_success
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-
-  # ================================================================
-  # Slot 4 — wp_point_4 (0.96, 0.875)
-  # ================================================================
-  - id: slot4_to_origin
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-    chassis:
-      to: wp_origin
-      profile: red_area
-
-  - id: slot4_to_middle
-    type: action
-    chassis:
-      to: wp_middle
-      profile: red_area
-
-  - id: slot4_arm_right
+  - id: slot4_arm_left
     type: action
     arm:
       arm_yaw_motor: left
@@ -783,6 +749,12 @@ stages:
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
+
+  - id: slot4_to_offset
+    type: action
+    chassis:
+      to: wp_point_4_offset
+      profile: red_area
 
   - id: slot4_wait_pre
     type: wait
@@ -802,7 +774,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -836,7 +808,7 @@ stages:
       back_distance_m: 0.01
       forward_distance_m: 0.01
       speed_mps: 0.015
-      timeout_s: 2.0
+      timeout_s: 2.5
       profile: head_rack_speed
       pos_tolerance: 0.003
       yaw_tolerance: 0.05
@@ -845,10 +817,16 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot4
-          roll_dock: left_90deg
-          release_wait_s: 0.8
-      # retry
-      - id: slot4_retry_arm
+      - id: "slot4_check_ir_1"
+        type: conditional
+        condition:
+          topic: /arm/ir_status
+          field: ir
+          op: gt
+          value: 0
+        then: "slot4_docking_start"
+        else: "slot4_retry_arm"
+      - id: "slot4_retry_arm"
         type: arm
         arm_yaw_motor: left
         arm_roll_motor: up
@@ -857,19 +835,29 @@ stages:
         arm_stopper: low
       - type: pipeline
         template: retry_grip
-      - id: slot4_check_ir_2
+      - id: "slot4_check_ir_2"
         type: conditional
         condition:
           topic: /arm/ir_status
           field: ir
           op: gt
           value: 0
-        then: slot4_docking_start
-        else: slot4_exit_miss
-      - id: slot4_exit_miss
+        then: "slot4_docking_start"
+        else: "slot4_exit_miss"
+      - id: "slot4_exit_miss"
         type: verify_ir
         expected: true
-        on_false: advance
+        on_false: "slot4_miss_offset"
+      - type: pipeline
+        template: docking_release
+        vars:
+          prefix: slot4
+          roll_dock: left_90deg
+          release_wait_s: 0.8
+      - id: "slot4_ir_confirmed"
+        type: verify_ir
+        expected: true
+        on_true: "slot5_arm_left"
 
   - id: slot4_miss_offset
     type: action
@@ -897,43 +885,13 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
         min_elapsed_s: 0.20
 
-  - id: slot4_success
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-
-  # ================================================================
-  # Slot 5 — wp_point_5 (1.16, 0.875)  last slot
-  # ================================================================
-  - id: slot5_to_origin
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-    chassis:
-      to: wp_origin
-      profile: red_area
-
-  - id: slot5_to_middle
-    type: action
-    chassis:
-      to: wp_middle
-      profile: red_area
-
-  - id: slot5_arm_right
+  - id: slot5_arm_left
     type: action
     arm:
       arm_yaw_motor: left
@@ -941,6 +899,12 @@ stages:
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
+
+  - id: slot5_to_offset
+    type: action
+    chassis:
+      to: wp_point_5_offset
+      profile: red_area
 
   - id: slot5_wait_pre
     type: wait
@@ -960,7 +924,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5
@@ -994,7 +958,7 @@ stages:
       back_distance_m: 0.01
       forward_distance_m: 0.01
       speed_mps: 0.015
-      timeout_s: 2.0
+      timeout_s: 2.5
       profile: head_rack_speed
       pos_tolerance: 0.003
       yaw_tolerance: 0.05
@@ -1003,10 +967,16 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot5
-          roll_dock: left_90deg
-          release_wait_s: 0.8
-      # retry
-      - id: slot5_retry_arm
+      - id: "slot5_check_ir_1"
+        type: conditional
+        condition:
+          topic: /arm/ir_status
+          field: ir
+          op: gt
+          value: 0
+        then: "slot5_docking_start"
+        else: "slot5_retry_arm"
+      - id: "slot5_retry_arm"
         type: arm
         arm_yaw_motor: left
         arm_roll_motor: up
@@ -1015,28 +985,29 @@ stages:
         arm_stopper: low
       - type: pipeline
         template: retry_grip
-      - id: slot5_check_ir_2
+      - id: "slot5_check_ir_2"
         type: conditional
         condition:
           topic: /arm/ir_status
           field: ir
           op: gt
           value: 0
-        then: slot5_docking_start
-        else: slot5_exit_miss
-      - id: slot5_exit_miss
+        then: "slot5_docking_start"
+        else: "slot5_exit_miss"
+      - id: "slot5_exit_miss"
         type: verify_ir
         expected: true
-        on_false: terminate
-
-  - id: slot5_success
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
+        on_false: "terminate"
+      - type: pipeline
+        template: docking_release
+        vars:
+          prefix: slot5
+          roll_dock: left_90deg
+          release_wait_s: 0.8
+      - id: "slot5_ir_confirmed"
+        type: verify_ir
+        expected: true
+        on_true: "slot5_done"
 
   - id: slot5_done
     type: terminate

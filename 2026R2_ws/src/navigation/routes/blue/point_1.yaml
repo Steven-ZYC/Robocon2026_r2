@@ -133,7 +133,7 @@ stages:
       timeout_s: 3.5
       torque_arrival:
         topic: /damiao_feedback
-        field: motor_1_tau
+        field: chassis_motor_tau
         op: abs_gte
         abs_threshold_nm: 4.0
         max_age_s: 0.5

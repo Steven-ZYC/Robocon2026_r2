@@ -45,11 +45,17 @@ class GlobalNavigationNode(Node):
         #   'stop'    — IMU NaN → warn + zero driving (default, safest)
         #   'degraded' — IMU NaN → use last valid yaw, disable rotation PID
         #                 If yaw was NaN from startup (no last value), fall back to stop.
+        self.declare_parameter('imu_offline_yaw_fallback_deg', 0.0)
+        # When IMU is offline from startup AND imu_offline_mode=degraded, use this
+        # fixed yaw (deg) instead of stopping. 0 = forward. Only for straight-line tests.
 
         mission_file = self.get_parameter('mission_file').value
         control_rate = self.get_parameter('control_rate_hz').value
         self.pose_timeout_s = self.get_parameter('pose_timeout_s').value
         self.imu_offline_mode = self.get_parameter('imu_offline_mode').value
+        self.imu_offline_fallback_deg = float(
+            self.get_parameter('imu_offline_yaw_fallback_deg').value
+        )
         if self.imu_offline_mode not in ('stop', 'degraded'):
             self.get_logger().warn(
                 f"Unknown imu_offline_mode '{self.imu_offline_mode}', falling back to 'stop'"
@@ -250,13 +256,14 @@ class GlobalNavigationNode(Node):
                     )
                     self._imu_offline_warned = True
             else:
-                # Never had valid IMU — can't navigate at all
+                # Never had valid IMU — use fallback yaw if configured
+                yaw_rad = math.radians(self.imu_offline_fallback_deg)
                 if not self._imu_offline_warned:
-                    self.get_logger().error(
-                        'IMU offline from startup — no heading reference, stopping'
+                    self.get_logger().warn(
+                        f'IMU offline from startup — using fallback yaw '
+                        f'{self.imu_offline_fallback_deg:.1f}°, rotation disabled'
                     )
                     self._imu_offline_warned = True
-                return  # don't pass NaN yaw to mission
         else:
             self._imu_degraded = False
             self._imu_offline_warned = False
@@ -287,15 +294,6 @@ class GlobalNavigationNode(Node):
         if self._imu_degraded and self.imu_offline_mode == 'stop':
             self.get_logger().error(
                 'IMU offline — stopping (imu_offline_mode=stop)',
-                throttle_duration_sec=2.0,
-            )
-            self._pub_zero_driving()
-            return
-
-        # Even in degraded mode, can't proceed without any heading reference
-        if self._imu_degraded and self._last_valid_yaw_deg is None:
-            self.get_logger().error(
-                'IMU offline from startup — no heading reference, stopping',
                 throttle_duration_sec=2.0,
             )
             self._pub_zero_driving()
