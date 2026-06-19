@@ -20,17 +20,45 @@ Launch package for R2 robot. Starts all core nodes for FSM-mode operation.
 ### Usage
 
 ```bash
+# 场地选择方式（推荐）
+ros2 launch r2_launch launch.py field:=blue    # Blue 场地
+ros2 launch r2_launch launch.py field:=red     # Red 场地
+
+# 显式指定 YAML（优先级高于 field）
+ros2 launch r2_launch launch.py mission_file:=/path/to/mission.yaml
+
+# 无参数（默认 red_area.yaml）
 ros2 launch r2_launch launch.py
 ```
 
-For manual joystick control, replace `global_navigation_node` with `joystick_control_node`:
+### Launch Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `field` | `''` | 场地选择：`blue` → `routes/blue/full_fsm.yaml`, `red` → `routes/red/full_fsm.yaml` |
+| `mission_file` | `''` | 显式指定 YAML 路径，优先级高于 `field` |
+| `arm_arduino_port` | `/dev/arm_arduino` | Arm Arduino 串口设备 |
+| `sensor_port` | `/dev/sensor_arduino` | Sensor Arduino 串口设备 |
+
+### 一键启动脚本
+
+仓库根目录下 `r2_bringup.sh` 提供交互式快速启动：
 
 ```bash
-ros2 run joystick_driver joystick_node &
-ros2 run joystick_driver joystick_control_node &
+~/Robocon2026_r2/r2_bringup.sh
 ```
 
+脚本流程：source 环境 → 场地选择菜单（1/2）→ 按任意键 → 清理残留 → 启动全部 6 节点。
+
+树莓派开机后自动运行（通过 `~/.profile` 钩子），SSH 连接时不触发。
+
 ---
+
+## v5 — 2026-06-19
+
+`launch.py` 补全 `arm_arduino_node`（#6 气动阀 + IR 串口桥接），此前 README 表格已列出但代码遗漏。新增 `field` 参数支持 `blue`/`red` 场地选择，通过 `OpaqueFunction` 自动解析到 `routes/<field>/full_fsm.yaml`。`mission_file` 显式指定时优先于 `field`。新增 `sensor_port` 参数给 `arduino_sensor_parser`、`arm_arduino_port` 给 arm Arduino。
+
+仓库根目录新建 `r2_bringup.sh`：交互式菜单 → 场地 1/2 选择 → 一键启动全部 6 节点。通过 `~/.profile` 钩子实现开机自启（仅本地控制台，SSH 跳过）。
 
 ## v4 — 2026-06-01
 

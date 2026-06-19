@@ -17,6 +17,7 @@
   <!-- Project-specific dependencies -->
   <depend>arduino_sensor_driver</depend>
   <depend>arm</depend>
+  <depend>arm_arduino_praser</depend>
   <depend>base_omniwheel_r2_600</depend>
   <depend>navigation</depend>
   <depend>joystick_driver</depend>

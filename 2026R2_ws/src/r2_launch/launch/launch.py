@@ -1,25 +1,63 @@
 import os
 from launch import LaunchDescription
-from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 
-def generate_launch_description():
-    """Launch all R2 core nodes for FSM-mode operation.
+def _resolve_mission(context, nav_pkg_dir):
+    """Resolve mission YAML path from field or explicit mission_file arg."""
+    field = LaunchConfiguration('field').perform(context)
+    mission_file = LaunchConfiguration('mission_file').perform(context)
 
-    Starts motor driver, sensors, kinematics, navigation, and arm control.
+    if mission_file:
+        return mission_file
+
+    if field == 'blue':
+        return os.path.join(nav_pkg_dir, 'routes', 'blue', 'full_fsm.yaml')
+    elif field == 'red':
+        return os.path.join(nav_pkg_dir, 'routes', 'red', 'full_fsm.yaml')
+    else:
+        return os.path.join(nav_pkg_dir, 'routes', 'red_area.yaml')
+
+
+def generate_launch_description():
+    """Launch all R2 core nodes for FSM-mode operation (6 nodes).
+
+    Field selection:
+        field:=blue  → routes/blue/full_fsm.yaml
+        field:=red   → routes/red/full_fsm.yaml
+        mission_file:=path  → explicit override (ignores field)
+
     For manual joystick mode, run joystick_control_node instead of
     global_navigation_node (the two conflict on /local_driving).
     """
 
     nav_pkg_dir = get_package_share_directory('navigation')
 
+    field_arg = DeclareLaunchArgument(
+        'field',
+        default_value='',
+        description="Field: 'blue' or 'red'. Resolves to full_fsm.yaml for that field.",
+    )
+
     mission_file_arg = DeclareLaunchArgument(
         'mission_file',
-        default_value=os.path.join(nav_pkg_dir, 'routes', 'red_area.yaml'),
-        description='Path to mission YAML file'
+        default_value='',
+        description='Explicit mission YAML path. Overrides field if set.',
+    )
+
+    arm_arduino_port_arg = DeclareLaunchArgument(
+        'arm_arduino_port',
+        default_value='/dev/arm_arduino',
+        description='Arm Arduino serial device path.',
+    )
+
+    sensor_port_arg = DeclareLaunchArgument(
+        'sensor_port',
+        default_value='/dev/sensor_arduino',
+        description='Sensor Arduino serial device path.',
     )
 
     damiao_ctrl_node = Node(
@@ -47,6 +85,9 @@ def generate_launch_description():
         executable='arduino_sensor_parser',
         name='arduino_sensor_parser',
         output='screen',
+        parameters=[{
+            'port': LaunchConfiguration('sensor_port'),
+        }],
     )
 
     local_navigation_node = Node(
@@ -56,17 +97,21 @@ def generate_launch_description():
         output='screen',
     )
 
-    global_navigation_node = Node(
-        package='navigation',
-        executable='global_navigation_node',
-        name='global_navigation_controller',
-        output='screen',
-        emulate_tty=True,
-        parameters=[
-            os.path.join(nav_pkg_dir, 'config', 'global_nav_params.yaml'),
-            {'mission_file': LaunchConfiguration('mission_file')},
-        ],
-    )
+    def _make_nav_node(context):
+        mission_path = _resolve_mission(context, nav_pkg_dir)
+        return [
+            Node(
+                package='navigation',
+                executable='global_navigation_node',
+                name='global_navigation_controller',
+                output='screen',
+                emulate_tty=True,
+                parameters=[
+                    os.path.join(nav_pkg_dir, 'config', 'global_nav_params.yaml'),
+                    {'mission_file': mission_path},
+                ],
+            )
+        ]
 
     arm_ctrl_node = Node(
         package='arm',
@@ -86,11 +131,31 @@ def generate_launch_description():
         }],
     )
 
+    arm_arduino_node = Node(
+        package='arm_arduino_praser',
+        executable='arm_arduino_node',
+        name='arm_arduino_interface',
+        output='screen',
+        emulate_tty=True,
+        parameters=[{
+            'port': LaunchConfiguration('arm_arduino_port'),
+            'baud_rate': 115200,
+            'command_topic': 'arm/pneu_ctrl',
+            'pneu_ack_topic': 'arm/pneu_ack',
+            'ir_status_topic': 'arm/ir_status',
+            'raw_frame_topic': 'arm/pneu_raw_frame',
+        }],
+    )
+
     return LaunchDescription([
+        field_arg,
         mission_file_arg,
+        arm_arduino_port_arg,
+        sensor_port_arg,
         damiao_ctrl_node,
         arduino_sensor_node,
         local_navigation_node,
-        global_navigation_node,
+        OpaqueFunction(function=_make_nav_node),
         arm_ctrl_node,
+        arm_arduino_node,
     ])
