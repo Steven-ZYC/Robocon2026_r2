@@ -341,6 +341,7 @@ ls -la /dev/input/event*      # 查看是否有新 event 设备
 
 | 日期 | 版本 | 说明 |
 |---|---|---|
+| 2026-06-19 | v6 | 补全 `r2_launch` 至 6 节点（+arm_arduino_node），新增 `field` 参数一键选场地（blue/red），新建 `r2_bringup.sh` 交互式启动脚本，`~/.profile` 钩子实现开机自启（仅本地控制台，SSH 跳过）。 |
 | 2026-06-04 | v5 | 校正 package 列表（+arm_arduino_praser, plot_debug, test_damiao），更新 pneumatics → arm_arduino_praser 引用，修正 topic 类型；v2 数据流图仅供历史参考。
 | 2026-05-20 | v4 | 说明当前双 USB-CAN Damiao 临时架构：底盘与 arm 分别用各自 damiao node，`damiao_ctrl` 暂时悬置。 |
 | 2026-05-17 | v3 | 新增手柄设备绑定说明，udev 规则，权限设置，开机自启配置 |
@@ -415,6 +416,111 @@ USB Serial → Arduino Mega 2560
 arm/pneu_ack (Int8MultiArray, Arduino 回传实际状态)
 arm/ir_status (Bool, IR 传感器)
 arm/pneu_raw_frame (String, 调试用原始帧)
+```
+
+## v6 — 一键启动与场地选择 (2026-06-19)
+
+### 概述
+
+v6 实现"开机 → 选场地 → 按任意键 → 全部节点启动"的最简操作流程。核心改动：
+
+- `r2_launch/launch/launch.py`：补全第 6 个节点 `arm_arduino_node`（此前代码只启动了 5 个），新增 `field` 参数自动映射场地 YAML
+- `r2_bringup.sh`（仓库根目录新建）：交互式一键启动脚本
+- `~/.profile`：追加自启动钩子
+
+### 当前架构（v6 统一 Damiao）
+
+已从 v4 的双 USB-CAN 临时架构切回统一 Damiao 驱动：
+
+| # | 节点 | Package | 用途 |
+|---|------|---------|------|
+| 1 | `damiao_node` | `damiao_ctrl` | 统一 Damiao CAN 驱动（motor 1-6） |
+| 2 | `arduino_sensor_parser` | `arduino_sensor_driver` | IMU + 编码器 → `/state_pose2d` |
+| 3 | `local_navigation_node` | `base_omniwheel_r2_600` | 逆运动学，`/local_driving` → `base/damiao_control` |
+| 4 | `global_navigation_node` | `navigation` | FSM 任务执行，发布 `/local_driving`、`arm/joint_navigation`、`arm/pneu_navigation` |
+| 5 | `arm_ctrl_node` | `arm` | 机械臂关节控制，发布 `arm/damiao_ctrl` |
+| 6 | `arm_arduino_node` | `arm_arduino_praser` | Arm Arduino 串口桥接（气动阀 + IR 传感器） |
+
+### 数据流
+
+```
+[mission YAML] → global_navigation_node
+                   ├─ /local_driving → local_navigation_node → base/damiao_control ─┐
+                   ├─ arm/joint_navigation → arm_ctrl_node → arm/damiao_ctrl ──────┤
+                   └─ arm/pneu_navigation → arm_ctrl_node → arm/pneu_ctrl          │
+                                                              → arm_arduino_node    │
+                                                                  → Arduino Mega   │
+                                                                  ← /arm/ir_status  │
+                                                                damiao_ctrl/damiao_node
+                                                                  → USB-CAN → Motors 1-6
+```
+
+### 启动方式
+
+**方式 1：一键启动脚本（推荐）**
+```bash
+~/Robocon2026_r2/r2_bringup.sh
+```
+流程：选场地 [1]Blue / [2]Red → 按任意键 → 清理残留 → 启动全部 6 节点。Ctrl+C 全部停止。
+
+**方式 2：直接 ros2 launch**
+```bash
+ros2 launch r2_launch launch.py field:=blue    # Blue 场地
+ros2 launch r2_launch launch.py field:=red     # Red 场地
+ros2 launch r2_launch launch.py                # 默认 red_area.yaml
+```
+
+**方式 3：显式指定 YAML（覆盖场地选择）**
+```bash
+ros2 launch r2_launch launch.py mission_file:=/path/to/custom.yaml
+```
+
+### 场地参数说明
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `field` | `''` | `blue` → `routes/blue/full_fsm.yaml`，`red` → `routes/red/full_fsm.yaml` |
+| `mission_file` | `''` | 显式 YAML 路径，优先级高于 `field` |
+| `sensor_port` | `/dev/sensor_arduino` | Sensor Arduino 串口 |
+| `arm_arduino_port` | `/dev/arm_arduino` | Arm Arduino 串口 |
+
+### 开机自启配置（换新树莓派必做）
+
+`~/.profile` 末尾追加以下内容，实现本地控制台自动运行 bringup 脚本（SSH 连接不触发）：
+
+```bash
+# R2 开机自启动：仅在本地控制台触发，SSH 时跳过
+if [ -z "$SSH_TTY" ] && [ -t 0 ] && [ -f "$HOME/Robocon2026_r2/r2_bringup.sh" ]; then
+    exec "$HOME/Robocon2026_r2/r2_bringup.sh"
+fi
+```
+
+**原理：**
+- `$SSH_TTY` 为空 → 不是 SSH 远程连接
+- `[ -t 0 ]` → stdin 连着终端（确保是交互式控制台）
+- `exec` → 用脚本替换登录 shell，Ctrl+C 退出后回到登录界面
+
+**生效条件：** 树莓派需配置为自动登录桌面（`sudo raspi-config` → System → Boot → Desktop Autologin）。
+
+### 换新树莓派时需做的完整环境部署
+
+1. 克隆仓库到 `~/Robocon2026_r2`
+2. 安装 ROS2 Jazzy + colcon
+3. 安装 udev 规则（`99-robocon-r2.rules` + 手柄规则）
+4. 将用户加入 `input` 和 `dialout` 组
+5. `colcon build` 编译全部 package
+6. 编辑 `~/.profile`，追加上述自启动钩子
+7. `sudo raspi-config` 设置为 Desktop Autologin
+8. 重启验证
+
+### systemd 服务（备用，当前禁用）
+
+`/etc/systemd/system/r2_bringup.service` 已安装但**保持禁用**。systemd 运行在后台无终端，不适用于交互式菜单场景。仅在将来需要无显示器（headless）自动启动时启用：
+
+```bash
+sudo systemctl enable r2_bringup   # 启用（需先修改脚本支持非交互模式）
+sudo systemctl start r2_bringup    # 手动单次启动
+journalctl -u r2_bringup -f        # 查看日志
 ```
 
 ## v2 — 当前实际架构（2026-05-14 代码审查）
