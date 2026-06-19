@@ -354,8 +354,8 @@ stages:
     on_miss: advance
     micro_sweep:
       direction_rad: 0.0
-      back_distance_m: 0.01
-      forward_distance_m: 0.01
+      back_distance_m: 0.04
+      forward_distance_m: 0.02
       speed_mps: 0.015
       timeout_s: 2.5
       profile: head_rack_speed
@@ -505,8 +505,8 @@ stages:
     on_miss: advance
     micro_sweep:
       direction_rad: 0.0
-      back_distance_m: 0.01
-      forward_distance_m: 0.01
+      back_distance_m: 0.04
+      forward_distance_m: 0.02
       speed_mps: 0.015
       timeout_s: 2.5
       profile: head_rack_speed
@@ -655,8 +655,8 @@ stages:
     on_miss: advance
     micro_sweep:
       direction_rad: 0.0
-      back_distance_m: 0.01
-      forward_distance_m: 0.01
+      back_distance_m: 0.04
+      forward_distance_m: 0.02
       speed_mps: 0.015
       timeout_s: 2.5
       profile: head_rack_speed
@@ -805,8 +805,8 @@ stages:
     on_miss: advance
     micro_sweep:
       direction_rad: 0.0
-      back_distance_m: 0.01
-      forward_distance_m: 0.01
+      back_distance_m: 0.04
+      forward_distance_m: 0.02
       speed_mps: 0.015
       timeout_s: 2.5
       profile: head_rack_speed
@@ -955,8 +955,8 @@ stages:
     on_miss: terminate
     micro_sweep:
       direction_rad: 0.0
-      back_distance_m: 0.01
-      forward_distance_m: 0.01
+      back_distance_m: 0.04
+      forward_distance_m: 0.02
       speed_mps: 0.015
       timeout_s: 2.5
       profile: head_rack_speed

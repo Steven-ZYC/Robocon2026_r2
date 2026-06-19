@@ -4,9 +4,11 @@ angle_unit: deg
 
 # Blue field: full FSM for 5 weapon head rack points.
 # Robot starts near origin, arm at init pose.
-# Each cycle: origin → wp_middle → arm right → wp_point_N (torque early quit + timeout)
-# → weapon_head_pickup (micro_sweep_10mm) → docking at wp_docking → next point.
-# Miss path: offset 2.5cm body+Y → cross to next point X → approach next point.
+# Point 1: origin → wp_middle → arm right → wp_point_1 (torque early quit + timeout)
+# Points 2-5: arm right → wp_point_N_offset → wp_point_N (torque early quit + timeout)
+# All points: → weapon_head_pickup (micro_sweep_10mm) → docking at wp_docking → next point.
+# Success path:  release at wp_docking → arm right → next offset → next point.
+# Miss path:     offset retreat → cross to next point X → approach next point.
 
 waypoints:
   wp_origin:
@@ -22,6 +24,11 @@ waypoints:
   wp_docking:
     pose: { x: 0.36, y: -0.85, yaw: 0.0 }
     pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
+
+  wp_point_1_offset:
+    pose: { x: 0.36, y: -0.85, yaw: 0.0 }
+    pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
   wp_point_1:
@@ -161,10 +168,10 @@ templates:
     - type: wait
       duration_s: 1.0
 
-  # Full slot pickup: grip -> IR check -> docking -> torque-wait -> release.
-  # Vars: {prefix} (e.g. slot1), {roll_dock} (right_90deg), {release_wait_s}
-  # Jumps to {prefix}_retry_arm on IR miss -- that step is defined in the
-  # parent pickup_sequence, outside this template.
+  # Full slot pickup: grip -> lift.
+  # IR retry and docking release are handled in the pickup_sequence steps
+  # and docking_release template after weapon_head_pickup completes.
+  # Vars: {prefix} (e.g. slot1)
   slot_pickup:
     # -- grip + lift --
     - type: wait
@@ -183,17 +190,10 @@ templates:
       arm_stopper: low
     - type: wait
       duration_s: 1.0
-    # -- IR check 1 --
-    - id: "{prefix}_check_ir_1"
-      type: conditional
-      condition:
-        topic: /arm/ir_status
-        field: ir
-        op: gt
-        value: 0
-      then: "{prefix}_docking_start"
-      else: "{prefix}_retry_arm"
-    # === DOCKING PATH ===
+
+  # Docking release sequence: front -> roll -> stopper -> navigate -> torque -> release.
+  # Vars: {prefix} (e.g. slot1), {roll_dock} (right_90deg), {release_wait_s}
+  docking_release:
     - id: "{prefix}_docking_start"
       type: arm
       arm_yaw_motor: front
@@ -202,16 +202,28 @@ templates:
       arm_lift: low
       arm_stopper: low
     - type: wait
-      duration_s: 1.0
+      duration_s: 1.5
+
+    - id: "{prefix}_roll"
+      type: arm
+      arm_yaw_motor: front
+      arm_roll_motor: "{roll_dock}"
+      arm_gripper: close
+      arm_lift: low
+      arm_stopper: low
+    - type: wait
+      duration_s: 2.0
+
     - id: "{prefix}_stopper_up"
       type: arm
       arm_yaw_motor: front
-      arm_roll_motor: up
+      arm_roll_motor: "{roll_dock}"
       arm_gripper: close
       arm_lift: low
       arm_stopper: high
     - type: wait
       duration_s: 1.0
+
     - id: "{prefix}_docking_nav"
       type: action
       arm:
@@ -223,6 +235,7 @@ templates:
       chassis:
         to: wp_docking
         profile: head_rack_speed
+
     - id: "{prefix}_check_torque"
       type: conditional
       condition:
@@ -240,18 +253,16 @@ templates:
       arm_lift: low
       arm_stopper: low
     - type: wait
-      duration_s: "{release_wait_s}"
+      duration_s: 1.0
+
     - type: arm
-      arm_yaw_motor: front
+      arm_yaw_motor: right
       arm_roll_motor: up
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
-    - type: verify_ir
-      label: "{prefix}_after_release_sensor_clear"
-      expected: false
-      on_true: advance
-      on_false: advance
+    - type: wait
+      duration_s: 1.0
 
 
 stages:
@@ -272,20 +283,8 @@ stages:
       arm_stopper: low
 
   # ================================================================
-  # Slot 1 — wp_point_1 (0.36, -0.875)
+  # Slot 1 — wp_point_1 (0.36, -0.875)  from origin via middle
   # ================================================================
-  - id: slot1_to_origin
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-    chassis:
-      to: wp_origin
-      profile: red_area
-
   - id: slot1_to_middle
     type: action
     chassis:
@@ -350,8 +349,8 @@ stages:
     on_miss: advance
     micro_sweep:
       direction_rad: 0.0
-      back_distance_m: 0.01
-      forward_distance_m: 0.01
+      back_distance_m: 0.04
+      forward_distance_m: 0.02
       speed_mps: 0.015
       timeout_s: 2.0
       profile: head_rack_speed
@@ -362,10 +361,16 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot1
-          roll_dock: right_90deg
-          release_wait_s: 0.8
-      # retry
-      - id: slot1_retry_arm
+      - id: "slot1_check_ir_1"
+        type: conditional
+        condition:
+          topic: /arm/ir_status
+          field: ir
+          op: gt
+          value: 0
+        then: "slot1_docking_start"
+        else: "slot1_retry_arm"
+      - id: "slot1_retry_arm"
         type: arm
         arm_yaw_motor: right
         arm_roll_motor: up
@@ -374,21 +379,31 @@ stages:
         arm_stopper: low
       - type: pipeline
         template: retry_grip
-      - id: slot1_check_ir_2
+      - id: "slot1_check_ir_2"
         type: conditional
         condition:
           topic: /arm/ir_status
           field: ir
           op: gt
           value: 0
-        then: slot1_docking_start
-        else: slot1_exit_miss
-      - id: slot1_exit_miss
+        then: "slot1_docking_start"
+        else: "slot1_exit_miss"
+      - id: "slot1_exit_miss"
         type: verify_ir
         expected: true
-        on_false: advance
+        on_false: "slot1_miss_offset"
+      - type: pipeline
+        template: docking_release
+        vars:
+          prefix: slot1
+          roll_dock: right_90deg
+          release_wait_s: 1.0
+      - id: "slot1_ir_confirmed"
+        type: verify_ir
+        expected: true
+        on_true: "slot2_arm_right"
 
-  # miss recovery: offset 2.5cm body+Y → cross to point 2 X → approach point 2
+  # point 1: direct to wp_docking (no intermediate back point)
   - id: slot1_miss_offset
     type: action
     chassis:
@@ -421,37 +436,11 @@ stages:
         max_age_s: 0.5
         min_elapsed_s: 0.20
 
-  # success: prepare for slot 2
-  - id: slot1_success
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
+  # success: ir_confirmed jumps to slot2_arm_right
 
   # ================================================================
   # Slot 2 — wp_point_2 (0.56, -0.875)
   # ================================================================
-  - id: slot2_to_origin
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-    chassis:
-      to: wp_origin
-      profile: red_area
-
-  - id: slot2_to_middle
-    type: action
-    chassis:
-      to: wp_middle
-      profile: red_area
-
   - id: slot2_arm_right
     type: action
     arm:
@@ -460,6 +449,12 @@ stages:
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
+
+  - id: slot2_to_offset
+    type: action
+    chassis:
+      to: wp_point_2_offset
+      profile: red_area
 
   - id: slot2_wait_pre
     type: wait
@@ -510,8 +505,8 @@ stages:
     on_miss: advance
     micro_sweep:
       direction_rad: 0.0
-      back_distance_m: 0.01
-      forward_distance_m: 0.01
+      back_distance_m: 0.04
+      forward_distance_m: 0.02
       speed_mps: 0.015
       timeout_s: 2.0
       profile: head_rack_speed
@@ -522,10 +517,16 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot2
-          roll_dock: right_90deg
-          release_wait_s: 0.8
-      # retry
-      - id: slot2_retry_arm
+      - id: "slot2_check_ir_1"
+        type: conditional
+        condition:
+          topic: /arm/ir_status
+          field: ir
+          op: gt
+          value: 0
+        then: "slot2_docking_start"
+        else: "slot2_retry_arm"
+      - id: "slot2_retry_arm"
         type: arm
         arm_yaw_motor: right
         arm_roll_motor: up
@@ -534,19 +535,29 @@ stages:
         arm_stopper: low
       - type: pipeline
         template: retry_grip
-      - id: slot2_check_ir_2
+      - id: "slot2_check_ir_2"
         type: conditional
         condition:
           topic: /arm/ir_status
           field: ir
           op: gt
           value: 0
-        then: slot2_docking_start
-        else: slot2_exit_miss
-      - id: slot2_exit_miss
+        then: "slot2_docking_start"
+        else: "slot2_exit_miss"
+      - id: "slot2_exit_miss"
         type: verify_ir
         expected: true
-        on_false: advance
+        on_false: "slot2_miss_offset"
+      - type: pipeline
+        template: docking_release
+        vars:
+          prefix: slot2
+          roll_dock: right_90deg
+          release_wait_s: 0.8
+      - id: "slot2_ir_confirmed"
+        type: verify_ir
+        expected: true
+        on_true: "slot3_arm_right"
 
   - id: slot2_miss_offset
     type: action
@@ -580,36 +591,11 @@ stages:
         max_age_s: 0.5
         min_elapsed_s: 0.20
 
-  - id: slot2_success
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
+  # success: ir_confirmed jumps to slot3_arm_right
 
   # ================================================================
   # Slot 3 — wp_point_3 (0.76, -0.875)
   # ================================================================
-  - id: slot3_to_origin
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-    chassis:
-      to: wp_origin
-      profile: red_area
-
-  - id: slot3_to_middle
-    type: action
-    chassis:
-      to: wp_middle
-      profile: red_area
-
   - id: slot3_arm_right
     type: action
     arm:
@@ -618,6 +604,12 @@ stages:
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
+
+  - id: slot3_to_offset
+    type: action
+    chassis:
+      to: wp_point_3_offset
+      profile: red_area
 
   - id: slot3_wait_pre
     type: wait
@@ -668,8 +660,8 @@ stages:
     on_miss: advance
     micro_sweep:
       direction_rad: 0.0
-      back_distance_m: 0.01
-      forward_distance_m: 0.01
+      back_distance_m: 0.04
+      forward_distance_m: 0.02
       speed_mps: 0.015
       timeout_s: 2.0
       profile: head_rack_speed
@@ -680,10 +672,16 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot3
-          roll_dock: right_90deg
-          release_wait_s: 0.8
-      # retry
-      - id: slot3_retry_arm
+      - id: "slot3_check_ir_1"
+        type: conditional
+        condition:
+          topic: /arm/ir_status
+          field: ir
+          op: gt
+          value: 0
+        then: "slot3_docking_start"
+        else: "slot3_retry_arm"
+      - id: "slot3_retry_arm"
         type: arm
         arm_yaw_motor: right
         arm_roll_motor: up
@@ -692,19 +690,29 @@ stages:
         arm_stopper: low
       - type: pipeline
         template: retry_grip
-      - id: slot3_check_ir_2
+      - id: "slot3_check_ir_2"
         type: conditional
         condition:
           topic: /arm/ir_status
           field: ir
           op: gt
           value: 0
-        then: slot3_docking_start
-        else: slot3_exit_miss
-      - id: slot3_exit_miss
+        then: "slot3_docking_start"
+        else: "slot3_exit_miss"
+      - id: "slot3_exit_miss"
         type: verify_ir
         expected: true
-        on_false: advance
+        on_false: "slot3_miss_offset"
+      - type: pipeline
+        template: docking_release
+        vars:
+          prefix: slot3
+          roll_dock: right_90deg
+          release_wait_s: 0.8
+      - id: "slot3_ir_confirmed"
+        type: verify_ir
+        expected: true
+        on_true: "slot4_arm_right"
 
   - id: slot3_miss_offset
     type: action
@@ -738,36 +746,11 @@ stages:
         max_age_s: 0.5
         min_elapsed_s: 0.20
 
-  - id: slot3_success
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
+  # success: ir_confirmed jumps to slot4_arm_right
 
   # ================================================================
   # Slot 4 — wp_point_4 (0.96, -0.875)
   # ================================================================
-  - id: slot4_to_origin
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-    chassis:
-      to: wp_origin
-      profile: red_area
-
-  - id: slot4_to_middle
-    type: action
-    chassis:
-      to: wp_middle
-      profile: red_area
-
   - id: slot4_arm_right
     type: action
     arm:
@@ -776,6 +759,12 @@ stages:
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
+
+  - id: slot4_to_offset
+    type: action
+    chassis:
+      to: wp_point_4_offset
+      profile: red_area
 
   - id: slot4_wait_pre
     type: wait
@@ -826,8 +815,8 @@ stages:
     on_miss: advance
     micro_sweep:
       direction_rad: 0.0
-      back_distance_m: 0.01
-      forward_distance_m: 0.01
+      back_distance_m: 0.04
+      forward_distance_m: 0.02
       speed_mps: 0.015
       timeout_s: 2.0
       profile: head_rack_speed
@@ -838,10 +827,16 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot4
-          roll_dock: right_90deg
-          release_wait_s: 0.8
-      # retry
-      - id: slot4_retry_arm
+      - id: "slot4_check_ir_1"
+        type: conditional
+        condition:
+          topic: /arm/ir_status
+          field: ir
+          op: gt
+          value: 0
+        then: "slot4_docking_start"
+        else: "slot4_retry_arm"
+      - id: "slot4_retry_arm"
         type: arm
         arm_yaw_motor: right
         arm_roll_motor: up
@@ -850,19 +845,29 @@ stages:
         arm_stopper: low
       - type: pipeline
         template: retry_grip
-      - id: slot4_check_ir_2
+      - id: "slot4_check_ir_2"
         type: conditional
         condition:
           topic: /arm/ir_status
           field: ir
           op: gt
           value: 0
-        then: slot4_docking_start
-        else: slot4_exit_miss
-      - id: slot4_exit_miss
+        then: "slot4_docking_start"
+        else: "slot4_exit_miss"
+      - id: "slot4_exit_miss"
         type: verify_ir
         expected: true
-        on_false: advance
+        on_false: "slot4_miss_offset"
+      - type: pipeline
+        template: docking_release
+        vars:
+          prefix: slot4
+          roll_dock: right_90deg
+          release_wait_s: 0.8
+      - id: "slot4_ir_confirmed"
+        type: verify_ir
+        expected: true
+        on_true: "slot5_arm_right"
 
   - id: slot4_miss_offset
     type: action
@@ -896,36 +901,11 @@ stages:
         max_age_s: 0.5
         min_elapsed_s: 0.20
 
-  - id: slot4_success
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
+  # success: ir_confirmed jumps to slot5_arm_right
 
   # ================================================================
   # Slot 5 — wp_point_5 (1.16, -0.875)  last slot
   # ================================================================
-  - id: slot5_to_origin
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
-    chassis:
-      to: wp_origin
-      profile: red_area
-
-  - id: slot5_to_middle
-    type: action
-    chassis:
-      to: wp_middle
-      profile: red_area
-
   - id: slot5_arm_right
     type: action
     arm:
@@ -934,6 +914,12 @@ stages:
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
+
+  - id: slot5_to_offset
+    type: action
+    chassis:
+      to: wp_point_5_offset
+      profile: red_area
 
   - id: slot5_wait_pre
     type: wait
@@ -984,8 +970,8 @@ stages:
     on_miss: terminate
     micro_sweep:
       direction_rad: 0.0
-      back_distance_m: 0.01
-      forward_distance_m: 0.01
+      back_distance_m: 0.04
+      forward_distance_m: 0.02
       speed_mps: 0.015
       timeout_s: 2.0
       profile: head_rack_speed
@@ -996,10 +982,16 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot5
-          roll_dock: right_90deg
-          release_wait_s: 0.8
-      # retry
-      - id: slot5_retry_arm
+      - id: "slot5_check_ir_1"
+        type: conditional
+        condition:
+          topic: /arm/ir_status
+          field: ir
+          op: gt
+          value: 0
+        then: "slot5_docking_start"
+        else: "slot5_retry_arm"
+      - id: "slot5_retry_arm"
         type: arm
         arm_yaw_motor: right
         arm_roll_motor: up
@@ -1008,28 +1000,29 @@ stages:
         arm_stopper: low
       - type: pipeline
         template: retry_grip
-      - id: slot5_check_ir_2
+      - id: "slot5_check_ir_2"
         type: conditional
         condition:
           topic: /arm/ir_status
           field: ir
           op: gt
           value: 0
-        then: slot5_docking_start
-        else: slot5_exit_miss
-      - id: slot5_exit_miss
+        then: "slot5_docking_start"
+        else: "slot5_exit_miss"
+      - id: "slot5_exit_miss"
         type: verify_ir
         expected: true
-        on_false: terminate
-
-  - id: slot5_success
-    type: action
-    arm:
-      arm_yaw_motor: front
-      arm_roll_motor: up
-      arm_gripper: open
-      arm_lift: low
-      arm_stopper: low
+        on_false: "terminate"
+      - type: pipeline
+        template: docking_release
+        vars:
+          prefix: slot5
+          roll_dock: right_90deg
+          release_wait_s: 0.8
+      - id: "slot5_ir_confirmed"
+        type: verify_ir
+        expected: true
+        on_true: "slot5_done"
 
   - id: slot5_done
     type: terminate

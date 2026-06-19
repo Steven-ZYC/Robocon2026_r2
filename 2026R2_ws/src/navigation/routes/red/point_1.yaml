@@ -44,9 +44,9 @@ profiles:
     curve: cubic_ease
 
   head_rack_speed:
-    # Slow rack approach profile, based on 1/2 Red Area speed limits.
-    speed_mps: 0.2
-    yaw_rate_rps: 0.15
+    # Slow rack approach profile, based on 1/4 Red Area speed limits.
+    speed_mps: 0.1
+    yaw_rate_rps: 0.075
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
@@ -58,8 +58,8 @@ profiles:
     k_d_y: 0.25
     k_heading_p: 0.06
     k_heading_d: 0.0
-    max_body_x_mps: 0.55
-    max_body_y_mps: 0.5
+    max_body_x_mps: 0.25
+    max_body_y_mps: 0.25
 
 actuators:
   arm_yaw_motor:
@@ -133,7 +133,7 @@ stages:
     timeout_s: 2.5
     torque_arrival:
       topic: /damiao_feedback
-      field: motor_1_tau
+      field: chassis_motor_tau
       op: abs_gte
       abs_threshold_nm: 4.0
       max_age_s: 0.5
@@ -328,7 +328,7 @@ stages:
     timeout_s: 2.0
     torque_arrival:
       topic: /damiao_feedback
-      field: motor_1_tau
+      field: chassis_motor_tau
       op: abs_gte
       abs_threshold_nm: 3.0
       max_age_s: 0.5
