@@ -1,5 +1,7 @@
 # Navigation TODO
 
+- [x] Red full FSM Slot 1–5 在 slot_pickup 与 offset 退回 action 之间等待 1.0s（v0.37，2026-06-20）
+- [x] Red full FSM 从 slot_pickup 移除未传参 back_point，Slot 1–5 调用后分别显式导航至对应 wp_point_N_offset（v0.36，2026-06-20）
 - [x] Blue full FSM 抓取后保持 arm high 退到 point N back，再降 arm、等待 1 秒、回 front、转 M6、升 stopper 后 docking（v0.35，2026-06-20）
 - [x] Blue full FSM Slot 1–5 微扫统一为前后各 10mm、0.02m/s、2.0s（v0.34，2026-06-20）
 - [x] Blue full FSM 微扫严格同步 new blue 两点测试：Slot 1 使用前后各 10mm、0.02m/s、2.0s，Slot 2–5 使用前后各 10mm、0.015m/s、5.0s（2026-06-20）

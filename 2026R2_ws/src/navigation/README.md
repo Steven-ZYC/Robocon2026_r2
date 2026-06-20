@@ -406,6 +406,8 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-20 | v0.37 — Red full FSM 的 Slot 1–5 在 slot_pickup 完成后等待 1.0s，再退到对应 wp_point_N_offset |
+| 2026-06-20 | v0.36 — Red full FSM 从通用 slot_pickup 模板移除未传参的 back_point 导航；Slot 1–5 在各自 pickup sequence 中显式退到对应 wp_point_N_offset，避免未展开 waypoint 导致流程中断 |
 | 2026-06-20 | v0.35 — Blue full FSM 抓取并升起等待 1 秒后，保持 arm high 退到对应 `wp_point_N_offset`，再降 arm、等待 1 秒、回 front、转 M6、等待后升 stopper，再前往 docking |
 | 2026-06-20 | v0.34 — Blue full FSM 的 Slot 1–5 统一采用 new blue Point 1 微扫参数：前后各 10mm、0.02m/s、2.0s |
 | 2026-06-20 | v0.33 — Blue full FSM 的微扫参数严格同步 `new_blue_point_1_point_2_test.sh`：Slot 1 使用前后各 10mm、0.02m/s、2.0s；Slot 2–5 使用前后各 10mm、0.015m/s、5.0s |

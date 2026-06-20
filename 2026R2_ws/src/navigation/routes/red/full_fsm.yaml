@@ -28,7 +28,7 @@ waypoints:
     yaw_tolerance_deg: 1.0
 
   wp_docking:
-    pose: { x: 0.36, y: 0.85, yaw: 0.0 }
+    pose: { x: 0.36, y: 0.75, yaw: 0.0 }
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
 
@@ -38,7 +38,7 @@ waypoints:
     yaw_tolerance_deg: 1.0
 
   wp_point_1_offset:
-    pose: { x: 0.36, y: 0.85, yaw: 0.0 }
+    pose: { x: 0.36, y: 0.75, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
@@ -63,22 +63,22 @@ waypoints:
     yaw_tolerance_deg: 1.0
 
   wp_point_2_offset:
-    pose: { x: 0.56, y: 0.85, yaw: 0.0 }
+    pose: { x: 0.56, y: 0.75, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
   wp_point_3_offset:
-    pose: { x: 0.76, y: 0.85, yaw: 0.0 }
+    pose: { x: 0.76, y: 0.75, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
   wp_point_4_offset:
-    pose: { x: 0.96, y: 0.85, yaw: 0.0 }
+    pose: { x: 0.96, y: 0.75, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
   wp_point_5_offset:
-    pose: { x: 1.16, y: 0.85, yaw: 0.0 }
+    pose: { x: 1.16, y: 0.75, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
@@ -89,7 +89,7 @@ profiles:
     start_radius_m: 0.0
     end_radius_m: 0.0
     min_speed_scale: 0.0
-    k_p_x: 0.061
+    k_p_x: 0.081
     k_p_y: 0.115
     k_i_y: 0.0
     k_i_x: 0.0
@@ -286,6 +286,15 @@ templates:
       duration_s: 1.0
 
     - type: arm
+      arm_yaw_motor: front
+      arm_roll_motor: up
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
+    - type: wait
+      duration_s: 1.0
+
+    - type: arm
       arm_yaw_motor: left
       arm_roll_motor: up
       arm_gripper: open
@@ -390,6 +399,14 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot1
+      - type: wait
+        duration_s: 1.0
+
+      - type: action
+        chassis:
+          to: wp_point_1_offset
+          profile: head_rack_speed
+
       - id: "slot1_check_ir_1"
         type: conditional
         condition:
@@ -399,6 +416,7 @@ stages:
           value: 0
         then: "slot1_docking_start"
         else: "slot1_retry_arm"
+
       - id: "slot1_retry_arm"
         type: arm
         arm_yaw_motor: left
@@ -542,6 +560,12 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot2
+      - type: wait
+        duration_s: 1.0
+      - type: action
+        chassis:
+          to: wp_point_2_offset
+          profile: head_rack_speed
       - id: "slot2_check_ir_1"
         type: conditional
         condition:
@@ -693,6 +717,12 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot3
+      - type: wait
+        duration_s: 1.0
+      - type: action
+        chassis:
+          to: wp_point_3_offset
+          profile: head_rack_speed
       - id: "slot3_check_ir_1"
         type: conditional
         condition:
@@ -844,6 +874,12 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot4
+      - type: wait
+        duration_s: 1.0
+      - type: action
+        chassis:
+          to: wp_point_4_offset
+          profile: head_rack_speed
       - id: "slot4_check_ir_1"
         type: conditional
         condition:
@@ -997,6 +1033,12 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot5
+      - type: wait
+        duration_s: 1.0
+      - type: action
+        chassis:
+          to: wp_point_5_offset
+          profile: head_rack_speed
       - id: "slot5_check_ir_1"
         type: conditional
         condition:

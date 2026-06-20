@@ -22,12 +22,12 @@ waypoints:
     yaw_tolerance_deg: 1.0
 
   wp_docking:
-    pose: { x: 0.36, y: -0.85, yaw: 0.0 }
+    pose: { x: 0.36, y: -0.875, yaw: 0.0 }
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
 
   wp_point_1_offset:
-    pose: { x: 0.36, y: -0.85, yaw: 0.0 }
+    pose: { x: 0.36, y: -0.75, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
@@ -57,22 +57,22 @@ waypoints:
     yaw_tolerance_deg: 1.0
 
   wp_point_2_offset:
-    pose: { x: 0.56, y: -0.85, yaw: 0.0 }
+    pose: { x: 0.56, y: -0.75, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
   wp_point_3_offset:
-    pose: { x: 0.76, y: -0.85, yaw: 0.0 }
+    pose: { x: 0.76, y: -0.75, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
   wp_point_4_offset:
-    pose: { x: 0.96, y: -0.85, yaw: 0.0 }
+    pose: { x: 0.96, y: -0.75, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
   wp_point_5_offset:
-    pose: { x: 1.16, y: -0.85, yaw: 0.0 }
+    pose: { x: 1.16, y: -0.75, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
@@ -191,6 +191,11 @@ templates:
     - type: wait
       duration_s: 1.0
 
+    - type: action
+      chassis:
+        to: "{back_point}"
+        profile: head_rack_speed
+
   # Docking release sequence: retreat high -> lower -> front -> roll -> stopper
   # -> navigate docking -> torque -> release.
   # Vars: {prefix} (e.g. slot1), {back_point}, {roll_dock} (right_90deg),
@@ -273,6 +278,15 @@ templates:
       type: arm
       arm_yaw_motor: front
       arm_roll_motor: "{roll_dock}"
+      arm_gripper: open
+      arm_lift: low
+      arm_stopper: low
+    - type: wait
+      duration_s: 1.0
+
+    - type: arm
+      arm_yaw_motor: front
+      arm_roll_motor: up
       arm_gripper: open
       arm_lift: low
       arm_stopper: low
@@ -394,6 +408,7 @@ stages:
           value: 0
         then: "slot1_docking_start"
         else: "slot1_retry_arm"
+
       - id: "slot1_retry_arm"
         type: arm
         arm_yaw_motor: right
@@ -403,6 +418,7 @@ stages:
         arm_stopper: low
       - type: pipeline
         template: retry_grip
+
       - id: "slot1_check_ir_2"
         type: conditional
         condition:
@@ -412,10 +428,12 @@ stages:
           value: 0
         then: "slot1_docking_start"
         else: "slot1_exit_miss"
+
       - id: "slot1_exit_miss"
         type: verify_ir
         expected: true
         on_false: "slot1_miss_offset"
+
       - type: pipeline
         template: docking_release
         vars:
@@ -423,6 +441,7 @@ stages:
           back_point: wp_point_1_offset
           roll_dock: right_90deg
           release_wait_s: 1.0
+
       - id: "slot1_ir_confirmed"
         type: verify_ir
         expected: true
