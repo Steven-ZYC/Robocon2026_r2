@@ -406,6 +406,9 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-21 | v0.44 — `b2–b5/r2–r5` 改为 full FSM 后缀任务：跳过所选 point 之前的 slot，从 Point N 连续执行到 Point 5；`b1/r1` 保持单点测试 |
+| 2026-06-21 | v0.43 — Red `routes/red/` Point 2–5 micro-sweep 改为与 Point 1 完全相同：body +X、后退 30mm、前扫 10mm、0.02m/s、2.0s |
+| 2026-06-21 | v0.42 — Red `routes/red/` 全部 micro-sweep 同步 2026-06-14 两点任务参数：Point 1 后退 30mm/前扫 10mm、0.02m/s、2.0s；Point 2–5 前后各 10mm、0.015m/s、5.0s |
 | 2026-06-20 | v0.41 — Blue full FSM 同步 IR 后退 offset、docking 前经 middle、docking 后经 middle 前往下一 point；保持 Blue PID、wait 和 micro-sweep 参数不变 |
 | 2026-06-20 | v0.40 — Red full FSM 的 Slot 1–4 在 docking 释放完成后先退回 wp_docking_middle，再前往下一个 point offset |
 | 2026-06-20 | v0.39 — Red full FSM 将原 wp_docking (0.36, 0.75) 改为 wp_docking_middle，新 wp_docking 与 wp_point_1 同坐标 (0.36, 0.875)；Slot 2–5 先经 docking middle 再进入 docking |
@@ -2180,3 +2183,32 @@ python3 src/navigation/scripts/generate_single_point_routes.py
 | `r1` … `r5` | `red_point1.sh` … `red_point5.sh` | `routes/red/single_point_1.yaml` … `single_point_5.yaml` |
 
 单点任务沿用现有保护：IR 数据缺失超过 `ir_timeout_s=2.0s` 时停止搜索并进入 miss cleanup；rack 接近超过该 point 的 `timeout_s` 时停止接近并推进；motor 5 torque 条件只接受默认 `0.25s` 内的新鲜反馈；最终 `terminate` 发布底盘零速、停止 arm motor 并恢复气动安全状态。 注意：现有 full FSM 的 motor 5 torque conditional 本身没有总等待超时；反馈缺失、过期或始终未过阈值时会保持夹爪 close 并停在当前检测 step。单点任务为保持测试逻辑一致暂时继承该行为，进入 main 前应补充 torque wait timeout 与安全回退。
+
+---
+
+## v0.44 — Point 2–5 后缀任务（2026-06-21）
+
+> 本节是对 v0.33 独立夹取任务的后续演进。v0.33 的单点说明保留作历史记录；当前仅 `b1/r1` 维持单点终止语义。
+
+`b2–b5/r2–r5` 从正常比赛起点执行初始化和 `wp_middle`，跳过所选 Point 之前的 rack slot，然后完整复用 full FSM 从 Point N 到 Point 5 的所有成功、miss、docking 和收尾分支：
+
+| Alias | 当前执行范围 |
+|---|---|
+| `b2/r2` | Point 2 → 3 → 4 → 5 |
+| `b3/r3` | Point 3 → 4 → 5 |
+| `b4/r4` | Point 4 → 5 |
+| `b5/r5` | Point 5 |
+
+例如 `r3`：
+
+```text
+origin
+→ wp_middle
+→ wp_point_3_offset
+→ Point 3 pickup/docking/miss flow
+→ Point 4
+→ Point 5
+→ full FSM terminate
+```
+
+生成器不会对后缀任务调用 standalone 的 pickup retarget；因此 Point N 的成功分支仍进入 `slotN_leave_docking_middle`，miss 分支仍进入 `slotN_miss_offset`，随后自然衔接下一个 slot。

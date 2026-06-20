@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generate standalone Point 1..5 pickup missions from both full FSM files.
+"""Generate Point 1 standalone and Point 2..5 suffix missions.
 
-The generated missions intentionally reuse the full-FSM waypoints, profiles,
-actuators, templates, pickup timing, IR retry logic, micro-sweep settings and
-torque thresholds.  Each mission starts at the normal origin, travels through
-the normal middle and selected point offset, performs one complete pickup and
-docking attempt, then terminates without falling through to another slot.
+All generated missions reuse the full-FSM waypoints, profiles, actuators,
+templates, pickup timing, IR retry logic, micro-sweep settings and torque
+thresholds. Point 1 remains a standalone hardware test. Point 2..5 missions
+skip earlier rack points and then preserve the original full-FSM flow through
+Point 5.
 """
 
 from __future__ import annotations
@@ -28,6 +28,14 @@ def _stage_by_id(stages: list[dict[str, Any]], stage_id: str) -> dict[str, Any]:
     for stage in stages:
         if stage.get("id") == stage_id:
             return copy.deepcopy(stage)
+    raise KeyError(f"required stage not found: {stage_id}")
+
+
+def _stage_index(stages: list[dict[str, Any]], stage_id: str) -> int:
+    """Return the index of one required full-FSM stage."""
+    for index, stage in enumerate(stages):
+        if stage.get("id") == stage_id:
+            return index
     raise KeyError(f"required stage not found: {stage_id}")
 
 
@@ -162,6 +170,40 @@ def build_single_point(full: dict[str, Any], color: str, point: int) -> dict[str
     }
 
 
+def build_suffix_mission(full: dict[str, Any], color: str, point: int) -> dict[str, Any]:
+    """Build a mission that skips Point 1..point-1 and runs through Point 5."""
+    if point < 2 or point > 5:
+        raise ValueError(f"suffix mission point must be 2..5, got {point}")
+
+    stages = full["stages"]
+    side_stage_id = f"slot{point}_arm_{'right' if color == 'blue' else 'left'}"
+    suffix_start = _stage_index(stages, f"slot{point}_to_offset")
+
+    # Keep the normal competition initialization and middle approach, then
+    # enter the selected slot and preserve every original stage/jump to Slot 5.
+    suffix_stages = [
+        _stage_by_id(stages, "init_wait"),
+        _stage_by_id(stages, "arm_start_pose"),
+        {
+            **_stage_by_id(stages, "slot1_to_middle"),
+            "id": f"slot{point}_suffix_to_middle",
+        },
+        _stage_by_id(stages, side_stage_id),
+        *copy.deepcopy(stages[suffix_start:]),
+    ]
+
+    return {
+        "version": full["version"],
+        "frame_id": full["frame_id"],
+        "angle_unit": full.get("angle_unit", "deg"),
+        "waypoints": copy.deepcopy(full["waypoints"]),
+        "profiles": copy.deepcopy(full["profiles"]),
+        "actuators": copy.deepcopy(full["actuators"]),
+        "templates": copy.deepcopy(full["templates"]),
+        "stages": suffix_stages,
+    }
+
+
 def main() -> None:
     """Regenerate all ten standalone route files deterministically."""
     for color in COLORS:
@@ -171,12 +213,22 @@ def main() -> None:
 
         for point in POINTS:
             output = ROUTES_DIR / color / f"single_point_{point}.yaml"
-            mission = build_single_point(full, color, point)
+            if point == 1:
+                mission = build_single_point(full, color, point)
+                description = (
+                    f"Standalone {color} Point 1: origin -> middle -> offset "
+                    "-> pickup -> docking -> terminate."
+                )
+            else:
+                mission = build_suffix_mission(full, color, point)
+                description = (
+                    f"{color} Point {point} suffix: skip Point 1..{point - 1}, "
+                    f"then run Point {point}..5."
+                )
             header = (
                 f"# Generated from routes/{color}/full_fsm.yaml by "
                 "scripts/generate_single_point_routes.py.\n"
-                f"# Standalone {color} Point {point}: origin -> middle -> offset "
-                "-> pickup -> docking -> terminate.\n"
+                f"# {description}\n"
             )
             with output.open("w", encoding="utf-8") as stream:
                 stream.write(header)

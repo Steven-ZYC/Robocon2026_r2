@@ -1,5 +1,5 @@
 # Generated from routes/red/full_fsm.yaml by scripts/generate_single_point_routes.py.
-# Standalone red Point 2: origin -> middle -> offset -> pickup -> docking -> terminate.
+# red Point 2 suffix: skip Point 1..1, then run Point 2..5.
 version: 1
 frame_id: map
 angle_unit: deg
@@ -32,9 +32,16 @@ waypoints:
       yaw: 0.0
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
-  wp_point_2_offset:
+  wp_point_1:
     pose:
-      x: 0.56
+      x: 0.36
+      y: 0.875
+      yaw: 0.0
+    pos_tolerance: 0.01
+    yaw_tolerance_deg: 1.0
+  wp_point_1_offset:
+    pose:
+      x: 0.36
       y: 0.65
       yaw: 0.0
     pos_tolerance: 0.01
@@ -43,6 +50,55 @@ waypoints:
     pose:
       x: 0.56
       y: 0.875
+      yaw: 0.0
+    pos_tolerance: 0.01
+    yaw_tolerance_deg: 1.0
+  wp_point_3:
+    pose:
+      x: 0.76
+      y: 0.875
+      yaw: 0.0
+    pos_tolerance: 0.01
+    yaw_tolerance_deg: 1.0
+  wp_point_4:
+    pose:
+      x: 0.96
+      y: 0.875
+      yaw: 0.0
+    pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
+  wp_point_5:
+    pose:
+      x: 1.16
+      y: 0.875
+      yaw: 0.0
+    pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
+  wp_point_2_offset:
+    pose:
+      x: 0.56
+      y: 0.65
+      yaw: 0.0
+    pos_tolerance: 0.01
+    yaw_tolerance_deg: 1.0
+  wp_point_3_offset:
+    pose:
+      x: 0.76
+      y: 0.65
+      yaw: 0.0
+    pos_tolerance: 0.01
+    yaw_tolerance_deg: 1.0
+  wp_point_4_offset:
+    pose:
+      x: 0.96
+      y: 0.65
+      yaw: 0.0
+    pos_tolerance: 0.01
+    yaw_tolerance_deg: 1.0
+  wp_point_5_offset:
+    pose:
+      x: 1.16
+      y: 0.65
       yaw: 0.0
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
@@ -263,7 +319,7 @@ stages:
     arm_gripper: open
     arm_lift: low
     arm_stopper: low
-- id: slot2_single_to_middle
+- id: slot2_suffix_to_middle
   type: action
   chassis:
     to: wp_middle
@@ -276,7 +332,7 @@ stages:
     arm_gripper: open
     arm_lift: low
     arm_stopper: low
-- id: slot2_single_to_offset
+- id: slot2_to_offset
   type: action
   chassis:
     to: wp_point_2_offset
@@ -327,10 +383,10 @@ stages:
   on_miss: advance
   micro_sweep:
     direction_rad: 0.0
-    back_distance_m: 0.04
-    forward_distance_m: 0.02
-    speed_mps: 0.015
-    timeout_s: 2.5
+    back_distance_m: 0.03
+    forward_distance_m: 0.01
+    speed_mps: 0.02
+    timeout_s: 2.0
     profile: head_rack_speed
     pos_tolerance: 0.003
     yaw_tolerance: 0.05
@@ -369,7 +425,7 @@ stages:
   - id: slot2_exit_miss
     type: verify_ir
     expected: true
-    on_false: slot2_single_miss_retreat
+    on_false: slot2_miss_offset
   - type: pipeline
     template: docking_release
     vars:
@@ -381,8 +437,18 @@ stages:
   - id: slot2_ir_confirmed
     type: verify_ir
     expected: true
-    on_true: slot2_single_success_finish
-- id: slot2_single_miss_retreat
+    on_true: slot2_leave_docking_middle
+- id: slot2_miss_offset
+  type: action
+  chassis:
+    to: wp_point_2_offset
+    profile: head_rack_speed
+- id: slot2_miss_cross
+  type: action
+  chassis:
+    to: wp_point_3_offset
+    profile: head_rack_speed
+- id: slot2_miss_next
   type: action
   arm:
     arm_yaw_motor: left
@@ -391,9 +457,432 @@ stages:
     arm_lift: low
     arm_stopper: low
   chassis:
-    to: wp_point_2_offset
+    to: wp_point_3
+    profile: red_area
+    timeout_s: 3.5
+    torque_arrival:
+      topic: /damiao_feedback
+      field: chassis_motor_tau
+      op: abs_gte
+      abs_threshold_nm: 4.0
+      max_age_s: 0.5
+      min_elapsed_s: 0.2
+- id: slot2_leave_docking_middle
+  type: action
+  chassis:
+    to: wp_docking_middle
     profile: head_rack_speed
-- id: slot2_single_miss_finish
+- id: slot3_arm_left
+  type: action
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+- id: slot3_to_offset
+  type: action
+  chassis:
+    to: wp_point_3_offset
+    profile: red_area
+- id: slot3_wait_pre
+  type: wait
+  duration_s: 1.0
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+- id: slot3_to_point
+  type: action
+  chassis:
+    to: wp_point_3
+    profile: red_area
+    timeout_s: 3.5
+    torque_arrival:
+      topic: /damiao_feedback
+      field: chassis_motor_tau
+      op: abs_gte
+      abs_threshold_nm: 4.0
+      max_age_s: 0.5
+      min_elapsed_s: 0.2
+- id: slot3_settle
+  type: wait
+  duration_s: 1.0
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+- id: slot3_pickup
+  type: weapon_head_pickup
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+  search_mode: micro_sweep_10mm
+  ir_topic: /arm/ir_status
+  ir_field: ir
+  ir_timeout_s: 2.0
+  on_miss: advance
+  micro_sweep:
+    direction_rad: 0.0
+    back_distance_m: 0.03
+    forward_distance_m: 0.01
+    speed_mps: 0.02
+    timeout_s: 2.0
+    profile: head_rack_speed
+    pos_tolerance: 0.003
+    yaw_tolerance: 0.05
+  pickup_sequence:
+  - type: pipeline
+    template: slot_pickup
+    vars:
+      prefix: slot3
+  - id: slot3_check_ir_1
+    type: conditional
+    condition:
+      topic: /arm/ir_status
+      field: ir
+      op: gt
+      value: 0
+    then: slot3_back_nav
+    else: slot3_retry_arm
+  - id: slot3_retry_arm
+    type: arm
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+  - type: pipeline
+    template: retry_grip
+  - id: slot3_check_ir_2
+    type: conditional
+    condition:
+      topic: /arm/ir_status
+      field: ir
+      op: gt
+      value: 0
+    then: slot3_back_nav
+    else: slot3_exit_miss
+  - id: slot3_exit_miss
+    type: verify_ir
+    expected: true
+    on_false: slot3_miss_offset
+  - type: pipeline
+    template: docking_release
+    vars:
+      prefix: slot3
+      back_point: wp_point_3_offset
+      docking_middle: wp_docking_middle
+      roll_dock: left_90deg
+      release_wait_s: 0.8
+  - id: slot3_ir_confirmed
+    type: verify_ir
+    expected: true
+    on_true: slot3_leave_docking_middle
+- id: slot3_miss_offset
+  type: action
+  chassis:
+    to: wp_point_3_offset
+    profile: head_rack_speed
+- id: slot3_miss_cross
+  type: action
+  chassis:
+    to: wp_point_4_offset
+    profile: head_rack_speed
+- id: slot3_miss_next
+  type: action
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+  chassis:
+    to: wp_point_4
+    profile: red_area
+    timeout_s: 3.5
+    torque_arrival:
+      topic: /damiao_feedback
+      field: chassis_motor_tau
+      op: abs_gte
+      abs_threshold_nm: 4.0
+      max_age_s: 0.5
+      min_elapsed_s: 0.2
+- id: slot3_leave_docking_middle
+  type: action
+  chassis:
+    to: wp_docking_middle
+    profile: head_rack_speed
+- id: slot4_arm_left
+  type: action
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+- id: slot4_to_offset
+  type: action
+  chassis:
+    to: wp_point_4_offset
+    profile: red_area
+- id: slot4_wait_pre
+  type: wait
+  duration_s: 1.0
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+- id: slot4_to_point
+  type: action
+  chassis:
+    to: wp_point_4
+    profile: red_area
+    timeout_s: 3.5
+    torque_arrival:
+      topic: /damiao_feedback
+      field: chassis_motor_tau
+      op: abs_gte
+      abs_threshold_nm: 4.0
+      max_age_s: 0.5
+      min_elapsed_s: 0.2
+- id: slot4_settle
+  type: wait
+  duration_s: 1.0
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+- id: slot4_pickup
+  type: weapon_head_pickup
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+  search_mode: micro_sweep_10mm
+  ir_topic: /arm/ir_status
+  ir_field: ir
+  ir_timeout_s: 2.0
+  on_miss: advance
+  micro_sweep:
+    direction_rad: 0.0
+    back_distance_m: 0.03
+    forward_distance_m: 0.01
+    speed_mps: 0.02
+    timeout_s: 2.0
+    profile: head_rack_speed
+    pos_tolerance: 0.003
+    yaw_tolerance: 0.05
+  pickup_sequence:
+  - type: pipeline
+    template: slot_pickup
+    vars:
+      prefix: slot4
+  - id: slot4_check_ir_1
+    type: conditional
+    condition:
+      topic: /arm/ir_status
+      field: ir
+      op: gt
+      value: 0
+    then: slot4_back_nav
+    else: slot4_retry_arm
+  - id: slot4_retry_arm
+    type: arm
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+  - type: pipeline
+    template: retry_grip
+  - id: slot4_check_ir_2
+    type: conditional
+    condition:
+      topic: /arm/ir_status
+      field: ir
+      op: gt
+      value: 0
+    then: slot4_back_nav
+    else: slot4_exit_miss
+  - id: slot4_exit_miss
+    type: verify_ir
+    expected: true
+    on_false: slot4_miss_offset
+  - type: pipeline
+    template: docking_release
+    vars:
+      prefix: slot4
+      back_point: wp_point_4_offset
+      docking_middle: wp_docking_middle
+      roll_dock: left_90deg
+      release_wait_s: 0.8
+  - id: slot4_ir_confirmed
+    type: verify_ir
+    expected: true
+    on_true: slot4_leave_docking_middle
+- id: slot4_miss_offset
+  type: action
+  chassis:
+    to: wp_point_4_offset
+    profile: head_rack_speed
+- id: slot4_miss_cross
+  type: action
+  chassis:
+    to: wp_point_5_offset
+    profile: head_rack_speed
+- id: slot4_miss_next
+  type: action
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+  chassis:
+    to: wp_point_5
+    profile: red_area
+    timeout_s: 3.5
+    torque_arrival:
+      topic: /damiao_feedback
+      field: chassis_motor_tau
+      op: abs_gte
+      abs_threshold_nm: 4.0
+      max_age_s: 0.5
+      min_elapsed_s: 0.2
+- id: slot4_leave_docking_middle
+  type: action
+  chassis:
+    to: wp_docking_middle
+    profile: head_rack_speed
+- id: slot5_arm_left
+  type: action
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+- id: slot5_to_offset
+  type: action
+  chassis:
+    to: wp_point_5_offset
+    profile: red_area
+- id: slot5_wait_pre
+  type: wait
+  duration_s: 1.0
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+- id: slot5_to_point
+  type: action
+  chassis:
+    to: wp_point_5
+    profile: red_area
+    timeout_s: 3.5
+    torque_arrival:
+      topic: /damiao_feedback
+      field: chassis_motor_tau
+      op: abs_gte
+      abs_threshold_nm: 4.0
+      max_age_s: 0.5
+      min_elapsed_s: 0.2
+- id: slot5_settle
+  type: wait
+  duration_s: 1.0
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+- id: slot5_pickup
+  type: weapon_head_pickup
+  arm:
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+  search_mode: micro_sweep_10mm
+  ir_topic: /arm/ir_status
+  ir_field: ir
+  ir_timeout_s: 2.0
+  on_miss: advance
+  micro_sweep:
+    direction_rad: 0.0
+    back_distance_m: 0.03
+    forward_distance_m: 0.01
+    speed_mps: 0.02
+    timeout_s: 2.0
+    profile: head_rack_speed
+    pos_tolerance: 0.003
+    yaw_tolerance: 0.05
+  pickup_sequence:
+  - type: pipeline
+    template: slot_pickup
+    vars:
+      prefix: slot5
+  - id: slot5_check_ir_1
+    type: conditional
+    condition:
+      topic: /arm/ir_status
+      field: ir
+      op: gt
+      value: 0
+    then: slot5_back_nav
+    else: slot5_retry_arm
+  - id: slot5_retry_arm
+    type: arm
+    arm_yaw_motor: left
+    arm_roll_motor: up
+    arm_gripper: open
+    arm_lift: low
+    arm_stopper: low
+  - type: pipeline
+    template: retry_grip
+  - id: slot5_check_ir_2
+    type: conditional
+    condition:
+      topic: /arm/ir_status
+      field: ir
+      op: gt
+      value: 0
+    then: slot5_back_nav
+    else: slot5_exit_miss
+  - id: slot5_exit_miss
+    type: verify_ir
+    expected: true
+    on_false: slot5_finish_pose
+  - type: pipeline
+    template: docking_release
+    vars:
+      prefix: slot5
+      back_point: wp_point_5_offset
+      docking_middle: wp_docking_middle
+      roll_dock: left_90deg
+      release_wait_s: 0.8
+  - id: slot5_ir_confirmed
+    type: verify_ir
+    expected: true
+    on_true: slot5_finish_pose
+- id: slot5_finish_pose
   type: action
   arm:
     arm_yaw_motor: front
@@ -401,7 +890,7 @@ stages:
     arm_gripper: open
     arm_lift: low
     arm_stopper: low
-- id: slot2_single_miss_wait
+- id: slot5_finish_wait
   type: wait
   duration_s: 1.0
   arm:
@@ -410,24 +899,5 @@ stages:
     arm_gripper: open
     arm_lift: low
     arm_stopper: low
-- id: slot2_single_miss_done
-  type: terminate
-- id: slot2_single_success_finish
-  type: action
-  arm:
-    arm_yaw_motor: front
-    arm_roll_motor: up
-    arm_gripper: open
-    arm_lift: low
-    arm_stopper: low
-- id: slot2_single_finish_wait
-  type: wait
-  duration_s: 1.0
-  arm:
-    arm_yaw_motor: front
-    arm_roll_motor: up
-    arm_gripper: open
-    arm_lift: low
-    arm_stopper: low
-- id: slot2_single_success_done
+- id: slot5_done
   type: terminate

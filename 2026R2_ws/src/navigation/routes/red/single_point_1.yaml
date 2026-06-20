@@ -327,10 +327,10 @@ stages:
   on_miss: advance
   micro_sweep:
     direction_rad: 0.0
-    back_distance_m: 0.04
-    forward_distance_m: 0.02
-    speed_mps: 0.015
-    timeout_s: 2.5
+    back_distance_m: 0.03
+    forward_distance_m: 0.01
+    speed_mps: 0.02
+    timeout_s: 2.0
     profile: head_rack_speed
     pos_tolerance: 0.003
     yaw_tolerance: 0.05

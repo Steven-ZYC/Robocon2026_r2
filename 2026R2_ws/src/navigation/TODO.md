@@ -1,5 +1,8 @@
 # Navigation TODO
 
+- [x] `b2–b5/r2–r5` 改为 full FSM 后缀任务，跳过前序 point 后连续执行至 Point 5；`b1/r1` 保持单点测试（v0.44，2026-06-21）
+- [x] Red `routes/red/` Point 2–5 micro-sweep 与 Point 1 完全统一为 30mm/10mm、0.02m/s、2.0s（v0.43，2026-06-21）
+- [x] Red `routes/red/` 全部 micro-sweep 同步 2026-06-14 参数：Point 1 使用 30mm/10mm、0.02m/s、2.0s，Point 2–5 使用 10mm/10mm、0.015m/s、5.0s（v0.42，2026-06-21）
 - [x] Blue full FSM 同步 IR 后 offset、docking 进出 middle 路径，不改 PID、wait 和 micro-sweep（v0.41，2026-06-20）
 - [x] Red full FSM Slot 1–4 docking 完成后先经 wp_docking_middle 再前往下一 point（v0.40，2026-06-20）
 - [x] Red full FSM 新增 wp_docking_middle，Slot 2–5 先到 middle 再到与 wp_point_1 同坐标的 wp_docking（v0.39，2026-06-20）
