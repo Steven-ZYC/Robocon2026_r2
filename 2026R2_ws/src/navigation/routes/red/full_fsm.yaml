@@ -6,8 +6,8 @@ angle_unit: deg
 # Robot starts near origin, arm at init pose.
 # Point 1: origin → wp_middle → arm left → wp_point_1 (torque early quit + timeout)
 # Points 2-5: arm left → wp_point_N_offset → wp_point_N (torque early quit + timeout)
-# All points: → weapon_head_pickup (micro_sweep_10mm) → docking at wp_docking → next point.
-# Success path:  release at wp_docking → arm left → next offset → next point.
+# All points: → weapon_head_pickup (micro_sweep_10mm) → docking middle → wp_docking → next point.
+# Success path:  release at wp_docking → wp_docking_middle → arm left → next offset → next point.
 # Miss path:     offset retreat → cross to next point X → approach next point.
 #
 # Red vs Blue differences:
@@ -27,8 +27,13 @@ waypoints:
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
 
+  wp_docking_middle:
+    pose: { x: 0.36, y: 0.65, yaw: 0.0 }
+    pos_tolerance: 0.005
+    yaw_tolerance_deg: 1.0
+
   wp_docking:
-    pose: { x: 0.36, y: 0.75, yaw: 0.0 }
+    pose: { x: 0.36, y: 0.875, yaw: 0.0 }
     pos_tolerance: 0.005
     yaw_tolerance_deg: 1.0
 
@@ -38,7 +43,7 @@ waypoints:
     yaw_tolerance_deg: 1.0
 
   wp_point_1_offset:
-    pose: { x: 0.36, y: 0.75, yaw: 0.0 }
+    pose: { x: 0.36, y: 0.65, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
@@ -63,22 +68,22 @@ waypoints:
     yaw_tolerance_deg: 1.0
 
   wp_point_2_offset:
-    pose: { x: 0.56, y: 0.75, yaw: 0.0 }
+    pose: { x: 0.56, y: 0.65, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
   wp_point_3_offset:
-    pose: { x: 0.76, y: 0.75, yaw: 0.0 }
+    pose: { x: 0.76, y: 0.65, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
   wp_point_4_offset:
-    pose: { x: 0.96, y: 0.75, yaw: 0.0 }
+    pose: { x: 0.96, y: 0.65, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
   wp_point_5_offset:
-    pose: { x: 1.16, y: 0.75, yaw: 0.0 }
+    pose: { x: 1.16, y: 0.65, yaw: 0.0 }
     pos_tolerance: 0.01
     yaw_tolerance_deg: 1.0
 
@@ -198,9 +203,9 @@ templates:
       duration_s: 1.0
 
   # Docking release sequence: retreat high → lower → front → roll → stopper
-  # → navigate docking → torque → release.
-  # Vars: {prefix} (e.g. slot1), {back_point}, {roll_dock} (left_90deg),
-  #       {release_wait_s}
+  # → navigate docking middle → docking → torque → release.
+  # Vars: {prefix} (e.g. slot1), {back_point}, {docking_middle},
+  #       {roll_dock} (left_90deg), {release_wait_s}
   docking_release:
     - id: "{prefix}_back_nav"
       type: action
@@ -253,6 +258,18 @@ templates:
       arm_stopper: high
     - type: wait
       duration_s: 1.0
+
+    - id: "{prefix}_docking_middle_nav"
+      type: action
+      arm:
+        arm_yaw_motor: front
+        arm_roll_motor: "{roll_dock}"
+        arm_gripper: close
+        arm_lift: low
+        arm_stopper: high
+      chassis:
+        to: "{docking_middle}"
+        profile: head_rack_speed
 
     - id: "{prefix}_docking_nav"
       type: action
@@ -399,14 +416,6 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot1
-      - type: wait
-        duration_s: 1.0
-
-      - type: action
-        chassis:
-          to: wp_point_1_offset
-          profile: head_rack_speed
-
       - id: "slot1_check_ir_1"
         type: conditional
         condition:
@@ -414,7 +423,7 @@ stages:
           field: ir
           op: gt
           value: 0
-        then: "slot1_docking_start"
+        then: "slot1_back_nav"
         else: "slot1_retry_arm"
 
       - id: "slot1_retry_arm"
@@ -433,7 +442,7 @@ stages:
           field: ir
           op: gt
           value: 0
-        then: "slot1_docking_start"
+        then: "slot1_back_nav"
         else: "slot1_exit_miss"
       - id: "slot1_exit_miss"
         type: verify_ir
@@ -444,12 +453,13 @@ stages:
         vars:
           prefix: slot1
           back_point: wp_point_1_offset
+          docking_middle: wp_point_1_offset
           roll_dock: left_90deg
           release_wait_s: 1.0
       - id: "slot1_ir_confirmed"
         type: verify_ir
         expected: true
-        on_true: "slot2_arm_left"
+        on_true: "slot1_leave_docking_middle"
 
   # point 1: direct to wp_docking (no intermediate back point)
   - id: slot1_miss_offset
@@ -483,6 +493,12 @@ stages:
         abs_threshold_nm: 4.0
         max_age_s: 0.5
         min_elapsed_s: 0.20
+
+  - id: slot1_leave_docking_middle
+    type: action
+    chassis:
+      to: wp_docking_middle
+      profile: head_rack_speed
 
   - id: slot2_arm_left
     type: action
@@ -560,12 +576,6 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot2
-      - type: wait
-        duration_s: 1.0
-      - type: action
-        chassis:
-          to: wp_point_2_offset
-          profile: head_rack_speed
       - id: "slot2_check_ir_1"
         type: conditional
         condition:
@@ -573,7 +583,7 @@ stages:
           field: ir
           op: gt
           value: 0
-        then: "slot2_docking_start"
+        then: "slot2_back_nav"
         else: "slot2_retry_arm"
       - id: "slot2_retry_arm"
         type: arm
@@ -591,7 +601,7 @@ stages:
           field: ir
           op: gt
           value: 0
-        then: "slot2_docking_start"
+        then: "slot2_back_nav"
         else: "slot2_exit_miss"
       - id: "slot2_exit_miss"
         type: verify_ir
@@ -602,12 +612,13 @@ stages:
         vars:
           prefix: slot2
           back_point: wp_point_2_offset
+          docking_middle: wp_docking_middle
           roll_dock: left_90deg
           release_wait_s: 0.8
       - id: "slot2_ir_confirmed"
         type: verify_ir
         expected: true
-        on_true: "slot3_arm_left"
+        on_true: "slot2_leave_docking_middle"
 
   - id: slot2_miss_offset
     type: action
@@ -640,6 +651,12 @@ stages:
         abs_threshold_nm: 4.0
         max_age_s: 0.5
         min_elapsed_s: 0.20
+
+  - id: slot2_leave_docking_middle
+    type: action
+    chassis:
+      to: wp_docking_middle
+      profile: head_rack_speed
 
   - id: slot3_arm_left
     type: action
@@ -717,12 +734,6 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot3
-      - type: wait
-        duration_s: 1.0
-      - type: action
-        chassis:
-          to: wp_point_3_offset
-          profile: head_rack_speed
       - id: "slot3_check_ir_1"
         type: conditional
         condition:
@@ -730,7 +741,7 @@ stages:
           field: ir
           op: gt
           value: 0
-        then: "slot3_docking_start"
+        then: "slot3_back_nav"
         else: "slot3_retry_arm"
       - id: "slot3_retry_arm"
         type: arm
@@ -748,7 +759,7 @@ stages:
           field: ir
           op: gt
           value: 0
-        then: "slot3_docking_start"
+        then: "slot3_back_nav"
         else: "slot3_exit_miss"
       - id: "slot3_exit_miss"
         type: verify_ir
@@ -759,12 +770,13 @@ stages:
         vars:
           prefix: slot3
           back_point: wp_point_3_offset
+          docking_middle: wp_docking_middle
           roll_dock: left_90deg
           release_wait_s: 0.8
       - id: "slot3_ir_confirmed"
         type: verify_ir
         expected: true
-        on_true: "slot4_arm_left"
+        on_true: "slot3_leave_docking_middle"
 
   - id: slot3_miss_offset
     type: action
@@ -797,6 +809,12 @@ stages:
         abs_threshold_nm: 4.0
         max_age_s: 0.5
         min_elapsed_s: 0.20
+
+  - id: slot3_leave_docking_middle
+    type: action
+    chassis:
+      to: wp_docking_middle
+      profile: head_rack_speed
 
   - id: slot4_arm_left
     type: action
@@ -874,12 +892,6 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot4
-      - type: wait
-        duration_s: 1.0
-      - type: action
-        chassis:
-          to: wp_point_4_offset
-          profile: head_rack_speed
       - id: "slot4_check_ir_1"
         type: conditional
         condition:
@@ -887,7 +899,7 @@ stages:
           field: ir
           op: gt
           value: 0
-        then: "slot4_docking_start"
+        then: "slot4_back_nav"
         else: "slot4_retry_arm"
       - id: "slot4_retry_arm"
         type: arm
@@ -905,7 +917,7 @@ stages:
           field: ir
           op: gt
           value: 0
-        then: "slot4_docking_start"
+        then: "slot4_back_nav"
         else: "slot4_exit_miss"
       - id: "slot4_exit_miss"
         type: verify_ir
@@ -916,12 +928,13 @@ stages:
         vars:
           prefix: slot4
           back_point: wp_point_4_offset
+          docking_middle: wp_docking_middle
           roll_dock: left_90deg
           release_wait_s: 0.8
       - id: "slot4_ir_confirmed"
         type: verify_ir
         expected: true
-        on_true: "slot5_arm_left"
+        on_true: "slot4_leave_docking_middle"
 
   - id: slot4_miss_offset
     type: action
@@ -954,6 +967,12 @@ stages:
         abs_threshold_nm: 4.0
         max_age_s: 0.5
         min_elapsed_s: 0.20
+
+  - id: slot4_leave_docking_middle
+    type: action
+    chassis:
+      to: wp_docking_middle
+      profile: head_rack_speed
 
   - id: slot5_arm_left
     type: action
@@ -1033,12 +1052,6 @@ stages:
         template: slot_pickup
         vars:
           prefix: slot5
-      - type: wait
-        duration_s: 1.0
-      - type: action
-        chassis:
-          to: wp_point_5_offset
-          profile: head_rack_speed
       - id: "slot5_check_ir_1"
         type: conditional
         condition:
@@ -1046,7 +1059,7 @@ stages:
           field: ir
           op: gt
           value: 0
-        then: "slot5_docking_start"
+        then: "slot5_back_nav"
         else: "slot5_retry_arm"
       - id: "slot5_retry_arm"
         type: arm
@@ -1064,7 +1077,7 @@ stages:
           field: ir
           op: gt
           value: 0
-        then: "slot5_docking_start"
+        then: "slot5_back_nav"
         else: "slot5_exit_miss"
       - id: "slot5_exit_miss"
         type: verify_ir
@@ -1075,6 +1088,7 @@ stages:
         vars:
           prefix: slot5
           back_point: wp_point_5_offset
+          docking_middle: wp_docking_middle
           roll_dock: left_90deg
           release_wait_s: 0.8
       - id: "slot5_ir_confirmed"

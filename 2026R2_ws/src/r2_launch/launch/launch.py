@@ -86,7 +86,7 @@ def generate_launch_description():
         name='arduino_sensor_parser',
         output='screen',
         parameters=[{
-            'port': LaunchConfiguration('sensor_port'),
+            'serial_port': LaunchConfiguration('sensor_port'),
         }],
     )
 

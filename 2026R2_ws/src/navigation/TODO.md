@@ -1,5 +1,9 @@
 # Navigation TODO
 
+- [x] Blue full FSM 同步 IR 后 offset、docking 进出 middle 路径，不改 PID、wait 和 micro-sweep（v0.41，2026-06-20）
+- [x] Red full FSM Slot 1–4 docking 完成后先经 wp_docking_middle 再前往下一 point（v0.40，2026-06-20）
+- [x] Red full FSM 新增 wp_docking_middle，Slot 2–5 先到 middle 再到与 wp_point_1 同坐标的 wp_docking（v0.39，2026-06-20）
+- [x] Red full FSM Slot 1–5 调整为 slot_pickup → IR 检查 → offset 退回 → 手臂 docking 时序（v0.38，2026-06-20）
 - [x] Red full FSM Slot 1–5 在 slot_pickup 与 offset 退回 action 之间等待 1.0s（v0.37，2026-06-20）
 - [x] Red full FSM 从 slot_pickup 移除未传参 back_point，Slot 1–5 调用后分别显式导航至对应 wp_point_N_offset（v0.36，2026-06-20）
 - [x] Blue full FSM 抓取后保持 arm high 退到 point N back，再降 arm、等待 1 秒、回 front、转 M6、升 stopper 后 docking（v0.35，2026-06-20）
@@ -100,3 +104,11 @@
 - [ ] 实车验证 Red Area 六点循环的 slot 方向、0.2m 间距和 `weapon1/#1` 坐标
 - [ ] 实车验证 lift high 后 IR=false 时能重试本点一次，二次失败后进入下一个 slot
 - [ ] 实车验证 `abs(motor_5_tau) > 1.3Nm` 的 docking 释放阈值
+
+- [x] 新增 Red/Blue Point 1..5 共 10 个 standalone pickup mission YAML
+- [x] 新增根目录 `blue_point1.sh`..`blue_point5.sh` 与 `red_point1.sh`..`red_point5.sh`
+- [x] 新增 `b1`..`b5`、`r1`..`r5` 快捷 alias
+- [x] 新增 `scripts/generate_single_point_routes.py`，从 full FSM 同步生成单点参数
+- [ ] 实车逐项验证 `b1`..`b5` 和 `r1`..`r5` 的起点、middle、offset 与 docking 路径
+- [ ] 实车验证单点任务 search miss 和二次抓取 miss 都会安全 retreat 并 terminate
+- [ ] 为 full FSM 与 standalone mission 的 motor 5 torque wait 增加总超时和安全回退

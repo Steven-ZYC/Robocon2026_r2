@@ -406,6 +406,10 @@ zones:                 # 功能区域 半透明 CUBE
 
 | 日期 | 说明 |
 |---|---|
+| 2026-06-20 | v0.41 — Blue full FSM 同步 IR 后退 offset、docking 前经 middle、docking 后经 middle 前往下一 point；保持 Blue PID、wait 和 micro-sweep 参数不变 |
+| 2026-06-20 | v0.40 — Red full FSM 的 Slot 1–4 在 docking 释放完成后先退回 wp_docking_middle，再前往下一个 point offset |
+| 2026-06-20 | v0.39 — Red full FSM 将原 wp_docking (0.36, 0.75) 改为 wp_docking_middle，新 wp_docking 与 wp_point_1 同坐标 (0.36, 0.875)；Slot 2–5 先经 docking middle 再进入 docking |
+| 2026-06-20 | v0.38 — Red full FSM 调整为 slot_pickup 后立即检查 IR；IR 确认成功后才退到对应 wp_point_N_offset，到位后再执行 lower、front、roll 和 stopper 手臂时序 |
 | 2026-06-20 | v0.37 — Red full FSM 的 Slot 1–5 在 slot_pickup 完成后等待 1.0s，再退到对应 wp_point_N_offset |
 | 2026-06-20 | v0.36 — Red full FSM 从通用 slot_pickup 模板移除未传参的 back_point 导航；Slot 1–5 在各自 pickup sequence 中显式退到对应 wp_point_N_offset，避免未展开 waypoint 导致流程中断 |
 | 2026-06-20 | v0.35 — Blue full FSM 抓取并升起等待 1 秒后，保持 arm high 退到对应 `wp_point_N_offset`，再降 arm、等待 1 秒、回 front、转 M6、等待后升 stopper，再前往 docking |
@@ -2143,3 +2147,36 @@ slot5_finish_pose
 终止前增加 1.0 秒等待，用于持续发送并保持 `front/up/open/low/low` 收尾目标。等待期间底盘保持上一条停止输出，手臂状态每 100ms 重发。随后 `terminate` 发布底盘零速、motor 5/6 的 `position=0/speed=0`，并将气动输出设为 `open/low/low`。
 
 ---
+
+## v0.33 — Red/Blue 五点独立夹取任务（2026-06-20）
+
+新增 `routes/{red,blue}/single_point_1.yaml` 至 `single_point_5.yaml`，用于从正常比赛起点单独验证任意一个 weapon-head point。每个任务只执行一个 point，不会 fall through 到下一个 slot：
+
+```text
+origin
+→ wp_middle
+→ wp_point_N_offset
+→ wp_point_N
+→ IR search / grip / retry
+→ wp_point_N_offset
+→ wp_docking_middle
+→ wp_docking
+→ motor_5_tau torque release
+→ 安全姿态
+→ terminate
+```
+
+航点坐标、PID profile、等待时间、micro-sweep、IR timeout、底盘 torque arrival、motor 5 torque threshold 均由对应颜色的 `full_fsm.yaml` 生成，避免单点测试与完整 FSM 参数漂移。重新生成命令：
+
+```bash
+python3 src/navigation/scripts/generate_single_point_routes.py
+```
+
+根目录快捷脚本和 alias：
+
+| Alias | 脚本 | Mission |
+|---|---|---|
+| `b1` … `b5` | `blue_point1.sh` … `blue_point5.sh` | `routes/blue/single_point_1.yaml` … `single_point_5.yaml` |
+| `r1` … `r5` | `red_point1.sh` … `red_point5.sh` | `routes/red/single_point_1.yaml` … `single_point_5.yaml` |
+
+单点任务沿用现有保护：IR 数据缺失超过 `ir_timeout_s=2.0s` 时停止搜索并进入 miss cleanup；rack 接近超过该 point 的 `timeout_s` 时停止接近并推进；motor 5 torque 条件只接受默认 `0.25s` 内的新鲜反馈；最终 `terminate` 发布底盘零速、停止 arm motor 并恢复气动安全状态。 注意：现有 full FSM 的 motor 5 torque conditional 本身没有总等待超时；反馈缺失、过期或始终未过阈值时会保持夹爪 close 并停在当前检测 step。单点任务为保持测试逻辑一致暂时继承该行为，进入 main 前应补充 torque wait timeout 与安全回退。
